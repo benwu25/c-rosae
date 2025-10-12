@@ -266,10 +266,7 @@ impl Step for Std {
                 target,
                 Kind::Build,
             );
-            std_cargo(builder, target, &mut cargo);
-            for krate in &*self.crates {
-                cargo.arg("-p").arg(krate);
-            }
+            std_cargo(builder, target, &mut cargo, &self.crates);
             cargo
         };
 
@@ -430,6 +427,16 @@ fn copy_self_contained_objects(
                 target.triple
             )
         });
+
+        // wasm32-wasip3 doesn't exist in wasi-libc yet, so instead use libs
+        // from the wasm32-wasip2 target. Once wasi-libc supports wasip3 this
+        // should be deleted and the native objects should be used.
+        let srcdir = if target == "wasm32-wasip3" {
+            assert!(!srcdir.exists(), "wasip3 support is in wasi-libc, this should be updated now");
+            builder.wasi_libdir(TargetSelection::from_user("wasm32-wasip2")).unwrap()
+        } else {
+            srcdir
+        };
         for &obj in &["libc.a", "crt1-command.o", "crt1-reactor.o"] {
             copy_and_stamp(
                 builder,
@@ -497,7 +504,12 @@ fn compiler_rt_for_profiler(builder: &Builder<'_>) -> PathBuf {
 
 /// Configure cargo to compile the standard library, adding appropriate env vars
 /// and such.
-pub fn std_cargo(builder: &Builder<'_>, target: TargetSelection, cargo: &mut Cargo) {
+pub fn std_cargo(
+    builder: &Builder<'_>,
+    target: TargetSelection,
+    cargo: &mut Cargo,
+    crates: &[String],
+) {
     // rustc already ensures that it builds with the minimum deployment
     // target, so ideally we shouldn't need to do anything here.
     //
@@ -519,7 +531,7 @@ pub fn std_cargo(builder: &Builder<'_>, target: TargetSelection, cargo: &mut Car
         // Query rustc for the deployment target, and the associated env var.
         // The env var is one of the standard `*_DEPLOYMENT_TARGET` vars, i.e.
         // `MACOSX_DEPLOYMENT_TARGET`, `IPHONEOS_DEPLOYMENT_TARGET`, etc.
-        let mut cmd = command(builder.rustc(cargo.compiler()));
+        let mut cmd = builder.rustc_cmd(cargo.compiler());
         cmd.arg("--target").arg(target.rustc_target_arg());
         cmd.arg("--print=deployment-target");
         let output = cmd.run_capture_stdout(builder).stdout();
@@ -590,7 +602,12 @@ pub fn std_cargo(builder: &Builder<'_>, target: TargetSelection, cargo: &mut Car
                 ),
             );
             let compiler_builtins_root = builder.src.join("src/llvm-project/compiler-rt");
-            assert!(compiler_builtins_root.exists());
+            if !builder.config.dry_run() {
+                // This assertion would otherwise trigger during tests if `llvm-project` is not
+                // checked out.
+                assert!(compiler_builtins_root.exists());
+            }
+
             // The path to `compiler-rt` is also used by `profiler_builtins` (above),
             // so if you're changing something here please also change that as appropriate.
             cargo.env("RUST_COMPILER_RT_ROOT", &compiler_builtins_root);
@@ -605,6 +622,10 @@ pub fn std_cargo(builder: &Builder<'_>, target: TargetSelection, cargo: &mut Car
         cargo.env("CFG_DISABLE_UNSTABLE_FEATURES", "1");
     }
 
+    for krate in crates {
+        cargo.args(["-p", krate]);
+    }
+
     let mut features = String::new();
 
     if builder.no_std(target) == Some(true) {
@@ -614,8 +635,10 @@ pub fn std_cargo(builder: &Builder<'_>, target: TargetSelection, cargo: &mut Car
         }
 
         // for no-std targets we only compile a few no_std crates
+        if crates.is_empty() {
+            cargo.args(["-p", "alloc"]);
+        }
         cargo
-            .args(["-p", "alloc"])
             .arg("--manifest-path")
             .arg(builder.src.join("library/alloc/Cargo.toml"))
             .arg("--features")
