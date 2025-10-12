@@ -1,5 +1,7 @@
 This is the source repository for `c-rosae`, a fork of the Rust compiler. `c-rosae` provides verification tooling for Rust, implementing a Rust frontend for the [Daikon dynamic invariant detector](https://github.com/codespecs/daikon) to hypothesize likely program invariants through dynamic analysis.
 
+To view a diff of this fork and the Rust compiler, see [https://github.com/benwu25/c-rosae/pull/1](https://github.com/benwu25/c-rosae/pull/1).
+
  * Build the compiler.
      * `./x setup`
      * `./x build library/std`
