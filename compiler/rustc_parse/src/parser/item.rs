@@ -518,11 +518,22 @@ impl<'a> DaikonDtraceVisitor<'a> {
         match &r_ty {
             BasicType::Prim(p_type) => {
                 let prim_record_ret = if p_type == "String" || p_type == "str" {
-                    build_prim_with_tostring_ret()
+                    build_instrument_code(
+                        vec![String::from("__daikon_ret"), String::from("return")],
+                        DTRACE_PRIM_TOSTRING,
+                    )
                 } else if ret_is_ref {
-                    build_prim_ref_ret(p_type.clone())
+                    build_instrument_code(
+                        vec![
+                            p_type.clone(),
+                            p_type.clone(),
+                            String::from("__daikon_ret"),
+                            String::from("return"),
+                        ],
+                        DTRACE_PRIM_REF,
+                    )
                 } else {
-                    build_prim_ret(p_type.clone())
+                    build_instrument_code(vec![p_type.clone()], DTRACE_PRIM_RET)
                 };
                 *i = self.insert_into_block(*i, prim_record_ret, body);
             }
@@ -1491,9 +1502,23 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
                     BasicType::Prim(p_type) => {
                         if p_type == "String" || p_type == "str" {
-                            build_prim_with_tostring(get_param_ident(&decl.inputs[i].pat))
+                            build_instrument_code(
+                                vec![
+                                    get_param_ident(&decl.inputs[i].pat),
+                                    get_param_ident(&decl.inputs[i].pat),
+                                ],
+                                DTRACE_PRIM_TOSTRING,
+                            )
                         } else if is_ref {
-                            build_prim_ref(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
+                            build_instrument_code(
+                                vec![
+                                    p_type.clone(),
+                                    p_type.clone(),
+                                    get_param_ident(&decl.inputs[i].pat),
+                                    get_param_ident(&decl.inputs[i].pat),
+                                ],
+                                DTRACE_PRIM_REF,
+                            )
                         } else {
                             build_instrument_code(
                                 vec![

@@ -57,74 +57,29 @@ pub(crate) static DTRACE_ENTRY: &str =
 pub(crate) static DTRACE_EXIT: &str = "fn main() { dtrace_exit(\"$1:::EXIT$2\", __daikon_nonce); }";
 
 // Build a call to log a primitive value.
-// $1: Primitive type of the variable
-// $2: var identifier
-// $3: var identifier
+// $1: Primitive type of the variable.
+// $2: var identifier.
+// $3: var identifier.
 pub(crate) static DTRACE_PRIM: &str =
     "fn main() { dtrace_print_prim::<$1>($2, String::from(\"$3\")); }";
 
-pub(crate) static DTRACE_PRIM_RET: [&str; 2] =
-    ["fn __skip() { dtrace_print_prim::<", ">(__daikon_ret, String::from(\"return\")); }"];
-pub(crate) fn build_prim_ret(p_type: String) -> String {
-    let mut res = String::from(DTRACE_PRIM_RET[0]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_PRIM_RET[1]);
-    res
-}
+// Build a log statement for a primitive return value.
+// $1: Primitive type of the return value.
+pub(crate) static DTRACE_PRIM_RET: &str =
+    "fn main() { dtrace_print_prim::<$1>(__daikon_ret, String::from(\"return\")); }";
 
-pub(crate) static DTRACE_PRIM_REF: [&str; 5] = [
-    "fn __skip() { dtrace_print_prim::<",
-    ">(",
-    "::from_str(&",
-    ".to_string()).expect(\"Ok\"), String::from(\"",
-    "\")); }",
-];
-pub(crate) fn build_prim_ref(p_type: String, var_name: String) -> String {
-    let mut res = String::from(DTRACE_PRIM_REF[0]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_PRIM_REF[1]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_PRIM_REF[2]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_PRIM_REF[3]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_PRIM_REF[4]);
-    res
-}
+// Build log statement for a variable with primitive reference type.
+// $1: Primitive type of the variable.
+// $2: $1.
+// $3: Identifier of the variable.
+// $4: $3.
+pub(crate) static DTRACE_PRIM_REF: &str = "fn main() { dtrace_print_prim::<$1>($2::from_str(&$3.to_string()).expect(\"Ok\"), String::from(\"$4\")); }";
 
-// Generic routine used to print all non-string primitive parameter and return
-// values.
-pub(crate) static DTRACE_PRIM_REF_RET: [&str; 3] = [
-    "fn __skip() { dtrace_print_prim::<",
-    ">(",
-    "::from_str(&__daikon_ret.to_string()).expect(\"Ok\"), String::from(\"return\")); }",
-];
-pub(crate) fn build_prim_ref_ret(p_type: String) -> String {
-    let mut res = String::from(DTRACE_PRIM_REF_RET[0]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_PRIM_REF_RET[1]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_PRIM_REF_RET[2]);
-    res
-}
-
-pub(crate) static DTRACE_PRIM_TOSTRING: [&str; 3] =
-    ["fn __skip() { dtrace_print_string(", ".to_string(), String::from(\"", "\")); }"];
-pub(crate) fn build_prim_with_tostring(var_name: String) -> String {
-    // TODO: change name
-    let mut res = String::from(DTRACE_PRIM_TOSTRING[0]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_PRIM_TOSTRING[1]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_PRIM_TOSTRING[2]);
-    res
-}
-
-pub(crate) static DTRACE_PRIM_TOSTRING_RET: &str =
-    "fn __skip() { dtrace_print_string(__daikon_ret.to_string(), String::from(\"return\")); }";
-pub(crate) fn build_prim_with_tostring_ret() -> String {
-    String::from(DTRACE_PRIM_TOSTRING_RET)
-}
+// Build log statement for variable of String-like type (&str, etc.).
+// $1: Identifier for variable.
+// $2: $1.
+pub(crate) static DTRACE_PRIM_TOSTRING: &str =
+    "fn __skip() { dtrace_print_string($1.to_string(), String::from(\"$2\")); }";
 
 pub(crate) static DTRACE_PRIM_FIELD_TOSTRING: [&str; 3] =
     ["dtrace_print_string(self.", ".to_string(), format!(\"{}{}\", prefix, \".", "\"));"];
