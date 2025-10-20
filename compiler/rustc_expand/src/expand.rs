@@ -472,7 +472,7 @@ impl Invocation {
     }
 }
 
-// Given a parameter pat, return its identifier name in a String
+// Given a parameter pat, return its identifier name in a String.
 fn get_param_ident(pat: &Box<Pat>) -> String {
     match &pat.kind {
         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
@@ -480,7 +480,14 @@ fn get_param_ident(pat: &Box<Pat>) -> String {
     }
 }
 
-// Given a Rust type, return its "Java" type if there is a match
+// Given a Rust type, return its Daikon rep-type.
+// E.g.,
+// i8 -> int
+// i32 -> int
+// char -> char
+// bool -> boolean
+// &str -> java.lang.String
+// String -> java.lang.String
 fn get_prim_rep_type(ty_str: &str) -> String {
     if ty_str == I8
         || ty_str == I16
@@ -537,7 +544,7 @@ fn grok_vec_args(path: &Path) -> RepType {
     }
 }
 
-// Capable of representing the rep-type of a Rust type
+// Capable of representing the rep-type of a Rust type.
 // String payload represents the corresponding "Java" type
 // i32 -> Prim("int")
 // &[i32] -> PrimArray("int")
@@ -589,7 +596,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
     }
 }
 
-// Unused
+// Unused.
 #[allow(rustc::default_hash_types)]
 fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
     let mut res = HashMap::new();
@@ -601,7 +608,7 @@ fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
     res
 }
 
-// This struct is responsible for building a map from identifier to Struct
+// This struct is responsible for building a map from identifier to Struct.
 // This will not be needed once we do a first pass, we can read from a /tmp
 // file to fill this purpose.
 #[allow(rustc::default_hash_types)]
@@ -638,14 +645,14 @@ struct DaikonDeclsVisitor<'a> {
 }
 
 // Represents a parameter or return value which must be written to decls.
-// map: map from String to struct definition with field declarations
+// map: map from String to struct definition with field declarations.
 // var_name: parameter name, or "return" for return values.
-// dec_type: Declared type of the value (dec-type for Daikon)
-// rep_type: Rep type of the value (rep-type for Daikon)
+// dec_type: Declared type of the value (dec-type for Daikon).
+// rep_type: Rep type of the value (rep-type for Daikon).
 // key: If the value is a struct, contains the struct type name for lookup,
 //      otherwise None.
 // field_decls: If the value is a struct, represents decl records for the
-//              fields of this struct
+//              fields of this struct.
 // contents: If the value is Vec or array, a decls record for the contents
 //           of this outer container.
 // Note: it is maintained that only one of field_decls or contents will be Some.
@@ -655,14 +662,14 @@ struct TopLevlDecl<'a> {
     pub var_name: String,
     pub dec_type: String,
     pub rep_type: String,
-    pub key: Option<String>, // struct name for looking up structs if this is a struct
+    pub key: Option<String>, // struct name for looking up structs if this is a struct.
     pub field_decls: Option<Vec<FieldDecl<'a>>>,
     pub contents: Option<ArrayContents<'a>>,
 }
 
 // Represents a field decl of a struct at some arb. depth.
 // enclosing_var: the identifier of the struct which contains this field.
-// field_name: name of this field
+// field_name: name of this field.
 // See TopLevlDecl for other fields.
 #[allow(rustc::default_hash_types)]
 struct FieldDecl<'a> {
@@ -677,8 +684,8 @@ struct FieldDecl<'a> {
     pub contents: Option<ArrayContents<'a>>,
 }
 
-// Represents the array contents decl record (i.e., arr[..] or arr[..].g rather than arr)
-// enclosing_var: name of the outer container for this array or Vec
+// Represents the array contents decl record (i.e., arr[..] or arr[..].g rather than arr).
+// enclosing_var: name of the outer container for this array or Vec.
 // sub_contents: If we are an array of structs, we need ArrayContents for each field.
 // See TopLevlDecl for other fields.
 #[allow(rustc::default_hash_types)]
@@ -689,7 +696,7 @@ struct ArrayContents<'a> {
     pub rep_type: String,
     pub enclosing_var: String,
     pub key: Option<String>,
-    pub sub_contents: Option<Vec<ArrayContents<'a>>>, // only if this is a hashcode[], for printing subfield array records
+    pub sub_contents: Option<Vec<ArrayContents<'a>>>, // only if this is a hashcode[], for printing subfield array records.
 }
 
 impl<'a> ArrayContents<'a> {
@@ -751,7 +758,7 @@ impl<'a> ArrayContents<'a> {
         }
     }
 
-    // If we are an array of structs, recursively populate sub_contents by creating
+    // If var array of structs, recursively populate sub_contents by creating
     // a new ArrayContents for each field.
     // do_write: I think this was a hack for avoiding structs/enums/unions which did
     //           not belong to the crate. That is again an ongoing issue with the /tmp
@@ -761,7 +768,7 @@ impl<'a> ArrayContents<'a> {
             return;
         }
 
-        // fields of the struct in this array
+        // fields of the struct in this array.
         let fields = self.get_fields(do_write);
         if !*do_write {
             return;
@@ -798,7 +805,7 @@ impl<'a> ArrayContents<'a> {
                     };
                     tmp.build_contents(depth_limit - 1, &mut do_write);
 
-                    // Error checking
+                    // Error checking.
                     if !do_write {
                         // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
                         match &mut tmp.sub_contents {
@@ -813,13 +820,13 @@ impl<'a> ArrayContents<'a> {
                         }
                     }
                     if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                        // this record is also invalid
+                        // this record is also invalid.
                         tmp.var_name = String::from("false");
                     }
                     tmp
                 }
                 RepType::PrimArray(_) => {
-                    // only print pointers
+                    // only print pointers.
                     ArrayContents {
                         map: self.map,
                         var_name: var_name.clone(),
@@ -831,7 +838,7 @@ impl<'a> ArrayContents<'a> {
                     }
                 }
                 RepType::HashCodeArray(_) => {
-                    // only print pointers
+                    // only print pointers.
                     ArrayContents {
                         map: self.map,
                         var_name: var_name.clone(),
@@ -896,7 +903,7 @@ impl<'a> FieldDecl<'a> {
     // If we are a struct type field, use our key to get field definitions
     // for the struct type.
     fn get_fields(&self, do_write: &mut bool) -> ThinVec<FieldDef> {
-        // use self.key to look up who we are.
+        // use self.key to look up struct definition for the variable.
         match &self.key {
             None => panic!("No key for get_fields"),
             Some(key) => {
@@ -969,7 +976,7 @@ impl<'a> FieldDecl<'a> {
                     };
                     tmp.build_fields(depth_limit - 1, &mut do_write);
 
-                    // Error checking
+                    // Error checking.
                     if !do_write {
                         // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
                         match &mut tmp.field_decls {
@@ -984,7 +991,7 @@ impl<'a> FieldDecl<'a> {
                         }
                     }
                     if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                        // this record is also invalid
+                        // this record is also invalid.
                         tmp.var_name = String::from("false");
                     }
                     tmp
@@ -1035,7 +1042,7 @@ impl<'a> FieldDecl<'a> {
                         Some(contents) => {
                             contents.build_contents(depth_limit - 1, &mut do_write);
 
-                            // Error checking
+                            // Error checking.
                             if !do_write {
                                 // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
                                 match &mut contents.sub_contents {
@@ -1050,7 +1057,7 @@ impl<'a> FieldDecl<'a> {
                                 }
                             }
                             if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                                // this record is also invalid
+                                // this record is also invalid.
                                 tmp.var_name = String::from("false");
                             }
                         }
@@ -1158,7 +1165,7 @@ impl<'a> TopLevlDecl<'a> {
                     };
                     tmp.build_fields(depth_limit - 1, &mut do_write);
 
-                    // Error checking
+                    // Error checking.
                     if !do_write {
                         // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
                         match &mut tmp.field_decls {
@@ -1173,7 +1180,7 @@ impl<'a> TopLevlDecl<'a> {
                         }
                     }
                     if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                        // this record is also invalid
+                        // this record is also invalid.
                         tmp.var_name = String::from("false");
                     }
                     tmp
@@ -1224,7 +1231,7 @@ impl<'a> TopLevlDecl<'a> {
                         Some(contents) => {
                             contents.build_contents(depth_limit - 1, &mut do_write);
 
-                            // Error checking
+                            // Error checking.
                             if !do_write {
                                 // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
                                 match &mut contents.sub_contents {
@@ -1240,7 +1247,7 @@ impl<'a> TopLevlDecl<'a> {
                             }
 
                             if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                                // this record is also invalid
+                                // this record is also invalid.
                                 tmp.var_name = String::from("false");
                             }
                         }
@@ -1410,7 +1417,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 // Blocks.
                 // recurse on nested block,
                 // but we still only grokked one (block) stmt, so just
-                // move to the next stmt (return i+1)
+                // move to the next stmt (return i+1).
                 ExprKind::Block(block, _) => {
                     self.grok_block(
                         ppt_name.clone(),
@@ -1423,7 +1430,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     return i + 1;
                 }
                 ExprKind::If(_, if_block, None) => {
-                    // no else
+                    // no else.
                     self.grok_block(
                         ppt_name.clone(),
                         if_block,
@@ -1435,7 +1442,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     return i + 1;
                 }
                 ExprKind::If(_, if_block, Some(expr)) => {
-                    // yes else
+                    // yes else.
                     self.grok_block(
                         ppt_name.clone(),
                         if_block,
@@ -1487,7 +1494,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                         exit_counter,
                     );
                     return i + 1;
-                } // missing Match blocks, TryBlock, Const block? probably more
+                } // missing Match blocks, TryBlock, Const block? probably more.
                 _ => {}
             },
             // Look for returns. dtrace passes have run, so all exit points should
@@ -1504,7 +1511,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     write_newline();
 
                     // we're sitting on the void return we just processed, so inc
-                    // to move on
+                    // to move on.
                     i += 1;
                 }
                 ExprKind::Ret(Some(_)) => {
@@ -1516,7 +1523,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                         idx += 1;
                     }
 
-                    // make return TopLevlDecl
+                    // make return TopLevlDecl.
                     match &ret_ty {
                         FnRetTy::Default(_) => {} // no return record to be had.
                         FnRetTy::Ty(ty) => {
@@ -1536,6 +1543,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                     } // Ready to write this var decl.
                                 }
                                 RepType::HashCodeStruct(ty_string) => {
+                                    // TOOD: remove this.
                                     // do_write = !ty_string.starts_with("Option") && !ty_string.starts_with("Result");
                                     // println!("do_write is {} for {}", do_write, ty_string);
                                     let mut tmp = TopLevlDecl {
@@ -1549,7 +1557,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                     };
                                     tmp.build_fields(self.depth_limit, &mut do_write);
 
-                                    // Error checking
+                                    // Error checking.
                                     if !do_write {
                                         // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
                                         match &mut tmp.field_decls {
@@ -1566,7 +1574,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                     if ty_string.starts_with("Option")
                                         || ty_string.starts_with("Result")
                                     {
-                                        // this record is also invalid
+                                        // this record is also invalid.
                                         tmp.var_name = String::from("false");
                                     }
                                     tmp
@@ -1616,7 +1624,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 &mut do_write,
                                             );
 
-                                            // Error checking
+                                            // Error checking.
                                             if !do_write {
                                                 // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
                                                 match &mut contents.sub_contents {
@@ -1635,7 +1643,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                             if ty_string.starts_with("Option")
                                                 || ty_string.starts_with("Result")
                                             {
-                                                // this record is also invalid
+                                                // this record is also invalid.
                                                 tmp.var_name = String::from("false");
                                             }
                                         }
@@ -1653,11 +1661,12 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 }
                 ExprKind::Call(_call, _params) => {
                     return i + 1;
-                } // Maybe check for drop and other invalidations
+                } // Maybe check for drop and other invalidations.
                 _ => {
                     return i + 1;
-                } // other things you overlooked
+                } // other things you overlooked.
             },
+            // TODO: remove this.
             // StmtKind::Expr(no_semi_expr) => match &no_semi_expr.kind {
             //     ExprKind::Match(..) => {
             //         return i + 1;
@@ -1687,7 +1696,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
 
         // assuming no unreachable statements.
         while i < body.stmts.len() {
-            // make sure loop bound is growing as we insert stmts
+            // make sure loop bound is growing as we insert stmts.
             i = self.grok_stmt(
                 i,
                 body,
@@ -1702,8 +1711,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
 
     // is it a good idea to store which params are valid at each exit
     // ppt for the decls pass which happens after this?
-    // then the decls pass just needs to
-    // 1: visit_item to build HashMap<ident, StructNode>
+    // then the decls pass just needs to:
+    // 1: visit_item to build HashMap<ident, StructNode>.
     // 2: visit_fn, grok sig, and grok exit ppts using structural
     //    recursion on StructNodes for nesting. Need to use depth counter
     //    for a base case.
@@ -1719,13 +1728,12 @@ impl<'a> DaikonDeclsVisitor<'a> {
         param_to_block_idx: HashMap<String, i32>,
         ret_ty: &FnRetTy,
     ) {
-        // look for returns and nested blocks (recurse in those cases)
+        // look for returns and nested blocks (recurse in those cases).
         let mut exit_counter = 1;
 
         // assuming no unreachable statements.
         let mut i = 0;
         while i < body.stmts.len() {
-            // make sure loop bound is growing as we insert stmts
             i = self.grok_stmt(
                 i,
                 body,
@@ -1779,7 +1787,7 @@ fn grok_fn_sig<'a>(
                 };
                 tmp.build_fields(depth_limit, &mut do_write);
 
-                // Error checking
+                // Error checking.
                 if !do_write {
                     // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
                     match &mut tmp.field_decls {
@@ -1794,7 +1802,7 @@ fn grok_fn_sig<'a>(
                     }
                 }
                 if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                    // this record is also invalid
+                    // this record is also invalid.
                     tmp.var_name = String::from("false");
                 }
                 tmp
@@ -1857,7 +1865,7 @@ fn grok_fn_sig<'a>(
                         }
 
                         if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                            // this record is also invalid
+                            // this record is also invalid.
                             tmp.var_name = String::from("false");
                         }
                     }
@@ -1947,8 +1955,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
         });
         let krate = self.fully_expand_fragment(AstFragment::Crate(krate)).make_crate();
         // Decls pass.
-        // First, pass through the entire krate building HashMap<String, Box<Item>>
-        //   (value is always an ItemKind::Struct)
+        // First, pass through the entire krate building HashMap<String, Box<Item>> (value is always an ItemKind::Struct).
         // Create new decls/dtrace files. Open decls file for writing.
         // Visit the entire immutable AST with a non-mutable visitor to write the decls file,
         // skipping over functions we generated.
@@ -1957,7 +1964,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             let mut map_builder = DeclsHashMapBuilder { map: &mut struct_map };
             map_builder.visit_crate(&krate);
 
-            // create or overwrite decls/dtrace
+            // create or overwrite decls/dtrace.
             let decls_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".decls");
             let decls = std::path::Path::new(&decls_path);
             std::fs::File::create(&decls).unwrap();
@@ -1966,7 +1973,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             std::fs::File::create(&dtrace).unwrap();
             write_header();
             write_newline();
-            let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, depth_limit: 4 }; // off by one to match dtrace
+            let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, depth_limit: 4 }; // off by one to match dtrace.
             decls_visitor.visit_crate(&krate);
         }
         assert_eq!(krate.id, ast::CRATE_NODE_ID);

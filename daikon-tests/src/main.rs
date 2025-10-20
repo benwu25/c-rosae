@@ -1,16 +1,18 @@
 use colored::Colorize;
 
+// Given a Rust source file name, splice out the name of the file
+// by excluding the .rs extension and any preceding directory names.
 pub fn get_output_name(s: String) -> String {
-    let end =
-        match s.rfind(".") { // .rs
-            None => panic!("no . at the end of input file name"),
-            Some(end) => end
-        };
-    let mut start =
-        match s.rfind("/") { // .../<crate>.rs
-            None => 0,
-            Some(slash) => slash+1
-        };
+    let end = match s.rfind(".") {
+        // .rs
+        None => panic!("no . at the end of input file name"),
+        Some(end) => end,
+    };
+    let mut start = match s.rfind("/") {
+        // .../<crate>.rs
+        None => 0,
+        Some(slash) => slash + 1,
+    };
     let mut res = String::from("");
     while start < end {
         res.push_str(&format!("{}", s.chars().nth(start).unwrap()));
@@ -19,8 +21,8 @@ pub fn get_output_name(s: String) -> String {
     return res;
 }
 
+// iterate through "./tests" and run rustc +daikon for files, cargo +daikon for multi-file tests in subdirectories
 fn run_daikon_rustc_pp_tests() {
-    // iterate through "./tests" and run rustc +daikon for files, cargo +daikon for multi-file tests in subdirectories
     let test_path = std::fs::canonicalize(std::path::Path::new("./test")).unwrap();
 
     // how to make each one of these a test w/o a new function?
@@ -77,9 +79,8 @@ fn run_daikon_rustc_pp_tests() {
     }
 
     println!("\n{}", "All tests passed".green());
-
 }
 
 fn main() {
-  run_daikon_rustc_pp_tests();
+    run_daikon_rustc_pp_tests();
 }
