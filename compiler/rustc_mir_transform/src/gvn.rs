@@ -129,6 +129,7 @@ impl<'tcx> crate::MirPass<'tcx> for GVN {
         let ssa = SsaLocals::new(tcx, body, typing_env);
         // Clone dominators because we need them while mutating the body.
         let dominators = body.basic_blocks.dominators().clone();
+        let maybe_loop_headers = loops::maybe_loop_headers(body);
 
         let arena = DroplessArena::default();
         let mut state =
@@ -141,6 +142,11 @@ impl<'tcx> crate::MirPass<'tcx> for GVN {
 
         let reverse_postorder = body.basic_blocks.reverse_postorder().to_vec();
         for bb in reverse_postorder {
+            // N.B. With loops, reverse postorder cannot produce a valid topological order.
+            // A statement or terminator from inside the loop, that is not processed yet, may have performed an indirect write.
+            if maybe_loop_headers.contains(bb) {
+                state.invalidate_derefs();
+            }
             let data = &mut body.basic_blocks.as_mut_preserves_cfg()[bb];
             state.visit_basic_block_data(bb, data);
         }
@@ -1920,13 +1926,8 @@ impl<'tcx> MutVisitor<'tcx> for VnState<'_, '_, 'tcx> {
                 self.assign(local, opaque);
             }
         }
-        // Function calls and ASM may invalidate (nested) derefs. We must handle them carefully.
-        // Currently, only preserving derefs for trivial terminators like SwitchInt and Goto.
-        let safe_to_preserve_derefs = matches!(
-            terminator.kind,
-            TerminatorKind::SwitchInt { .. } | TerminatorKind::Goto { .. }
-        );
-        if !safe_to_preserve_derefs {
+        // Terminators that can write to memory may invalidate (nested) derefs.
+        if terminator.kind.can_write_to_memory() {
             self.invalidate_derefs();
         }
         self.super_terminator(terminator, location);
