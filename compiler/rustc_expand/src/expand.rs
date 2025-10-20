@@ -1101,7 +1101,7 @@ impl<'a> TopLevlDecl<'a> {
         }
     }
 
-    // If we are a struct variable, use our key to get field definitions
+    // If the top-level var is a struct variable, use our key to get field definitions
     // for our struct type.
     fn get_fields(&self, do_write: &mut bool) -> ThinVec<FieldDef> {
         // use self.key to look up who we are.
