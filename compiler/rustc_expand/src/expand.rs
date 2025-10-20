@@ -608,9 +608,8 @@ fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
     res
 }
 
-// This struct is responsible for building a map from identifier to Struct.
-// This will not be needed once we do a first pass, we can read from a /tmp
-// file to fill this purpose.
+// Immutable visitor to visit all structs and build a map data structure.
+// TODO: remove, we will use a /tmp file instead.
 #[allow(rustc::default_hash_types)]
 struct DeclsHashMapBuilder<'a> {
     pub map: &'a mut HashMap<String, Box<Item>>,
@@ -680,7 +679,7 @@ struct FieldDecl<'a> {
 
 // Represents the array contents decl record (i.e., arr[..] or arr[..].g rather than arr).
 // enclosing_var: name of the outer container for this array or Vec.
-// sub_contents: If we are an array of structs, we need ArrayContents for each field.
+// sub_contents: If the top-level variable is an array of structs, we need ArrayContents for each field.
 // See TopLevlDecl for other fields.
 #[allow(rustc::default_hash_types)]
 struct ArrayContents<'a> {
@@ -694,8 +693,7 @@ struct ArrayContents<'a> {
 }
 
 impl<'a> ArrayContents<'a> {
-    // Write out an ArrayContents to the decls file. We assume the cursor is at
-    // the right spot and we simply append ourselves to the file.
+    // Append an ArrayContents to the decls file.
     fn write(&mut self) {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
@@ -726,7 +724,7 @@ impl<'a> ArrayContents<'a> {
         }
     }
 
-    // If we are an array of structs, use our key to fetch field definitions
+    // If the top-level variable is an array of structs, use our key to fetch field definitions
     // of our struct type.
     fn get_fields(&self, do_write: &mut bool) -> ThinVec<FieldDef> {
         // use self.key to look up who we are.
@@ -894,7 +892,7 @@ impl<'a> FieldDecl<'a> {
         }
     }
 
-    // If we are a struct field, recursively build up our field_decls by
+    // If this FieldDecl represents a struct field, recursively build up our field_decls by
     // creating a new FieldDecl for each field.
     fn build_fields(&mut self, depth_limit: u32, do_write: &mut bool) {
         // enclosing_var and field_name have been set, so just take care of decl.
@@ -940,8 +938,8 @@ impl<'a> TopLevlDecl<'a> {
         }
     }
 
-    // If we are a struct variable, recursively build declarations for our
-    // fields. Almost or maybe exactly the same as FieldDecl::build_fields.
+    // If field_decls is Some and sub_contents is None (top-level is a struct variable),
+    // recursively build declarations for the fields.
     fn build_fields(&mut self, depth_limit: u32, do_write: &mut bool) {
         if depth_limit == 0 {
             // Invalidate ourselves for writing? Or will writing stop too...
