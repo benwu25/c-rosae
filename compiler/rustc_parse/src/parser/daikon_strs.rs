@@ -1,3 +1,5 @@
+// TODO: add one test for each String.
+
 use crate::parser::item::OUTPUT_NAME;
 
 // Proper primitive types
@@ -79,93 +81,42 @@ pub(crate) static DTRACE_PRIM_REF: &str = "fn main() { dtrace_print_prim::<$1>($
 // $1: Identifier for variable.
 // $2: $1.
 pub(crate) static DTRACE_PRIM_TOSTRING: &str =
-    "fn __skip() { dtrace_print_string($1.to_string(), String::from(\"$2\")); }";
+    "fn main() { dtrace_print_string($1.to_string(), String::from(\"$2\")); }";
 
-pub(crate) static DTRACE_PRIM_FIELD_TOSTRING: [&str; 3] =
-    ["dtrace_print_string(self.", ".to_string(), format!(\"{}{}\", prefix, \".", "\"));"];
-pub(crate) fn build_prim_field_tostring(field_name: String) -> String {
-    let mut res = String::from(DTRACE_PRIM_FIELD_TOSTRING[0]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRIM_FIELD_TOSTRING[1]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRIM_FIELD_TOSTRING[2]);
-    res
-}
+// Build log stmt for a String field.
+// $1: Field name.
+// $2: $1.
+pub(crate) static DTRACE_PRIM_FIELD_TOSTRING: &str =
+    "dtrace_print_string(self.$1.to_string(), format!(\"{}{}\", prefix, \".$2\"));";
 
-// pub(crate) fn build_prim_with_to_string
-
-pub(crate) static DTRACE_PRIM_STRUCT: [&str; 4] =
-    ["dtrace_print_prim::<", ">(self.", ", format!(\"{}{}\", prefix, \".", "\"));"];
-pub(crate) fn build_field_prim(p_type: String, field_name: String) -> String {
-    let mut res = String::from(DTRACE_PRIM_STRUCT[0]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_PRIM_STRUCT[1]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRIM_STRUCT[2]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRIM_STRUCT[3]);
-    res
-}
+// Build log stmt for primitive field (non-string type).
+// $1: Primitive type of field.
+// $2: Field name.
+// $3: $2.
+pub(crate) static DTRACE_PRIM_STRUCT: &str =
+    "dtrace_print_prim::<$1>(self.$2, format!(\"{}{}\", prefix, \".$3\"));";
 
 // TODO: if you have Vec<&'a &'b i32>, you will probably have to make a new Vec<i32> like this
 //       to satisfy dtrace_print_prim_vec<T>(v: &Vec<T>).
-pub(crate) static DTRACE_PRIM_REF_STRUCT: [&str; 5] = [
-    "dtrace_print_prim::<",
-    ">(",
-    "::from_str(&self.",
-    ".to_string()).expect(\"Ok\"), format!(\"{}{}\", prefix, \".",
-    "\"));",
-];
-pub(crate) fn build_field_prim_ref(p_type: String, field_name: String) -> String {
-    let mut res = String::from(DTRACE_PRIM_REF_STRUCT[0]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_PRIM_REF_STRUCT[1]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_PRIM_REF_STRUCT[2]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRIM_REF_STRUCT[3]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRIM_REF_STRUCT[4]);
-    res
-}
 
-pub(crate) static DTRACE_USERDEF: [&str; 6] = [
-    "fn __skip() { dtrace_print_pointer(",
-    " as *const _ as usize, String::from(\"",
-    "\"));\n",
-    ".dtrace_print_fields(",
-    ", String::from(\"",
-    "\")); }",
-];
-pub(crate) fn build_userdef(var_name: String, depth_arg: i32) -> String {
-    let mut res = String::from(DTRACE_USERDEF[0]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_USERDEF[1]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_USERDEF[2]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_USERDEF[3]);
-    res.push_str(&String::from(depth_arg.to_string()));
-    res.push_str(DTRACE_USERDEF[4]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_USERDEF[5]);
-    res
-}
+// Build log stmt for fields with primitive reference type.
+// $1: Underlying primitive type of field.
+// $2: $1.
+// $3: Field name.
+// $4: $3.
+pub(crate) static DTRACE_PRIM_REF_STRUCT: &str = "dtrace_print_prim::<$1>($2::from_str(&self.$3.to_string()).expect(\"Ok\"), format!(\"{}{}\", prefix, \".$4\"));";
 
-pub(crate) fn build_userdef_with_ampersand_access(var_name: String, depth_arg: i32) -> String {
-    let mut res = String::from(DTRACE_USERDEF[0]);
-    res.push_str(&format!("&{}", var_name));
-    res.push_str(DTRACE_USERDEF[1]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_USERDEF[2]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_USERDEF[3]);
-    res.push_str(&String::from(depth_arg.to_string()));
-    res.push_str(DTRACE_USERDEF[4]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_USERDEF[5]);
-    res
-}
+// Build log stmt for a struct variable.
+// $1: Variable name.
+// $2: $1.
+// $3: $1.
+// $4: Depth counter.
+// $5: $1.
+pub(crate) static DTRACE_USERDEF: &str = "fn main() { dtrace_print_pointer($1 as *const _ as usize, String::from(\"$2\"));\n $3.dtrace_print_fields($4, String::from(\"$5\")); }";
+
+// Build log stmt for struct variable, syntax difference.
+// Args: See DTRACE_USERDEF.
+pub(crate) static DTRACE_USERDEF_AMPERSAND: &str = "fn main() { dtrace_print_pointer(&$1 as *const _ as usize, String::from(\"$2\"));\n $3.dtrace_print_fields($4, String::from(\"$5\")); }";
 
 pub(crate) static DTRACE_USERDEF_RET: [&str; 2] = [
     "fn __skip() { dtrace_print_pointer(__daikon_ret as *const _ as usize, String::from(\"return\"));\n__daikon_ret.dtrace_print_fields(",

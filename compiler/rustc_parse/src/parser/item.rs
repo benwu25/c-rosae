@@ -1449,11 +1449,25 @@ impl<'a> DaikonDtraceVisitor<'a> {
             let mut dtrace_field_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
                 BasicType::Prim(p_type) => {
                     if p_type == "String" || p_type == "str" {
-                        build_prim_field_tostring(field_name.clone())
+                        build_instrument_code(
+                            vec![field_name.clone(), field_name.clone()],
+                            DTRACE_PRIM_FIELD_TOSTRING,
+                        )
                     } else if is_ref {
-                        build_field_prim_ref(p_type.clone(), field_name.clone())
+                        build_instrument_code(
+                            vec![
+                                p_type.clone(),
+                                p_type.clone(),
+                                field_name.clone(),
+                                field_name.clone(),
+                            ],
+                            DTRACE_PRIM_REF_STRUCT,
+                        )
                     } else {
-                        build_field_prim(p_type.clone(), field_name.clone())
+                        build_instrument_code(
+                            vec![p_type.clone(), field_name.clone(), field_name.clone()],
+                            DTRACE_PRIM_STRUCT,
+                        )
                     }
                 }
                 BasicType::UserDef(_) => {
@@ -1496,8 +1510,18 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
         while i < decl.inputs.len() {
             let mut is_ref = false;
+            let var_name = get_param_ident(&decl.inputs[i].pat);
             let mut dtrace_rec = if get_param_ident(&decl.inputs[i].pat) == "self" {
-                build_userdef(get_param_ident(&decl.inputs[i].pat), 3 /* depth_arg  */)
+                build_instrument_code(
+                    vec![
+                        var_name.clone(),
+                        var_name.clone(),
+                        var_name.clone(),
+                        String::from("3"), /* depth_arg */
+                        var_name.clone(),
+                    ],
+                    DTRACE_USERDEF,
+                )
             } else {
                 match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
                     BasicType::Prim(p_type) => {
@@ -1532,14 +1556,26 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     }
                     BasicType::UserDef(_) => {
                         if !is_ref {
-                            build_userdef_with_ampersand_access(
-                                get_param_ident(&decl.inputs[i].pat),
-                                3, /* depth_arg  */
+                            build_instrument_code(
+                                vec![
+                                    var_name.clone(),
+                                    var_name.clone(),
+                                    var_name.clone(),
+                                    String::from("3"), /* depth_arg */
+                                    var_name.clone(),
+                                ],
+                                DTRACE_USERDEF_AMPERSAND,
                             )
                         } else {
-                            build_userdef(
-                                get_param_ident(&decl.inputs[i].pat),
-                                3, /* depth_arg  */
+                            build_instrument_code(
+                                vec![
+                                    var_name.clone(),
+                                    var_name.clone(),
+                                    var_name.clone(),
+                                    String::from("3"), /* depth_arg */
+                                    var_name.clone(),
+                                ],
+                                DTRACE_USERDEF,
                             )
                         }
                     }
