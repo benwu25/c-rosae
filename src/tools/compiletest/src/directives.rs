@@ -8,7 +8,8 @@ use tracing::*;
 
 use crate::common::{CodegenBackend, Config, Debugger, FailMode, PassMode, RunFailMode, TestMode};
 use crate::debuggers::{extract_cdb_version, extract_gdb_version};
-use crate::directives::auxiliary::{AuxProps, parse_and_update_aux};
+pub(crate) use crate::directives::auxiliary::AuxProps;
+use crate::directives::auxiliary::parse_and_update_aux;
 use crate::directives::directive_names::{
     KNOWN_DIRECTIVE_NAMES, KNOWN_HTMLDOCCK_DIRECTIVE_NAMES, KNOWN_JSONDOCCK_DIRECTIVE_NAMES,
 };
@@ -21,7 +22,7 @@ use crate::executor::{CollectedTestDesc, ShouldPanic};
 use crate::util::static_regex;
 use crate::{fatal, help};
 
-pub(crate) mod auxiliary;
+mod auxiliary;
 mod cfg;
 mod directive_names;
 mod file;
@@ -44,10 +45,6 @@ impl DirectivesCache {
 /// the test.
 #[derive(Default)]
 pub(crate) struct EarlyProps {
-    /// Auxiliary crates that should be built and made available to this test.
-    /// Included in [`EarlyProps`] so that the indicated files can participate
-    /// in up-to-date checking. Building happens via [`TestProps::aux`] instead.
-    pub(crate) aux: AuxProps,
     pub(crate) revisions: Vec<String>,
 }
 
@@ -66,7 +63,6 @@ impl EarlyProps {
             file_directives,
             // (dummy comment to force args into vertical layout)
             &mut |ln: &DirectiveLine<'_>| {
-                parse_and_update_aux(config, ln, &mut props.aux);
                 config.parse_and_update_revisions(ln, &mut props.revisions);
             },
         );
@@ -81,11 +77,15 @@ impl EarlyProps {
 }
 
 #[derive(Clone, Debug)]
-pub struct TestProps {
+pub(crate) struct TestProps {
     // Lines that should be expected, in order, on standard out
     pub error_patterns: Vec<String>,
     // Regexes that should be expected, in order, on standard out
     pub regex_error_patterns: Vec<String>,
+    /// Edition selected by an `//@ edition` directive, if any.
+    ///
+    /// Automatically added to `compile_flags` during directive processing.
+    pub edition: Option<Edition>,
     // Extra flags to pass to the compiler
     pub compile_flags: Vec<String>,
     // Extra flags to pass when the compiled code is run (such as --bench)
@@ -256,8 +256,6 @@ mod directives {
     pub const NO_AUTO_CHECK_CFG: &'static str = "no-auto-check-cfg";
     pub const ADD_CORE_STUBS: &'static str = "add-core-stubs";
     pub const CORE_STUBS_COMPILE_FLAGS: &'static str = "core-stubs-compile-flags";
-    // This isn't a real directive, just one that is probably mistyped often
-    pub const INCORRECT_COMPILER_FLAGS: &'static str = "compiler-flags";
     pub const DISABLE_GDB_PRETTY_PRINTERS: &'static str = "disable-gdb-pretty-printers";
     pub const COMPARE_OUTPUT_BY_LINES: &'static str = "compare-output-by-lines";
 }
@@ -267,6 +265,7 @@ impl TestProps {
         TestProps {
             error_patterns: vec![],
             regex_error_patterns: vec![],
+            edition: None,
             compile_flags: vec![],
             run_flags: vec![],
             doc_flags: vec![],
@@ -355,7 +354,6 @@ impl TestProps {
     /// `//@[foo]`), then the property is ignored unless `test_revision` is
     /// `Some("foo")`.
     fn load_from(&mut self, testfile: &Utf8Path, test_revision: Option<&str>, config: &Config) {
-        let mut has_edition = false;
         if !testfile.is_dir() {
             let file_contents = fs::read_to_string(testfile).unwrap();
             let file_directives = FileDirectives::from_file_contents(testfile, &file_contents);
@@ -418,18 +416,9 @@ impl TestProps {
                         }
                         self.compile_flags.extend(flags);
                     }
-                    if config.parse_name_value_directive(ln, INCORRECT_COMPILER_FLAGS).is_some() {
-                        panic!("`compiler-flags` directive should be spelled `compile-flags`");
-                    }
 
                     if let Some(range) = parse_edition_range(config, ln) {
-                        // The edition is added at the start, since flags from //@compile-flags must
-                        // be passed to rustc last.
-                        self.compile_flags.insert(
-                            0,
-                            format!("--edition={}", range.edition_to_test(config.edition)),
-                        );
-                        has_edition = true;
+                        self.edition = Some(range.edition_to_test(config.edition));
                     }
 
                     config.parse_and_update_revisions(ln, &mut self.revisions);
@@ -510,7 +499,7 @@ impl TestProps {
                         &mut self.check_test_line_numbers_match,
                     );
 
-                    self.update_pass_mode(ln, test_revision, config);
+                    self.update_pass_mode(ln, config);
                     self.update_fail_mode(ln, config);
 
                     config.set_name_directive(ln, IGNORE_PASS, &mut self.ignore_pass);
@@ -678,10 +667,10 @@ impl TestProps {
             }
         }
 
-        if let (Some(edition), false) = (&config.edition, has_edition) {
+        if let Some(edition) = self.edition.or(config.edition) {
             // The edition is added at the start, since flags from //@compile-flags must be passed
             // to rustc last.
-            self.compile_flags.insert(0, format!("--edition={}", edition));
+            self.compile_flags.insert(0, format!("--edition={edition}"));
         }
     }
 
@@ -692,9 +681,6 @@ impl TestProps {
                 panic!("`{}-fail` directive is only supported in UI tests", mode);
             }
         };
-        if config.mode == TestMode::Ui && config.parse_name_directive(ln, "compile-fail") {
-            panic!("`compile-fail` directive is useless in UI tests");
-        }
         let fail_mode = if config.parse_name_directive(ln, "check-fail") {
             check_ui("check");
             Some(FailMode::Check)
@@ -720,18 +706,15 @@ impl TestProps {
         }
     }
 
-    fn update_pass_mode(
-        &mut self,
-        ln: &DirectiveLine<'_>,
-        revision: Option<&str>,
-        config: &Config,
-    ) {
+    fn update_pass_mode(&mut self, ln: &DirectiveLine<'_>, config: &Config) {
         let check_no_run = |s| match (config.mode, s) {
             (TestMode::Ui, _) => (),
             (TestMode::Crashes, _) => (),
             (TestMode::Codegen, "build-pass") => (),
             (TestMode::Incremental, _) => {
-                if revision.is_some() && !self.revisions.iter().all(|r| r.starts_with("cfail")) {
+                // FIXME(Zalathar): This only detects forbidden directives that are
+                // declared _after_ the incompatible `//@ revisions:` directive(s).
+                if self.revisions.iter().any(|r| !r.starts_with("cfail")) {
                     panic!("`{s}` directive is only supported in `cfail` incremental tests")
                 }
             }
@@ -817,6 +800,11 @@ fn check_directive<'a>(
         .remark_after_space()
         .map(|remark| remark.trim_start().split(' ').next().unwrap())
         .filter(|token| KNOWN_DIRECTIVE_NAMES.contains(token));
+
+    // FIXME(Zalathar): Consider emitting specialized error/help messages for
+    // bogus directive names that are similar to real ones, e.g.:
+    // - *`compiler-flags` => `compile-flags`
+    // - *`compile-fail` => `check-fail` or `build-fail`
 
     CheckDirectiveResult { is_known_directive, trailing_directive }
 }
@@ -1310,6 +1298,7 @@ pub(crate) fn make_test_description(
     file_directives: &FileDirectives<'_>,
     test_revision: Option<&str>,
     poisoned: &mut bool,
+    aux_props: &mut AuxProps,
 ) -> CollectedTestDesc {
     let mut ignore = false;
     let mut ignore_message = None;
@@ -1326,6 +1315,9 @@ pub(crate) fn make_test_description(
             if !ln.applies_to_test_revision(test_revision) {
                 return;
             }
+
+            // Parse `aux-*` directives, for use by up-to-date checks.
+            parse_and_update_aux(config, ln, aux_props);
 
             macro_rules! decision {
                 ($e:expr) => {

@@ -101,6 +101,7 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     type CoroutineId = DefId;
     type AdtId = DefId;
     type ImplId = DefId;
+    type UnevaluatedConstId = DefId;
     type Span = Span;
 
     type GenericArgs = ty::GenericArgsRef<'tcx>;
@@ -1785,9 +1786,7 @@ impl<'tcx> TyCtxt<'tcx> {
     }
 
     pub fn is_default_trait(self, def_id: DefId) -> bool {
-        self.default_traits()
-            .iter()
-            .any(|&default_trait| self.lang_items().get(default_trait) == Some(def_id))
+        self.default_traits().iter().any(|&default_trait| self.is_lang_item(def_id, default_trait))
     }
 
     pub fn is_sizedness_trait(self, def_id: DefId) -> bool {
