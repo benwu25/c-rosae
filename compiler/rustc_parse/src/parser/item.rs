@@ -2946,9 +2946,6 @@ impl<'a> Parser<'a> {
             self.expect_semi()?;
 
             let whole_span = lo.to(self.prev_token.span);
-            if let Const::Yes(_) = constness {
-                self.dcx().emit_err(errors::TraitAliasCannotBeConst { span: whole_span });
-            }
             if is_auto == IsAuto::Yes {
                 self.dcx().emit_err(errors::TraitAliasCannotBeAuto { span: whole_span });
             }
@@ -2958,7 +2955,7 @@ impl<'a> Parser<'a> {
 
             self.psess.gated_spans.gate(sym::trait_alias, whole_span);
 
-            Ok(ItemKind::TraitAlias(ident, generics, bounds))
+            Ok(ItemKind::TraitAlias(Box::new(TraitAlias { constness, ident, generics, bounds })))
         } else {
             // It's a normal trait.
             generics.where_clause = self.parse_where_clause()?;

@@ -39,13 +39,11 @@ trait ArgAttributesExt {
 const ABI_AFFECTING_ATTRIBUTES: [(ArgAttribute, llvm::AttributeKind); 1] =
     [(ArgAttribute::InReg, llvm::AttributeKind::InReg)];
 
-const OPTIMIZATION_ATTRIBUTES: [(ArgAttribute, llvm::AttributeKind); 6] = [
+const OPTIMIZATION_ATTRIBUTES: [(ArgAttribute, llvm::AttributeKind); 4] = [
     (ArgAttribute::NoAlias, llvm::AttributeKind::NoAlias),
-    (ArgAttribute::CapturesAddress, llvm::AttributeKind::CapturesAddress),
     (ArgAttribute::NonNull, llvm::AttributeKind::NonNull),
     (ArgAttribute::ReadOnly, llvm::AttributeKind::ReadOnly),
     (ArgAttribute::NoUndef, llvm::AttributeKind::NoUndef),
-    (ArgAttribute::CapturesReadOnly, llvm::AttributeKind::CapturesReadOnly),
 ];
 
 fn get_attrs<'ll>(this: &ArgAttributes, cx: &CodegenCx<'ll, '_>) -> SmallVec<[&'ll Attribute; 8]> {
@@ -81,13 +79,21 @@ fn get_attrs<'ll>(this: &ArgAttributes, cx: &CodegenCx<'ll, '_>) -> SmallVec<[&'
         }
         for (attr, llattr) in OPTIMIZATION_ATTRIBUTES {
             if regular.contains(attr) {
-                // captures(...) is only available since LLVM 21.
-                if (attr == ArgAttribute::CapturesReadOnly || attr == ArgAttribute::CapturesAddress)
-                    && llvm_util::get_version() < (21, 0, 0)
-                {
-                    continue;
-                }
                 attrs.push(llattr.create_attr(cx.llcx));
+            }
+        }
+        // captures(...) is only available since LLVM 21.
+        if (21, 0, 0) <= llvm_util::get_version() {
+            const CAPTURES_ATTRIBUTES: [(ArgAttribute, llvm::AttributeKind); 3] = [
+                (ArgAttribute::CapturesNone, llvm::AttributeKind::CapturesNone),
+                (ArgAttribute::CapturesAddress, llvm::AttributeKind::CapturesAddress),
+                (ArgAttribute::CapturesReadOnly, llvm::AttributeKind::CapturesReadOnly),
+            ];
+            for (attr, llattr) in CAPTURES_ATTRIBUTES {
+                if regular.contains(attr) {
+                    attrs.push(llattr.create_attr(cx.llcx));
+                    break;
+                }
             }
         }
     } else if cx.tcx.sess.opts.unstable_opts.sanitizer.contains(SanitizerSet::MEMORY) {
@@ -522,6 +528,28 @@ impl<'ll, 'tcx> FnAbiLlvmExt<'ll, 'tcx> for FnAbi<'tcx, Ty<'tcx>> {
                     let ii = apply(b);
                     if let BackendRepr::ScalarPair(scalar_a, scalar_b) = arg.layout.backend_repr {
                         apply_range_attr(llvm::AttributePlace::Argument(i), scalar_a);
+                        let primitive_b = scalar_b.primitive();
+                        let scalar_b = if let rustc_abi::Primitive::Int(int, false) = primitive_b
+                            && let ty::Ref(_, pointee_ty, _) = *arg.layout.ty.kind()
+                            && let ty::Slice(element_ty) = *pointee_ty.kind()
+                            && let elem_size = cx.layout_of(element_ty).size
+                            && elem_size != rustc_abi::Size::ZERO
+                        {
+                            // Ideally the layout calculations would have set the range,
+                            // but that's complicated due to cycles, so in the mean time
+                            // we calculate and apply it here.
+                            debug_assert!(scalar_b.is_always_valid(cx));
+                            let isize_max = int.signed_max() as u64;
+                            rustc_abi::Scalar::Initialized {
+                                value: primitive_b,
+                                valid_range: rustc_abi::WrappingRange {
+                                    start: 0,
+                                    end: u128::from(isize_max / elem_size.bytes()),
+                                },
+                            }
+                        } else {
+                            scalar_b
+                        };
                         apply_range_attr(llvm::AttributePlace::Argument(ii), scalar_b);
                     }
                 }

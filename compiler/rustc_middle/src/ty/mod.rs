@@ -37,7 +37,6 @@ use rustc_errors::{Diag, ErrorGuaranteed, LintBuffer};
 use rustc_hir::attrs::{AttributeKind, StrippedCfgItem};
 use rustc_hir::def::{CtorKind, CtorOf, DefKind, DocLinkResMap, LifetimeRes, Res};
 use rustc_hir::def_id::{CrateNum, DefId, DefIdMap, LocalDefId, LocalDefIdMap};
-use rustc_hir::definitions::DisambiguatorState;
 use rustc_hir::{LangItem, attrs as attr, find_attr};
 use rustc_index::IndexVec;
 use rustc_index::bit_set::BitMatrix;
@@ -210,8 +209,6 @@ pub struct ResolverAstLowering {
     pub next_node_id: ast::NodeId,
 
     pub node_id_to_def_id: NodeMap<LocalDefId>,
-
-    pub disambiguator: DisambiguatorState,
 
     pub trait_map: NodeMap<Vec<hir::TraitCandidate>>,
     /// List functions and methods for which lifetime elision was successful.
@@ -728,7 +725,7 @@ impl<'a, 'tcx> IntoIterator for &'a InstantiatedPredicates<'tcx> {
 }
 
 #[derive(Copy, Clone, Debug, TypeFoldable, TypeVisitable, HashStable, TyEncodable, TyDecodable)]
-pub struct OpaqueHiddenType<'tcx> {
+pub struct ProvisionalHiddenType<'tcx> {
     /// The span of this particular definition of the opaque type. So
     /// for example:
     ///
@@ -770,9 +767,9 @@ pub enum DefiningScopeKind {
     MirBorrowck,
 }
 
-impl<'tcx> OpaqueHiddenType<'tcx> {
-    pub fn new_error(tcx: TyCtxt<'tcx>, guar: ErrorGuaranteed) -> OpaqueHiddenType<'tcx> {
-        OpaqueHiddenType { span: DUMMY_SP, ty: Ty::new_error(tcx, guar) }
+impl<'tcx> ProvisionalHiddenType<'tcx> {
+    pub fn new_error(tcx: TyCtxt<'tcx>, guar: ErrorGuaranteed) -> ProvisionalHiddenType<'tcx> {
+        ProvisionalHiddenType { span: DUMMY_SP, ty: Ty::new_error(tcx, guar) }
     }
 
     pub fn build_mismatch_error(
@@ -801,7 +798,7 @@ impl<'tcx> OpaqueHiddenType<'tcx> {
         opaque_type_key: OpaqueTypeKey<'tcx>,
         tcx: TyCtxt<'tcx>,
         defining_scope_kind: DefiningScopeKind,
-    ) -> Self {
+    ) -> DefinitionSiteHiddenType<'tcx> {
         let OpaqueTypeKey { def_id, args } = opaque_type_key;
 
         // Use args to build up a reverse map from regions to their
@@ -824,15 +821,68 @@ impl<'tcx> OpaqueHiddenType<'tcx> {
         //
         // We erase regions when doing this during HIR typeck. We manually use `fold_regions`
         // here as we do not want to anonymize bound variables.
-        let this = match defining_scope_kind {
-            DefiningScopeKind::HirTypeck => fold_regions(tcx, self, |_, _| tcx.lifetimes.re_erased),
-            DefiningScopeKind::MirBorrowck => self,
+        let ty = match defining_scope_kind {
+            DefiningScopeKind::HirTypeck => {
+                fold_regions(tcx, self.ty, |_, _| tcx.lifetimes.re_erased)
+            }
+            DefiningScopeKind::MirBorrowck => self.ty,
         };
-        let result = this.fold_with(&mut opaque_types::ReverseMapper::new(tcx, map, self.span));
+        let result_ty = ty.fold_with(&mut opaque_types::ReverseMapper::new(tcx, map, self.span));
         if cfg!(debug_assertions) && matches!(defining_scope_kind, DefiningScopeKind::HirTypeck) {
-            assert_eq!(result.ty, fold_regions(tcx, result.ty, |_, _| tcx.lifetimes.re_erased));
+            assert_eq!(result_ty, fold_regions(tcx, result_ty, |_, _| tcx.lifetimes.re_erased));
         }
-        result
+        DefinitionSiteHiddenType { span: self.span, ty: ty::EarlyBinder::bind(result_ty) }
+    }
+}
+
+#[derive(Copy, Clone, Debug, HashStable, TyEncodable, TyDecodable)]
+pub struct DefinitionSiteHiddenType<'tcx> {
+    /// The span of the definition of the opaque type. So for example:
+    ///
+    /// ```ignore (incomplete snippet)
+    /// type Foo = impl Baz;
+    /// fn bar() -> Foo {
+    /// //          ^^^ This is the span we are looking for!
+    /// }
+    /// ```
+    ///
+    /// In cases where the fn returns `(impl Trait, impl Trait)` or
+    /// other such combinations, the result is currently
+    /// over-approximated, but better than nothing.
+    pub span: Span,
+
+    /// The final type of the opaque.
+    pub ty: ty::EarlyBinder<'tcx, Ty<'tcx>>,
+}
+
+impl<'tcx> DefinitionSiteHiddenType<'tcx> {
+    pub fn new_error(tcx: TyCtxt<'tcx>, guar: ErrorGuaranteed) -> DefinitionSiteHiddenType<'tcx> {
+        DefinitionSiteHiddenType {
+            span: DUMMY_SP,
+            ty: ty::EarlyBinder::bind(Ty::new_error(tcx, guar)),
+        }
+    }
+
+    pub fn build_mismatch_error(
+        &self,
+        other: &Self,
+        tcx: TyCtxt<'tcx>,
+    ) -> Result<Diag<'tcx>, ErrorGuaranteed> {
+        let self_ty = self.ty.instantiate_identity();
+        let other_ty = other.ty.instantiate_identity();
+        (self_ty, other_ty).error_reported()?;
+        // Found different concrete types for the opaque type.
+        let sub_diag = if self.span == other.span {
+            TypeMismatchReason::ConflictType { span: self.span }
+        } else {
+            TypeMismatchReason::PreviousUse { span: self.span }
+        };
+        Ok(tcx.dcx().create_err(OpaqueHiddenTypeMismatch {
+            self_ty,
+            other_ty,
+            other_span: other.span,
+            sub: sub_diag,
+        }))
     }
 }
 
@@ -1523,6 +1573,14 @@ impl<'tcx> TyCtxt<'tcx> {
             flags.insert(ReprFlags::IS_LINEAR);
         }
 
+        // See `TyAndLayout::pass_indirectly_in_non_rustic_abis` for details.
+        if find_attr!(
+            self.get_all_attrs(did),
+            AttributeKind::RustcPassIndirectlyInNonRusticAbis(..)
+        ) {
+            flags.insert(ReprFlags::PASS_INDIRECTLY_IN_NON_RUSTIC_ABIS);
+        }
+
         ReprOptions { int: size, align: max_align, pack: min_pack, flags, field_shuffle_seed }
     }
 
@@ -2104,7 +2162,7 @@ impl<'tcx> TyCtxt<'tcx> {
             DefKind::Fn | DefKind::Ctor(_, CtorKind::Fn) => {
                 self.constness(def_id) == hir::Constness::Const
             }
-            DefKind::Trait => self.is_const_trait(def_id),
+            DefKind::TraitAlias | DefKind::Trait => self.is_const_trait(def_id),
             DefKind::AssocTy => {
                 let parent_def_id = self.parent(def_id);
                 match self.def_kind(parent_def_id) {
@@ -2147,7 +2205,6 @@ impl<'tcx> TyCtxt<'tcx> {
             | DefKind::Variant
             | DefKind::TyAlias
             | DefKind::ForeignTy
-            | DefKind::TraitAlias
             | DefKind::TyParam
             | DefKind::Const
             | DefKind::ConstParam

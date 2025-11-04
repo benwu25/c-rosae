@@ -77,6 +77,7 @@ impl AttributeKind {
             PassByValue(..) => Yes,
             Path(..) => No,
             PatternComplexityLimit { .. } => No,
+            PinV2(..) => Yes,
             Pointee(..) => No,
             ProcMacro(..) => No,
             ProcMacroAttribute(..) => No,
@@ -90,6 +91,7 @@ impl AttributeKind {
             RustcLayoutScalarValidRangeStart(..) => Yes,
             RustcMain => No,
             RustcObjectLifetimeDefault => No,
+            RustcPassIndirectlyInNonRusticAbis(..) => No,
             RustcSimdMonomorphizeLaneLimit(..) => Yes, // Affects layout computation, which needs to work cross-crate
             Sanitize { .. } => No,
             ShouldPanic { .. } => No,

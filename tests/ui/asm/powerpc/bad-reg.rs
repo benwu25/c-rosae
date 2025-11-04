@@ -1,4 +1,4 @@
-//@ add-core-stubs
+//@ add-minicore
 //@ revisions: powerpc powerpc64 powerpc64le aix64
 //@[powerpc] compile-flags: --target powerpc-unknown-linux-gnu
 //@[powerpc] needs-llvm-components: powerpc
@@ -8,7 +8,6 @@
 //@[powerpc64le] needs-llvm-components: powerpc
 //@[aix64] compile-flags: --target powerpc64-ibm-aix
 //@[aix64] needs-llvm-components: powerpc
-//@ needs-asm-support
 //@ ignore-backends: gcc
 // ignore-tidy-linelength
 

@@ -51,6 +51,7 @@ use rustc_data_structures::tagged_ptr::TaggedRef;
 use rustc_errors::{DiagArgFromDisplay, DiagCtxtHandle};
 use rustc_hir::def::{DefKind, LifetimeRes, Namespace, PartialRes, PerNS, Res};
 use rustc_hir::def_id::{CRATE_DEF_ID, LOCAL_CRATE, LocalDefId};
+use rustc_hir::definitions::{DefPathData, DisambiguatorState};
 use rustc_hir::lints::DelayedLint;
 use rustc_hir::{
     self as hir, AngleBrackets, ConstArg, GenericArg, HirId, ItemLocalMap, LifetimeSource,
@@ -93,6 +94,7 @@ rustc_fluent_macro::fluent_messages! { "../messages.ftl" }
 struct LoweringContext<'a, 'hir> {
     tcx: TyCtxt<'hir>,
     resolver: &'a mut ResolverAstLowering,
+    disambiguator: DisambiguatorState,
 
     /// Used to allocate HIR nodes.
     arena: &'hir hir::Arena<'hir>,
@@ -136,9 +138,11 @@ struct LoweringContext<'a, 'hir> {
     #[cfg(debug_assertions)]
     node_id_to_local_id: NodeMap<hir::ItemLocalId>,
 
+    allow_contracts: Arc<[Symbol]>,
     allow_try_trait: Arc<[Symbol]>,
     allow_gen_future: Arc<[Symbol]>,
     allow_pattern_type: Arc<[Symbol]>,
+    allow_async_gen: Arc<[Symbol]>,
     allow_async_iterator: Arc<[Symbol]>,
     allow_for_await: Arc<[Symbol]>,
     allow_async_fn_traits: Arc<[Symbol]>,
@@ -155,6 +159,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
             // Pseudo-globals.
             tcx,
             resolver,
+            disambiguator: DisambiguatorState::new(),
             arena: tcx.hir_arena,
 
             // HirId handling.
@@ -180,6 +185,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
             current_item: None,
             impl_trait_defs: Vec::new(),
             impl_trait_bounds: Vec::new(),
+            allow_contracts: [sym::contracts_internals].into(),
             allow_try_trait: [sym::try_trait_v2, sym::yeet_desugar_details].into(),
             allow_pattern_type: [sym::pattern_types, sym::pattern_type_range_trait].into(),
             allow_gen_future: if tcx.features().async_fn_track_caller() {
@@ -187,8 +193,9 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
             } else {
                 [sym::gen_future].into()
             },
-            allow_for_await: [sym::async_iterator].into(),
+            allow_for_await: [sym::async_gen_internals, sym::async_iterator].into(),
             allow_async_fn_traits: [sym::async_fn_traits].into(),
+            allow_async_gen: [sym::async_gen_internals].into(),
             // FIXME(gen_blocks): how does `closure_track_caller`/`async_fn_track_caller`
             // interact with `gen`/`async gen` blocks
             allow_async_iterator: [sym::gen_future, sym::async_iterator].into(),
@@ -546,6 +553,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         node_id: ast::NodeId,
         name: Option<Symbol>,
         def_kind: DefKind,
+        def_path_data: DefPathData,
         span: Span,
     ) -> LocalDefId {
         let parent = self.current_hir_id_owner.def_id;
@@ -561,7 +569,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         let def_id = self
             .tcx
             .at(span)
-            .create_def(parent, name, def_kind, None, &mut self.resolver.disambiguator)
+            .create_def(parent, name, def_kind, Some(def_path_data), &mut self.disambiguator)
             .def_id();
 
         debug!("create_def: def_id_to_node_id[{:?}] <-> {:?}", def_id, node_id);
@@ -846,6 +854,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
                     param,
                     Some(kw::UnderscoreLifetime),
                     DefKind::LifetimeParam,
+                    DefPathData::DesugaredAnonymousLifetime,
                     ident.span,
                 );
                 debug!(?_def_id);
@@ -2290,7 +2299,13 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
             // We're lowering a const argument that was originally thought to be a type argument,
             // so the def collector didn't create the def ahead of time. That's why we have to do
             // it here.
-            let def_id = self.create_def(node_id, None, DefKind::AnonConst, span);
+            let def_id = self.create_def(
+                node_id,
+                None,
+                DefKind::AnonConst,
+                DefPathData::LateAnonConst,
+                span,
+            );
             let hir_id = self.lower_node_id(node_id);
 
             let path_expr = Expr {
@@ -2520,8 +2535,8 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         lang_item: hir::LangItem,
         fields: &'hir [hir::PatField<'hir>],
     ) -> &'hir hir::Pat<'hir> {
-        let qpath = hir::QPath::LangItem(lang_item, self.lower_span(span));
-        self.pat(span, hir::PatKind::Struct(qpath, fields, None))
+        let path = self.make_lang_item_qpath(lang_item, self.lower_span(span), None);
+        self.pat(span, hir::PatKind::Struct(path, fields, None))
     }
 
     fn pat_ident(&mut self, span: Span, ident: Ident) -> (&'hir hir::Pat<'hir>, HirId) {

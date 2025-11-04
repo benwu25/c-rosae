@@ -1523,16 +1523,17 @@ impl HumanEmitter {
                 label_width += 2;
             }
             let mut line = 0;
+            let mut pad = false;
             for (text, style) in msgs.iter() {
                 let text =
                     self.translator.translate_message(text, args).map_err(Report::new).unwrap();
                 // Account for newlines to align output to its label.
-                for text in normalize_whitespace(&text).lines() {
+                for text in normalize_whitespace(&text).split('\n') {
                     buffer.append(
                         line,
                         &format!(
                             "{}{}",
-                            if line == 0 { String::new() } else { " ".repeat(label_width) },
+                            if pad { " ".repeat(label_width) } else { String::new() },
                             text
                         ),
                         match style {
@@ -1541,7 +1542,9 @@ impl HumanEmitter {
                         },
                     );
                     line += 1;
+                    pad = true;
                 }
+                pad = false;
                 // We add lines above, but if the last line has no explicit newline (which would
                 // yield an empty line), then we revert one line up to continue with the next
                 // styled text chunk on the same line as the last one from the prior one. Otherwise
@@ -2152,6 +2155,7 @@ impl HumanEmitter {
 
             let line_start = sm.lookup_char_pos(parts[0].original_span.lo()).line;
             let mut lines = complete.lines();
+            let lines_len = lines.clone().count();
             if lines.clone().next().is_none() {
                 // Account for a suggestion to completely remove a line(s) with whitespace (#94192).
                 let line_end = sm.lookup_char_pos(parts[0].original_span.hi()).line;
@@ -2192,6 +2196,7 @@ impl HumanEmitter {
                 if highlight_parts.len() == 1
                     && line.trim().starts_with("#[")
                     && line.trim().ends_with(']')
+                    && lines_len == 1
                 {
                     is_item_attribute = true;
                 }

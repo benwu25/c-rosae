@@ -289,6 +289,7 @@ pub(crate) enum AttributeKind {
     DeadOnUnwind = 43,
     DeadOnReturn = 44,
     CapturesReadOnly = 45,
+    CapturesNone = 46,
 }
 
 /// LLVMIntPredicate
@@ -675,6 +676,15 @@ pub(crate) enum Opcode {
     CatchPad = 63,
     CleanupPad = 64,
     CatchSwitch = 65,
+}
+
+/// Must match the layout of `LLVMRustCompressionKind`.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub(crate) enum CompressionKind {
+    None = 0,
+    Zlib = 1,
+    Zstd = 2,
 }
 
 unsafe extern "C" {
@@ -2328,7 +2338,7 @@ unsafe extern "C" {
         UseInitArray: bool,
         SplitDwarfFile: *const c_char,
         OutputObjFile: *const c_char,
-        DebugInfoCompression: *const c_char,
+        DebugInfoCompression: CompressionKind,
         UseEmulatedTls: bool,
         UseWasmEH: bool,
     ) -> *mut TargetMachine;
@@ -2516,9 +2526,8 @@ unsafe extern "C" {
 
     pub(crate) fn LLVMRustGetElementTypeArgIndex(CallSite: &Value) -> i32;
 
-    pub(crate) fn LLVMRustLLVMHasZlibCompressionForDebugSymbols() -> bool;
-
-    pub(crate) fn LLVMRustLLVMHasZstdCompressionForDebugSymbols() -> bool;
+    pub(crate) safe fn LLVMRustLLVMHasZlibCompression() -> bool;
+    pub(crate) safe fn LLVMRustLLVMHasZstdCompression() -> bool;
 
     pub(crate) fn LLVMRustGetSymbols(
         buf_ptr: *const u8,

@@ -869,8 +869,7 @@ mod desc {
     pub(crate) const parse_branch_protection: &str = "a `,` separated combination of `bti`, `gcs`, `pac-ret`, (optionally with `pc`, `b-key`, `leaf` if `pac-ret` is set)";
     pub(crate) const parse_proc_macro_execution_strategy: &str =
         "one of supported execution strategies (`same-thread`, or `cross-thread`)";
-    pub(crate) const parse_remap_path_scope: &str =
-        "comma separated list of scopes: `macro`, `diagnostics`, `debuginfo`, `object`, `all`";
+    pub(crate) const parse_remap_path_scope: &str = "comma separated list of scopes: `macro`, `diagnostics`, `debuginfo`, `coverage`, `object`, `all`";
     pub(crate) const parse_inlining_threshold: &str =
         "either a boolean (`yes`, `no`, `on`, `off`, etc), or a non-negative number";
     pub(crate) const parse_llvm_module_flag: &str = "<key>:<type>:<value>:<behavior>. Type must currently be `u32`. Behavior should be one of (`error`, `warning`, `require`, `override`, `append`, `appendunique`, `max`, `min`)";
@@ -1705,6 +1704,7 @@ pub mod parse {
                     "macro" => RemapPathScopeComponents::MACRO,
                     "diagnostics" => RemapPathScopeComponents::DIAGNOSTICS,
                     "debuginfo" => RemapPathScopeComponents::DEBUGINFO,
+                    "coverage" => RemapPathScopeComponents::COVERAGE,
                     "object" => RemapPathScopeComponents::OBJECT,
                     "all" => RemapPathScopeComponents::all(),
                     _ => return false,
@@ -2093,6 +2093,8 @@ options! {
         "instrument the generated code to support LLVM source-based code coverage reports \
         (note, the compiler build config must include `profiler = true`); \
         implies `-C symbol-mangling-version=v0`"),
+    jump_tables: bool = (true, parse_bool, [TRACKED],
+        "allow jump table and lookup table generation from switch case lowering (default: yes)"),
     link_arg: (/* redirected to link_args */) = ((), parse_string_push, [UNTRACKED],
         "a single extra argument to append to the linker invocation (can be used several times)"),
     link_args: Vec<String> = (Vec::new(), parse_list, [UNTRACKED],
@@ -2475,8 +2477,6 @@ options! {
         "omit DWARF address ranges that give faster lookups"),
     no_implied_bounds_compat: bool = (false, parse_bool, [TRACKED],
         "disable the compatibility version of the `implied_bounds_ty` query"),
-    no_jump_tables: bool = (false, parse_no_value, [TRACKED],
-        "disable the jump tables and lookup tables that can be generated from a switch case lowering"),
     no_leak_check: bool = (false, parse_no_value, [UNTRACKED],
         "disable the 'leak check' for subtyping; unsound, but useful for tests"),
     no_link: bool = (false, parse_no_value, [TRACKED],

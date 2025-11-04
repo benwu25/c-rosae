@@ -12,6 +12,7 @@ use rustc_span::{DUMMY_SP, Span, Symbol, sym};
 
 use crate::context::{AcceptContext, FinalizeContext, SharedContext, Stage};
 use crate::parser::{ArgParser, MetaItemParser, PathParser};
+use crate::session_diagnostics::ParsedDescription;
 use crate::{Early, Late, OmitDoc, ShouldEmit};
 
 /// Context created once, for example as part of the ast lowering
@@ -142,8 +143,10 @@ impl<'sess> AttributeParser<'sess, Early> {
         Self::parse_single_args(
             sess,
             attr.span,
+            normal_attr.item.span(),
             attr.style,
             path.get_attribute_path(),
+            ParsedDescription::Attribute,
             target_span,
             target_node_id,
             features,
@@ -159,16 +162,18 @@ impl<'sess> AttributeParser<'sess, Early> {
     pub fn parse_single_args<T, I>(
         sess: &'sess Session,
         attr_span: Span,
+        inner_span: Span,
         attr_style: AttrStyle,
         attr_path: AttrPath,
+        parsed_description: ParsedDescription,
         target_span: Span,
         target_node_id: NodeId,
         features: Option<&'sess Features>,
         emit_errors: ShouldEmit,
         args: &I,
-        parse_fn: fn(cx: &mut AcceptContext<'_, '_, Early>, item: &I) -> Option<T>,
+        parse_fn: fn(cx: &mut AcceptContext<'_, '_, Early>, item: &I) -> T,
         template: &AttributeTemplate,
-    ) -> Option<T> {
+    ) -> T {
         let mut parser = Self {
             features,
             tools: Vec::new(),
@@ -186,7 +191,9 @@ impl<'sess> AttributeParser<'sess, Early> {
                 },
             },
             attr_span,
+            inner_span,
             attr_style,
+            parsed_description,
             template,
             attr_path,
         };
@@ -305,7 +312,9 @@ impl<'sess, S: Stage> AttributeParser<'sess, S> {
                                     emit_lint: &mut emit_lint,
                                 },
                                 attr_span: lower_span(attr.span),
+                                inner_span: lower_span(attr.get_normal_item().span()),
                                 attr_style: attr.style,
+                                parsed_description: ParsedDescription::Attribute,
                                 template: &accept.template,
                                 attr_path: path.get_attribute_path(),
                             };

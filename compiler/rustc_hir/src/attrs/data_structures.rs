@@ -637,6 +637,9 @@ pub enum AttributeKind {
     /// Represents `#[pattern_complexity_limit]`
     PatternComplexityLimit { attr_span: Span, limit_span: Span, limit: Limit },
 
+    /// Represents `#[pin_v2]`
+    PinV2(Span),
+
     /// Represents `#[pointee]`
     Pointee(Span),
 
@@ -675,6 +678,9 @@ pub enum AttributeKind {
 
     /// Represents `#[rustc_object_lifetime_default]`.
     RustcObjectLifetimeDefault,
+
+    /// Represents `#[rustc_pass_indirectly_in_non_rustic_abis]`
+    RustcPassIndirectlyInNonRusticAbis(Span),
 
     /// Represents `#[rustc_simd_monomorphize_lane_limit = "N"]`.
     RustcSimdMonomorphizeLaneLimit(Limit),

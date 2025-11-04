@@ -217,7 +217,8 @@ fn parse_config(args: Vec<String>) -> Config {
             "override-codegen-backend",
             "the codegen backend to use instead of the default one",
             "CODEGEN BACKEND [NAME | PATH]",
-        );
+        )
+        .optflag("", "bypass-ignore-backends", "ignore `//@ ignore-backends` directives");
 
     let (argv0, args_) = args.split_first().unwrap();
     if args.len() == 1 || args[1] == "-h" || args[1] == "--help" {
@@ -257,10 +258,11 @@ fn parse_config(args: Vec<String>) -> Config {
     let target = opt_str2(matches.opt_str("target"));
     let android_cross_path = opt_path(matches, "android-cross-path");
     // FIXME: `cdb_version` is *derived* from cdb, but it's *not* technically a config!
-    let (cdb, cdb_version) = debuggers::analyze_cdb(matches.opt_str("cdb"), &target);
+    let cdb = debuggers::discover_cdb(matches.opt_str("cdb"), &target);
+    let cdb_version = cdb.as_deref().and_then(debuggers::query_cdb_version);
     // FIXME: `gdb_version` is *derived* from gdb, but it's *not* technically a config!
-    let (gdb, gdb_version) =
-        debuggers::analyze_gdb(matches.opt_str("gdb"), &target, &android_cross_path);
+    let gdb = debuggers::discover_gdb(matches.opt_str("gdb"), &target, &android_cross_path);
+    let gdb_version = gdb.as_deref().and_then(debuggers::query_gdb_version);
     // FIXME: `lldb_version` is *derived* from lldb, but it's *not* technically a config!
     let lldb_version =
         matches.opt_str("lldb-version").as_deref().and_then(debuggers::extract_lldb_version);
@@ -484,6 +486,7 @@ fn parse_config(args: Vec<String>) -> Config {
 
         default_codegen_backend,
         override_codegen_backend,
+        bypass_ignore_backends: matches.opt_present("bypass-ignore-backends"),
     }
 }
 

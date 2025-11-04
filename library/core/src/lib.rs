@@ -106,6 +106,7 @@
 #![feature(const_cmp)]
 #![feature(const_destruct)]
 #![feature(const_eval_select)]
+#![feature(const_select_unpredictable)]
 #![feature(core_intrinsics)]
 #![feature(coverage_attribute)]
 #![feature(disjoint_bitor)]
@@ -293,6 +294,7 @@ pub mod cmp;
 pub mod convert;
 pub mod default;
 pub mod error;
+pub mod index;
 pub mod marker;
 pub mod ops;
 

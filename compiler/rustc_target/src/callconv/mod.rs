@@ -113,13 +113,14 @@ mod attr_impl {
     pub struct ArgAttribute(u8);
     bitflags::bitflags! {
         impl ArgAttribute: u8 {
-            const NoAlias   = 1 << 1;
-            const CapturesAddress = 1 << 2;
-            const NonNull   = 1 << 3;
-            const ReadOnly  = 1 << 4;
-            const InReg     = 1 << 5;
-            const NoUndef = 1 << 6;
-            const CapturesReadOnly = 1 << 7;
+            const CapturesNone     = 0b111;
+            const CapturesAddress  = 0b110;
+            const CapturesReadOnly = 0b100;
+            const NoAlias  = 1 << 3;
+            const NonNull  = 1 << 4;
+            const ReadOnly = 1 << 5;
+            const InReg    = 1 << 6;
+            const NoUndef  = 1 << 7;
         }
     }
     rustc_data_structures::external_bitflags_debug! { ArgAttribute }
@@ -676,30 +677,30 @@ impl<'a, Ty> FnAbi<'a, Ty> {
             }
             "amdgpu" => amdgpu::compute_abi_info(cx, self),
             "arm" => arm::compute_abi_info(cx, self),
-            "avr" => avr::compute_abi_info(self),
+            "avr" => avr::compute_abi_info(cx, self),
             "loongarch32" | "loongarch64" => loongarch::compute_abi_info(cx, self),
-            "m68k" => m68k::compute_abi_info(self),
-            "csky" => csky::compute_abi_info(self),
+            "m68k" => m68k::compute_abi_info(cx, self),
+            "csky" => csky::compute_abi_info(cx, self),
             "mips" | "mips32r6" => mips::compute_abi_info(cx, self),
             "mips64" | "mips64r6" => mips64::compute_abi_info(cx, self),
             "powerpc" => powerpc::compute_abi_info(cx, self),
             "powerpc64" => powerpc64::compute_abi_info(cx, self),
             "s390x" => s390x::compute_abi_info(cx, self),
-            "msp430" => msp430::compute_abi_info(self),
+            "msp430" => msp430::compute_abi_info(cx, self),
             "sparc" => sparc::compute_abi_info(cx, self),
             "sparc64" => sparc64::compute_abi_info(cx, self),
             "nvptx64" => {
                 if abi == ExternAbi::PtxKernel || abi == ExternAbi::GpuKernel {
                     nvptx64::compute_ptx_kernel_abi_info(cx, self)
                 } else {
-                    nvptx64::compute_abi_info(self)
+                    nvptx64::compute_abi_info(cx, self)
                 }
             }
-            "hexagon" => hexagon::compute_abi_info(self),
+            "hexagon" => hexagon::compute_abi_info(cx, self),
             "xtensa" => xtensa::compute_abi_info(cx, self),
             "riscv32" | "riscv64" => riscv::compute_abi_info(cx, self),
             "wasm32" | "wasm64" => wasm::compute_abi_info(cx, self),
-            "bpf" => bpf::compute_abi_info(self),
+            "bpf" => bpf::compute_abi_info(cx, self),
             arch => panic!("no lowering implemented for {arch}"),
         }
     }

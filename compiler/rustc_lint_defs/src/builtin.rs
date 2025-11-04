@@ -86,7 +86,8 @@ declare_lint_pass! {
         REFINING_IMPL_TRAIT_INTERNAL,
         REFINING_IMPL_TRAIT_REACHABLE,
         RENAMED_AND_REMOVED_LINTS,
-        REPR_TRANSPARENT_EXTERNAL_PRIVATE_FIELDS,
+        REPR_C_ENUMS_LARGER_THAN_INT,
+        REPR_TRANSPARENT_NON_ZST_FIELDS,
         RUST_2021_INCOMPATIBLE_CLOSURE_CAPTURES,
         RUST_2021_INCOMPATIBLE_OR_PATTERNS,
         RUST_2021_PREFIXES_INCOMPATIBLE_SYNTAX,
@@ -3011,10 +3012,9 @@ declare_lint! {
 }
 
 declare_lint! {
-    /// The `repr_transparent_external_private_fields` lint
+    /// The `repr_transparent_non_zst_fields` lint
     /// detects types marked `#[repr(transparent)]` that (transitively)
-    /// contain an external ZST type marked `#[non_exhaustive]` or containing
-    /// private fields
+    /// contain a type that is not guaranteed to remain a ZST type under all configurations.
     ///
     /// ### Example
     ///
@@ -3022,8 +3022,13 @@ declare_lint! {
     /// #![deny(repr_transparent_external_private_fields)]
     /// use foo::NonExhaustiveZst;
     ///
+    /// #[repr(C)]
+    /// struct CZst([u8; 0]);
+    ///
     /// #[repr(transparent)]
     /// struct Bar(u32, ([u32; 0], NonExhaustiveZst));
+    /// #[repr(transparent)]
+    /// struct Baz(u32, CZst);
     /// ```
     ///
     /// This will produce:
@@ -3042,26 +3047,39 @@ declare_lint! {
     ///   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     ///   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
     ///   = note: for more information, see issue #78586 <https://github.com/rust-lang/rust/issues/78586>
-    ///   = note: this struct contains `NonExhaustiveZst`, which is marked with `#[non_exhaustive]`, and makes it not a breaking change to become non-zero-sized in the future.
+    ///   = note: this field contains `NonExhaustiveZst`, which is marked with `#[non_exhaustive]`, so it could become non-zero-sized in the future.
+    ///
+    /// error: zero-sized fields in repr(transparent) cannot contain `#[repr(C)]` types
+    ///  --> src/main.rs:5:28
+    ///   |
+    /// 5 | struct Baz(u32, CZst);
+    ///   |                 ^^^^
+    ///   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    ///   = note: for more information, see issue #78586 <https://github.com/rust-lang/rust/issues/78586>
+    ///   = note: this field contains `CZst`, which is a `#[repr(C)]` type, so it is not guaranteed to be zero-sized on all targets.
     /// ```
     ///
     /// ### Explanation
     ///
-    /// Previous, Rust accepted fields that contain external private zero-sized types,
-    /// even though it should not be a breaking change to add a non-zero-sized field to
-    /// that private type.
+    /// Previous, Rust accepted fields that contain external private zero-sized types, even though
+    /// those types could gain a non-zero-sized field in a future, semver-compatible update.
+    ///
+    /// Rust also accepted fields that contain `repr(C)` zero-sized types, even though those types
+    /// are not guaranteed to be zero-sized on all targets, and even though those types can
+    /// make a difference for the ABI (and therefore cannot be ignored by `repr(transparent)`).
     ///
     /// This is a [future-incompatible] lint to transition this
     /// to a hard error in the future. See [issue #78586] for more details.
     ///
     /// [issue #78586]: https://github.com/rust-lang/rust/issues/78586
     /// [future-incompatible]: ../index.md#future-incompatible-lints
-    pub REPR_TRANSPARENT_EXTERNAL_PRIVATE_FIELDS,
-    Warn,
+    pub REPR_TRANSPARENT_NON_ZST_FIELDS,
+    Deny,
     "transparent type contains an external ZST that is marked #[non_exhaustive] or contains private fields",
     @future_incompatible = FutureIncompatibleInfo {
         reason: FutureIncompatibilityReason::FutureReleaseError,
         reference: "issue #78586 <https://github.com/rust-lang/rust/issues/78586>",
+        report_in_deps: true,
     };
 }
 
@@ -5195,4 +5213,53 @@ declare_lint! {
     pub INLINE_ALWAYS_MISMATCHING_TARGET_FEATURES,
     Warn,
     r#"detects when a function annotated with `#[inline(always)]` and `#[target_feature(enable = "..")]` is inlined into a caller without the required target feature"#,
+}
+
+declare_lint! {
+    /// The `repr_c_enums_larger_than_int` lint detects `repr(C)` enums with discriminant
+    /// values that do not fit into a C `int` or `unsigned int`.
+    ///
+    /// ### Example
+    ///
+    /// ```rust,ignore (only errors on 64bit)
+    /// #[repr(C)]
+    /// enum E {
+    ///     V = 9223372036854775807, // i64::MAX
+    /// }
+    /// ```
+    ///
+    /// This will produce:
+    ///
+    /// ```text
+    /// error: `repr(C)` enum discriminant does not fit into C `int` nor into C `unsigned int`
+    ///   --> $DIR/repr-c-big-discriminant1.rs:16:5
+    ///    |
+    /// LL |     A = 9223372036854775807, // i64::MAX
+    ///    |     ^
+    ///    |
+    ///    = note: `repr(C)` enums with big discriminants are non-portable, and their size in Rust might not match their size in C
+    ///    = help: use `repr($int_ty)` instead to explicitly set the size of this enum
+    /// ```
+    ///
+    /// ### Explanation
+    ///
+    /// In C, enums with discriminants that do not all fit into an `int` or all fit into an
+    /// `unsigned int` are a portability hazard: such enums are only permitted since C23, and not
+    /// supported e.g. by MSVC.
+    ///
+    /// Furthermore, Rust interprets the discriminant values of `repr(C)` enums as expressions of
+    /// type `isize`. This makes it impossible to implement the C23 behavior of enums where the enum
+    /// discriminants have no predefined type and instead the enum uses a type large enough to hold
+    /// all discriminants.
+    ///
+    /// Therefore, `repr(C)` enums in Rust require that either all discriminants to fit into a C
+    /// `int` or they all fit into an `unsigned int`.
+    pub REPR_C_ENUMS_LARGER_THAN_INT,
+    Warn,
+    "repr(C) enums with discriminant values that do not fit into a C int",
+    @future_incompatible = FutureIncompatibleInfo {
+        reason: FutureIncompatibilityReason::FutureReleaseError,
+        reference: "issue #124403 <https://github.com/rust-lang/rust/issues/124403>",
+        report_in_deps: false,
+    };
 }
