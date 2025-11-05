@@ -480,6 +480,7 @@ fn get_param_ident(pat: &Box<Pat>) -> String {
     }
 }
 
+/// MDE: Does this take an arbitrary Rust type, or only primitives and strings?
 // Given a Rust type, return its Daikon rep-type.
 // E.g.,
 // i8 -> int
@@ -502,6 +503,9 @@ fn get_prim_rep_type(ty_str: &str) -> String {
         || ty_str == U128
         || ty_str == USIZE
     {
+        /// MDE: Minor: It seems wasteful to create new strings repeatedly
+        /// rather than (say) returning a &str view into a string that is only
+        /// ever created once.
         return String::from("int");
     } else if ty_str == F32 || ty_str == F64 {
         return String::from("");
@@ -517,8 +521,12 @@ fn get_prim_rep_type(ty_str: &str) -> String {
     String::from("")
 }
 
+/// MDE: Does arguments mean the values that are in it?  Or the type parameter?  Or something else?
 // Given the arguments to a Vec or array, return a RepType
 // enum representing the Vec/array.
+/// MDE: `grok` is an uninformative name.  I think that all the `grok_*`
+/// functions do instrumentation, and if that is the case, then `instrument_`
+/// would convey more to the reader.
 fn grok_vec_args(path: &Path) -> RepType {
     let mut is_ref = false;
     match &path.segments[path.segments.len() - 1].args {
@@ -544,7 +552,9 @@ fn grok_vec_args(path: &Path) -> RepType {
     }
 }
 
-// Capable of representing the rep-type of a Rust type.
+/// MDE: I'm curious why the functions above return a string rather than a RepType.
+/// As a general rule, passing around strings that will later be parsed is a code smell.
+// Represents the Daikon rep-type of a Rust type.
 // String payload represents the corresponding "Java" type
 // i32 -> Prim("int")
 // &[i32] -> PrimArray("int")
@@ -558,6 +568,9 @@ enum RepType {
     HashCodeStruct(String),
 }
 
+/// MDE: "with is_ref" is confusing.  Say "by side-effecting" or "by setting".
+/// MDE: This returns a rep type and sets variable is_ref.  Why isn't is_ref a
+/// field in the RepType struct?
 // Given a Rust type kind, return its RepType. Also note whether the type
 // is a reference with is_ref.
 fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
@@ -578,6 +591,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
             return get_rep_type(&mut_ty.ty.kind, is_ref);
         }
         TyKind::Path(_, path) => {
+            /// MDE: Minor: ".is_empty()" is more idiomatic than ".len() == 0".
             if path.segments.len() == 0 {
                 panic!("Path has no type");
             }
@@ -587,6 +601,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
                 return RepType::Prim(maybe_prim_rep);
             }
             if ty_string == VEC {
+                /// MDE: What remains to be done here?
                 // TODO
                 return grok_vec_args(&path);
             }
@@ -608,6 +623,9 @@ fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
     res
 }
 
+/// MDE: make the naming more descriptive.  Rather than saying "a map data
+/// structure", say what it maps to and from.  Rather than "DeclsHashMap",
+/// indicate its type or use.  Also make the field name "map" more informative.
 // Immutable visitor to visit all structs and build a map data structure.
 // TODO: remove, we will use a /tmp file instead.
 #[allow(rustc::default_hash_types)]
@@ -633,10 +651,14 @@ impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
     }
 }
 
-// Main struct for walking functions to write the decls file.
-// map allows for quick retrieval of struct fields when a struct
-// parameter is encountered.
-// depth_limit tells us when to stop writing decls for recursive structs.
+// Struct whose methods walk C functions to write the decls file.
+/// MDE: The (informal) Rust standard is to document formal parameters using the
+/// following syntax.  Note leading blank line, then asterisk, backticks, and
+/// hyphen per line.  Please rewrite all the comments to conform to this syntax.
+//
+// * `map` - Allows for quick retrieval of struct fields when a struct
+//   parameter is encountered.
+// * `depth_limit` - Tells us when to stop writing decls for recursive structs.
 #[allow(rustc::default_hash_types)]
 struct DaikonDeclsVisitor<'a> {
     pub map: &'a HashMap<String, Box<Item>>,
@@ -644,12 +666,22 @@ struct DaikonDeclsVisitor<'a> {
 }
 
 // Represents a parameter or return value which must be written to decls.
+/// MDE: what is the purpose of this map?  Also, throughout, use more
+/// descriptive variable names than "map".
 // map: map from String to struct definition with field declarations.
+/// MDE: Here and elsewhere, you need to document the fact that this value
+/// can also be "false", and under what circumstances.  I suspect it would be
+/// more idomatic to make var_name an Option type rather than having a special
+/// string value.
 // var_name: parameter name, or "return" for return values.
 // dec_type: Declared type of the value (dec-type for Daikon).
 // rep_type: Rep type of the value (rep-type for Daikon).
+/// MDE: "key" is not very descriptive.  Could you use "struct_name" instead?
 // key: If the value is a struct, contains the struct type name for lookup,
 //      otherwise None.
+/// MDE: Minor: It might simplify the code to make field_decls an empty array if
+/// the value is not a struct.  Then there is no need to unwrap the Option
+/// wrapper.
 // field_decls: If the value is a struct, represents decl records for the
 //              fields of this struct.
 // contents: If the value is Vec or array, a decls record for the contents
@@ -666,9 +698,11 @@ struct TopLevlDecl<'a> {
     pub contents: Option<ArrayContents<'a>>,
 }
 
-// Represents a field decl of a struct at some arb. depth.
+// Represents a field decl of a struct at some arbitrary depth.
+/// MDE: Is "identifier" a type name, a variable name, or something else?
 // enclosing_var: the identifier of the struct which contains this field.
 // field_name: name of this field.
+/// MDE: What other fields does the below comment refer to?
 // See TopLevlDecl for other fields.
 #[allow(rustc::default_hash_types)]
 struct FieldDecl<'a> {
@@ -715,6 +749,15 @@ impl<'a> ArrayContents<'a> {
         match &mut self.sub_contents {
             None => {}
             Some(sub_contents) => {
+                /// MDE: You use this idiom for iterating in several places.
+                /// Please replace them all by something like:
+                ///   for i in 0..sub_contents.len() {
+                ///     sub_contents[i].write()
+                /// }
+                /// or, even better:
+                ///   for sub_content in sub_contents {
+                ///       sub_content.write();
+                /// }
                 let mut i = 0;
                 while i < sub_contents.len() {
                     sub_contents[i].write();
@@ -724,6 +767,7 @@ impl<'a> ArrayContents<'a> {
         }
     }
 
+    /// MDE: Throughout, use a more descriptive name than "key".
     // If the top-level variable is an array of structs, use our key to fetch field definitions
     // of our struct type.
     fn get_fields(&self, do_write: &mut bool) -> ThinVec<FieldDef> {
@@ -750,8 +794,14 @@ impl<'a> ArrayContents<'a> {
         }
     }
 
+    /// MDE: "If var is an array"?
     // If var array of structs, recursively populate sub_contents by creating
     // a new ArrayContents for each field.
+    /// MDE: I am confused about `do_write`.  I think it means "should write",
+    /// and should_write could be a better name.  Ah, "do_write" is probably by
+    /// contrast with "dont_write" (which is clear enough), but do_write is
+    /// still unnecessarily confusing.
+    /// MDE: Use a more descriptive name than "the tmp file".
     // do_write: I think this was a hack for avoiding structs/enums/unions which did
     //           not belong to the crate. That is again an ongoing issue with the /tmp
     //           file we need to create in the first pass.
@@ -855,6 +905,9 @@ impl<'a> ArrayContents<'a> {
 }
 
 impl<'a> FieldDecl<'a> {
+    /// MDE: This code is very similar to that immediately above.  Can they be
+    /// abstracted so that each calls the same helper routine, which does most
+    /// of the work?
     // Write this entire FieldDecl to the decls file.
     fn write(&mut self) {
         match &mut *DECLS.lock().unwrap() {
@@ -892,6 +945,8 @@ impl<'a> FieldDecl<'a> {
         }
     }
 
+    /// MDE: What does it mean to "build up"?  Where are the new fields stored?
+    /// Please improve the documentation and the function name.
     // If this FieldDecl represents a struct field, recursively build up our field_decls by
     // creating a new FieldDecl for each field.
     fn build_fields(&mut self, depth_limit: u32, do_write: &mut bool) {
@@ -942,6 +997,8 @@ impl<'a> TopLevlDecl<'a> {
     // recursively build declarations for the fields.
     fn build_fields(&mut self, depth_limit: u32, do_write: &mut bool) {
         if depth_limit == 0 {
+            /// MDE: I think "invalidate ourselves" means to set do_write to false.
+            /// But "do_write" and "invalidate" are not defined.
             // Invalidate ourselves for writing? Or will writing stop too...
             return;
         }
@@ -1062,6 +1119,7 @@ impl<'a> TopLevlDecl<'a> {
                         field_name: field_name.clone(),
                     };
                     match &mut tmp.decl.contents {
+                        /// MDE: This is not an informative string.
                         None => panic!(""),
                         Some(contents) => {
                             contents.build_contents(depth_limit - 1, &mut do_write);
@@ -1127,7 +1185,7 @@ impl<'a> TopLevlDecl<'a> {
     }
 }
 
-// Helper to write function entries into the decls file.
+// Write function entries into the decls file.
 fn write_entry(ppt_name: String) {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
@@ -1138,7 +1196,7 @@ fn write_entry(ppt_name: String) {
     }
 }
 
-// Helper to write function exits into the decls file.
+// Write function exits into the decls file.
 fn write_exit(ppt_name: String, exit_counter: usize) {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
@@ -1149,7 +1207,7 @@ fn write_exit(ppt_name: String, exit_counter: usize) {
     }
 }
 
-// Helper to add a newline in the decls file.
+// Add a newline in the decls file.
 fn write_newline() {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
@@ -1159,7 +1217,7 @@ fn write_newline() {
     }
 }
 
-// Helper to write metadata header into the decls file.
+// Write metadata header into the decls file.
 fn write_header() {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
@@ -1172,6 +1230,7 @@ fn write_header() {
 }
 
 impl<'a> DaikonDeclsVisitor<'a> {
+    /// MDE: And do what if they are found?
     // Walk an if expression looking for returns.
     // See rustc_parse::parser::item::grok_expr_for_if.
     #[allow(rustc::default_hash_types)]
@@ -1187,6 +1246,11 @@ impl<'a> DaikonDeclsVisitor<'a> {
         match &expr.kind {
             ExprKind::Block(block, _) => {
                 self.grok_block(
+                    /// MDE: Minor: all this cloning bothers me; I'm not sure it
+                    /// is necessary.  I notice that another_expr is not cloned
+                    /// before calling grok_expr_for_if, and I wonder whether
+                    /// that is an error (maybe not, but the inconsistency got
+                    /// me worrying).
                     ppt_name.clone(),
                     block,
                     param_decls,
@@ -1195,6 +1259,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     exit_counter,
                 );
             }
+            // I suspect that `if_block` should be `then_block`.
             ExprKind::If(_, if_block, None) => {
                 self.grok_block(
                     ppt_name.clone(),
@@ -1205,7 +1270,11 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     exit_counter,
                 );
             }
+            // I suspect that `another_block` should be `else_block`.
             ExprKind::If(_, if_block, Some(another_expr)) => {
+                /// MDE: This duplicates code above for handling "if".  Have one
+                /// match for "If" that first calls this, then matches on the
+                /// else block to possibly operate on it.
                 self.grok_block(
                     ppt_name.clone(),
                     if_block,
@@ -1223,10 +1292,12 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     &ret_ty,
                 );
             }
+            /// MDE: How do you know that the problem was an if statement with an else?
             _ => panic!("Internal error handling if stmt with else!"),
         }
     }
 
+    /// MDE: What does "identify" mean?  Is it "find"?  Once found, what is done with it?
     // Process an entire stmt to identify an exit point or recurse on blocks.
     // See rustc_parse::parser::item::grok_stmt.
     #[allow(rustc::default_hash_types)]
@@ -1453,6 +1524,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         }),
                                     };
                                     match &mut tmp.contents {
+                                        /// MDE: This is not an informative string.
                                         None => panic!(""),
                                         Some(contents) => {
                                             contents.build_contents(
@@ -1516,6 +1588,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
         i
     }
 
+    /// MDE: What is done once one is found?
     // Walk a new block looking for exit points and nested blocks.
     // See rustc_parse::parser::item::grok_block.
     #[allow(rustc::default_hash_types)]
@@ -1545,9 +1618,9 @@ impl<'a> DaikonDeclsVisitor<'a> {
         }
     }
 
-    // is it a good idea to store which params are valid at each exit
+    // Is it a good idea to store which params are valid at each exit
     // ppt for the decls pass which happens after this?
-    // then the decls pass just needs to:
+    // Then the decls pass just needs to:
     // 1: visit_item to build HashMap<ident, StructNode>.
     // 2: visit_fn, grok sig, and grok exit ppts using structural
     //    recursion on StructNodes for nesting. Need to use depth counter
@@ -1583,10 +1656,13 @@ impl<'a> DaikonDeclsVisitor<'a> {
     }
 }
 
-// Process a function signature and build up a new Vec<TopLevlDecl>
-// ready to be subsequently written to the decls file before we
+/// MDE: Is the TopLevlDecl for the entry point?  Or for the entry and all
+/// exits?  Why does this function return a vec rather than one TopLevlDecl?
+// Given a function signature, return a new Vec<TopLevlDecl>.
+// It will be written to the decls file before we
 // walk the function body looking for exit points.
 // See rustc_parse::parser::item::grok_fn_sig.
+/// MDE: As elsewhere, please use a better name than "map".
 #[allow(rustc::default_hash_types)]
 fn grok_fn_sig<'a>(
     decl: &'a Box<FnDecl>,
@@ -1612,6 +1688,8 @@ fn grok_fn_sig<'a>(
                 } // Ready to write this var decl.
             }
             RepType::HashCodeStruct(ty_string) => {
+                /// MDE: This isn't actually temporary.  It is returned.  So
+                /// name it "result" rather than "tmp".
                 let mut tmp = TopLevlDecl {
                     map,
                     var_name: var_name.clone(),
@@ -1681,6 +1759,7 @@ fn grok_fn_sig<'a>(
                     }),
                 };
                 match &mut tmp.contents {
+                    /// MDE: This is not an informative string.  Please fix throughout.
                     None => panic!(""),
                     Some(contents) => {
                         contents.build_contents(depth_limit - 1, &mut do_write);
@@ -1758,6 +1837,7 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
 static DECLS: LazyLock<Mutex<Option<std::fs::File>>> = LazyLock::new(|| Mutex::new(dtrace_open()));
 
 // Open the decls file.
+/// MDE: "dtrace" in the function name is at odds with the documentation and function body.
 fn dtrace_open() -> Option<std::fs::File> {
     let decls_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".decls");
     let decls = std::path::Path::new(&decls_path);

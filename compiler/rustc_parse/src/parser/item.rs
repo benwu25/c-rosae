@@ -33,8 +33,10 @@ use super::{
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::{exp, fluent_generated as fluent};
 
+/// MDE: the prefix for what?  For a file name?  For program points?
 // Stores the output prefix.
 // E.g., foo.rs -> foo, or the name of the cargo project.
+/// MDE: if this is a prefix, put _PREFIX in the name.
 pub static OUTPUT_NAME: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::from("")));
 
 // True if we are not bootstrapping the standard library.
@@ -47,14 +49,17 @@ static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
    Primary visitor pass for dtrace instrumentation.
 */
 struct DaikonDtraceVisitor<'a> {
-    // For parsing string fragments
+    // For parsing string fragments.
     pub parser: &'a Parser<'a>,
 
-    // For appending impl blocks to the file
+    /// MDE: Please explain.
+    // For appending impl blocks to the file.
     pub mod_items: &'a mut ThinVec<Box<Item>>,
 }
 
-// Represents a coarse-grained breakdown of any Rust type.
+// Represents a Rust type.
+/// MDE: I don't understand how the following sentence belongs here in the
+/// struct definition.  Nor do I understand what "handled" means.
 // Information about references is handled in get_basic_type.
 // E.g.,
 // i32 -> Prim("i32")
@@ -72,6 +77,7 @@ struct DaikonDtraceVisitor<'a> {
 // enums, unions, and all UserDef types from outside the
 // crate.
 #[derive(PartialEq)]
+/// MDE: What is "basic" about this type?  Could you name it RustType or the like?
 enum BasicType {
     Prim(String),
     UserDef(String),
@@ -79,24 +85,36 @@ enum BasicType {
     UserDefVec(String),
     PrimArray(String),
     UserDefArray(String),
+    /// MDE: Is this only ever used for void-returning functions?
     NoRet,
+    /// MDE: Document what this means and when it is used.
     Error,
 }
 
+/// MDE: A "formal parameter" is written in a function definition.  An
+/// "actual argument" is written at a call site.  Is this really
+/// mapping from a parameter name to an argument expression?  If not,
+/// please use the standard terminology.
 // Given a pattern pat from a function signature representing a parameter name,
 // return the argument name in a String.
 fn get_param_ident(pat: &Box<Pat>) -> String {
     match &pat.kind {
         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
+        /// MDE: There is no such thing as a "formal argument".
         _ => panic!("Formal arg does not have simple identifier"),
     }
 }
 
-// Given a reduced type String (i.e., no references or junk in front),
-// check if the type String is a primitive (i32, u32, String, etc.)
+/// MDE: What is the definition of "reduced"?  Is that a standard Rust
+/// term?  I think this is the same as a "simple name", but I am not
+/// sure.
+// Given a reduced type (i.e., no references or junk in front),
+// check if the type is a primitive (i32, u32, String, etc.)
 // and return a BasicType representing it or BasicType::Error otherwise.
 // i32 -> BasicType::Prim("i32")
 // Vec<X> -> BasicType::Error
+/// MDE: I would name this "as_primitive" (or "as_prim") if you prefer,
+/// to clarify what it returns.
 fn check_prim(ty_str: &str) -> BasicType {
     if ty_str == I8 {
         return BasicType::Prim(String::from(I8));
@@ -140,10 +158,14 @@ fn check_prim(ty_str: &str) -> BasicType {
     BasicType::Error
 }
 
+/// MDE: What is an "argument path"?  Is it related to arguments or
+/// parameters or something else?
 // Given argument path representing the element type of a Vec,
+/// MDE: What does "complete" mean here?
 // return the complete BasicType for the Vec. Set is_ref to true
 // if the Vec contains references, otherwise false.
 // E.g.,
+/// MDE: Show what &Vec<X> and &Vec<&X> yield; that is, add them as examples.
 // Vec<X> -> UserDefVec("X")
 // &'a Vec<X> -> UserDefVec("X")
 // Vec<&X> -> UserDefVec("X"), is_ref == true
@@ -173,14 +195,21 @@ fn grok_vec_args(path: &Path, is_ref: &mut bool) -> BasicType {
     }
 }
 
-// Used to reduce a String like X<a, b> to X.
+// Reduce a String like X<a, b> to X.
 // Not necessary in any cases I have found, but it is
 // used to make calls like
 // X::dtrace_print_... rather than
 // X<a, b>::dtrace_print...
 // For Vec<X>.
+/// MDE: This doesn't seem to have anything to do with Rust lifetimes.  Does it
+/// remove the type parameters from a generic struct?
+/// MDE: Is "spliced_struct" a full struct declaration?  Or is it a struct name?
+/// Please document.
 fn cut_lifetimes(spliced_struct: String) -> String {
     let mut res = String::from("");
+    /// MDE: I suggest that you first find the "<", and then create a
+    /// substring using the index if found.  That will be shorter and
+    /// clearer than this loop.
     let mut i = 0;
     while i < spliced_struct.len() {
         if spliced_struct.chars().nth(i).unwrap() == '<' {
@@ -192,16 +221,26 @@ fn cut_lifetimes(spliced_struct: String) -> String {
     res
 }
 
+/// MDE: Write the overall specification before giving implementation
+/// details.  What does this function do?
 // If there is no output file specified with -o and we have not
 // been invoked by cargo, take the OUTPUT_NAME from the input file
 // name.
 // foo.rs -> foo
+/// MDE: What does "jot" mean?
+/// MDE: What is s?  Is it an input file name?  Please give it a more
+/// descriptive name.
 pub fn jot_output_name(s: String) {
+    /// MDE: "end" is not very descriptive; it does not help people
+    /// who are reading the code to understand what the code does.  I
+    /// suggest calling it "dot_position" or "dot_pos" instead.
     let end = match s.rfind(".") {
         // .rs
-        None => panic!("no . at the end of input file name"),
+        /// MDE: It is helpful to give the file name as well, in the message.
+        None => panic!("no . in input file name"),
         Some(end) => end,
     };
+    /// MDE: "start" can be called "slash_position" or "slash_pos".
     let mut start = match s.rfind("/") {
         // .../<crate>.rs
         None => 0,
@@ -220,6 +259,8 @@ pub fn jot_output_name(s: String) {
 // struct X<a, b> {
 // ...
 // }
+/// MDE: What does "splice" mean?  Usually it means to insert something, but
+/// here you might be using to mean "extract".
 // Splice the name X<a, b> from this String. This is the only way
 // I have found to take a struct Item and obtain its identifier
 // including generics in a String.
@@ -228,9 +269,12 @@ pub fn jot_output_name(s: String) {
 // impl X<a, b> {
 //     dtrace_print_fields(self, ...)
 // }
+/// MDE: This is a triple-slash comment, not a triple-bar comment.
 // This method is broken in many cases. Pretty-printing can include triple-bar
 // comments or attributes.
 // Indeed, the pretty-printed String could be as bad as:
+/// MDE: Why not insert the below after leading "//"?  That is, why are you
+/// using a /*...*/ style comment?
 /*
 
 /// This is an awesome struct
@@ -240,7 +284,12 @@ struct X<a, b> {
 }
 
 */
+/// MDE: "pp" means "pretty-printed".  Add a comment explaining this
+/// to the function documentation.
+/// MDE: What does "stop" mean?  Please document.
 fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
+    /// MDE: I would name this "space_position" or "space_pos".
+    /// Likewise, rename "bound".
     let start_idx = pp_struct.find(" ");
     match &start_idx {
         None => panic!("Can't find space in pp_struct"),
@@ -273,8 +322,10 @@ fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
     }
 }
 
-// Given a Rust type, break it down into something that fits into
-// BasicType. If it is a reference, note this with is_ref.
+// Create a BasicType for the given Rust type.
+/// MDE: The remainder belongs in the BasicType documentation, not here.
+/// Why isn't "is_ref" a field in BasicType?
+// If it is a reference, note this with is_ref.
 // For Vec/array, is_ref indicates whether the contents of the
 // container are references or not rather than the container
 // itself. It does not matter if the container is_ref or not,
@@ -291,6 +342,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
             BasicType::UserDef(basic_type) => BasicType::UserDefArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
         },
+        /// MDE: Why is this an error?  Could a pointer be output as a (large) integer?
         TyKind::Ptr(_mut_ty) => BasicType::Error,
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
@@ -333,10 +385,14 @@ fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
     res
 }
 
-// Used to check if the last statement in each function is an
-// explicit void return. If it is not, an explicit void return
+// Returns true if the last statement in each function is an
+// explicit void return.
+/// MDE: The next sentence belongs at the use site, not here.
+// If it is not, an explicit void return
 // is added at the end to make it easy to identify the final
 // exit ppt.
+/// MDE: "Does not detect" is ambiguous.  Be specific about what value the
+/// function returns, given code like the example.
 // This does not detect something like
 /*
 if cond { return; } else { return; }
@@ -356,8 +412,8 @@ fn last_stmt_is_void_return(block: &Box<Block>) -> bool {
 }
 
 impl<'a> DaikonDtraceVisitor<'a> {
-    // Given a block of stmts in a String and a block, parse the stmts
-    // into a Vec<Item>, and append all stmts to the block.
+    // Given a block of stmts in a String and a block,
+    // and append parsed stmts to the end of the block.
     fn append_to_block(&self, stuff: String, block: &mut Box<Block>) {
         match &self.parser.parse_items_from_string(stuff.clone()) {
             Err(_why) => panic!("Parsing internal String failed"),
@@ -376,7 +432,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     }
 
     // Given a block of stmts in a String, a block, and an idx into the block,
-    // parse the stmts into a Vec<Item>, and insert all stmts at the specified index.
+    // insert parsed stmts at the specified index.
     fn insert_into_block(&self, loc: usize, stuff: String, block: &mut Box<Block>) -> usize {
         let mut i = loc;
         let items = self.parser.parse_items_from_string(stuff.clone());
@@ -398,6 +454,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
         i
     }
 
+    /// MDE: What invariants?
+    /// MDE: What does this with the located exit points?
     // Take an if stmt and use invariants about if stmts
     // to walk all blocks and locate exit ppts.
     // expr: If expression.
@@ -474,11 +532,19 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // i: index into block to insert logging.
     // ret_expr: Expr representing the return value at a given exit ppt.
     // body: the block to insert into.
+    /// MDE: Is this a unique identifier?  Where is "label" defined?
     // exit_counter: label for the next exit ppt.
     // ppt_name: program point name.
+    /// MDE: Throughout, why is the code stored in strings rather than
+    /// parsed and returned as a data structure?  That would lead to
+    /// parse errors much closer to the point where the code is
+    /// generated.
     // dtrace_param_blocks: Vec of logging code stored in Strings.
     // ret_ty: return type of the function.
     // daikon_tmp_counter: label for the next temporary variable.
+    /// MDE: The name "insert_return" would be more appropriate, because this
+    /// does not create and return any value.  And, the first sentence of the
+    /// documentation uses "insert" which is a hint that it is a good name.
     fn build_return(
         &mut self,
         i: &mut usize,
@@ -494,6 +560,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
             vec![ppt_name.clone(), String::from(&*exit_counter.to_string())],
             DTRACE_EXIT,
         );
+        /// MDE: Would it make sense to perform this operation within
+        /// build_instrument_code (or within an overload of it?
         *exit_counter += 1;
 
         *i = self.insert_into_block(*i, exit.clone(), body);
@@ -673,15 +741,18 @@ impl<'a> DaikonDtraceVisitor<'a> {
         body.stmts.remove(*i);
     }
 
+    /// MDE: What does it mean to "process"?
     // Given a block body and an index i, process the stmt
     // body.stmts[i]. This may be a return stmt or a new block,
     // or a stmt which invalidates one of the parameters such
     // as drop(param1).
-    // Returns the index to the next stmt to process. If new
-    // stmts have been added, returns the next stmt after all
-    // inserted stmts.
+    // Returns the index to the next stmt in the block to process. If this
+    // method adds stmts have been added immediately after the given index,
+    // returns the next stmt after all inserted stmts.
     // loc: index representing the index to the stmt to process.
     // body: surrounding block containing the stmt.
+    /// MDE: Was this called "loc" elsewhere?  Please use consistent naming
+    /// throughout.
     // exit_counter: int representing the next number to use to
     //               label an exit ppt.
     // ppt_name: the program point name.
@@ -962,9 +1033,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
         self.mod_items.push(impl_item.clone());
     }
 
+    /// MDE: What does this function do with the new impl after generating it?
     // This function generates a new impl for a user-defined struct with type
     // ty. The impl will contain multiple synthesized functions, like
     // dtrace_print_fields, dtrace_print_fields_vec, and more.
+    /// MDE: Is "fields" the fields of the struct?  Why is "struct_generics"
+    /// prefixed by "struct_" but the other parameter names are not?
     fn gen_impl(&mut self, fields: &mut ThinVec<FieldDef>, ty: &Ty, struct_generics: &Generics) {
         let mut impl_item = self.base_impl_item();
         let the_impl = match &mut impl_item.kind {
@@ -1038,7 +1112,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
         self.mod_items.push(impl_item.clone());
     }
 
+    /// MDE: Should this be: "Given a struct whose fields are `fields`, ..."?
+    /// MDE: Why does it return a String rather than a parsed AST?
     // Given a struct fields, returns a String with code containing
+    /// MDE: How many functions?  Why is more than one needed?
     // functions to log each field of the struct given a vec of
     // such a struct.
     // Additionally, for any Vec or array fields, adds a function
@@ -1052,7 +1129,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // dtrace_print_xfield_vec prints scalar fields out of a Vec<Me>, and dtrace_print_xfield takes one Me and prints Me.f which is a Vec.
         let mut dtrace_print_xfields_vec = dtrace_print_xfields_vec_prologue();
 
-        // not important for this to be here, these functions are self-contained so
+        /// MDE: Which are "these functions"?
+        // Not important for this to be here, these functions are self-contained so
         // the names don't matter.
         let mut daikon_tmp_counter = 0;
         let mut i = 0;
@@ -1437,6 +1515,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         let mut i = 0;
         while i < fields.len() {
+            /// MDE: Why is this necessary?  I would think that the fields of a
+            /// struct are only accessed by methods that are added to that
+            /// struct, and those methods should have access to all the fields.
             // Make all fields public for access in dtrace routines.
             fields[i].vis.kind = VisibilityKind::Public;
 
@@ -1500,8 +1581,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
         format!("{}{}", dtrace_print_fields, dtrace_print_fields_epilogue())
     }
 
+    /// MDE: Yes, I agree with this TODO.
     // TODO: dtrace calls should be represented with a better data structures rather than
     // Strings
+    /// MDE: Why as set of dtrace calls per parameter?  Or is it *one* dtrace
+    /// call for each parameter?
     // Given a function signature, generate a set of dtrace calls for each parameter. These
     // will be reused at the function entry and each exit ppt.
     fn grok_fn_sig(&mut self, decl: &Box<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
@@ -1729,10 +1813,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
         dtrace_param_blocks
     }
 
+    /// MDE: Should "walk" be "visit" throughout, because you are using the
+    /// visitor pattern?  If not, how is walking different than visiting?
     // Walk a single block, used for recursing through nested
     // blocks like if stmts and loops.
     // ppt_name: program point name.
-    // body: the block which we will walk.
+    // body: the block to walk.
     // dtrace_param_blocks: Vec of Strings containing dtrace
     //                      calls for each parameter.
     // param_to_block_idx: no description.
@@ -1835,7 +1921,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
 // The main visitor routines and entry-points for function and struct
 // instrumentation.
 impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
-    // Process the function signature to generate calls to log runtime values.
+    /// MDE: Which run-time values?  The arguments and return value?
+    // Process the function signature to generate calls to log run-time values.
+    /// MDE: What function inserts calls at entry points?  Cross-reference it
+    /// from here.
     // Walk the function body and insert calls at exit points.
     fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
         match &mut fk {
@@ -1901,6 +1990,8 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                                 panic!("Enum has const generic arg.")
                             }
                         }
+                        /// MDE: Please explain how this comment relates to the
+                        /// increment statement that it is attached to.
                         // Return param-dependent dtrace calls.
                         i += 1;
                     }
