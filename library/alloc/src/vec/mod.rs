@@ -74,6 +74,8 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 
 #[cfg(not(no_global_oom_handling))]
+use core::clone::TrivialClone;
+#[cfg(not(no_global_oom_handling))]
 use core::cmp;
 use core::cmp::Ordering;
 use core::hash::{Hash, Hasher};
@@ -2564,8 +2566,8 @@ impl<T, A: Allocator> Vec<T, A> {
         let _ = self.push_mut(value);
     }
 
-    /// Appends an element if there is sufficient spare capacity, otherwise an error is returned
-    /// with the element.
+    /// Appends an element and returns a reference to it if there is sufficient spare capacity,
+    /// otherwise an error is returned with the element.
     ///
     /// Unlike [`push`] this method will not reallocate when there's insufficient capacity.
     /// The caller should use [`reserve`] or [`try_reserve`] to ensure that there is enough capacity.
@@ -2601,8 +2603,20 @@ impl<T, A: Allocator> Vec<T, A> {
     /// Takes *O*(1) time.
     #[inline]
     #[unstable(feature = "vec_push_within_capacity", issue = "100486")]
-    pub fn push_within_capacity(&mut self, value: T) -> Result<(), T> {
-        self.push_mut_within_capacity(value).map(|_| ())
+    // #[unstable(feature = "push_mut", issue = "135974")]
+    pub fn push_within_capacity(&mut self, value: T) -> Result<&mut T, T> {
+        if self.len == self.buf.capacity() {
+            return Err(value);
+        }
+
+        unsafe {
+            let end = self.as_mut_ptr().add(self.len);
+            ptr::write(end, value);
+            self.len += 1;
+
+            // SAFETY: We just wrote a value to the pointer that will live the lifetime of the reference.
+            Ok(&mut *end)
+        }
     }
 
     /// Appends an element to the back of a collection, returning a reference to it.
@@ -2651,36 +2665,6 @@ impl<T, A: Allocator> Vec<T, A> {
             self.len = len + 1;
             // SAFETY: We just wrote a value to the pointer that will live the lifetime of the reference.
             &mut *end
-        }
-    }
-
-    /// Appends an element and returns a reference to it if there is sufficient spare capacity,
-    /// otherwise an error is returned with the element.
-    ///
-    /// Unlike [`push_mut`] this method will not reallocate when there's insufficient capacity.
-    /// The caller should use [`reserve`] or [`try_reserve`] to ensure that there is enough capacity.
-    ///
-    /// [`push_mut`]: Vec::push_mut
-    /// [`reserve`]: Vec::reserve
-    /// [`try_reserve`]: Vec::try_reserve
-    ///
-    /// # Time complexity
-    ///
-    /// Takes *O*(1) time.
-    #[unstable(feature = "push_mut", issue = "135974")]
-    // #[unstable(feature = "vec_push_within_capacity", issue = "100486")]
-    #[inline]
-    #[must_use = "if you don't need a reference to the value, use `Vec::push_within_capacity` instead"]
-    pub fn push_mut_within_capacity(&mut self, value: T) -> Result<&mut T, T> {
-        if self.len == self.buf.capacity() {
-            return Err(value);
-        }
-        unsafe {
-            let end = self.as_mut_ptr().add(self.len);
-            ptr::write(end, value);
-            self.len += 1;
-            // SAFETY: We just wrote a value to the pointer that will live the lifetime of the reference.
-            Ok(&mut *end)
         }
     }
 
@@ -3512,7 +3496,7 @@ impl<T: Clone, A: Allocator> ExtendFromWithinSpec for Vec<T, A> {
 }
 
 #[cfg(not(no_global_oom_handling))]
-impl<T: Copy, A: Allocator> ExtendFromWithinSpec for Vec<T, A> {
+impl<T: TrivialClone, A: Allocator> ExtendFromWithinSpec for Vec<T, A> {
     unsafe fn spec_extend_from_within(&mut self, src: Range<usize>) {
         let count = src.len();
         {
@@ -3525,8 +3509,8 @@ impl<T: Copy, A: Allocator> ExtendFromWithinSpec for Vec<T, A> {
             // SAFETY:
             // - Both pointers are created from unique slice references (`&mut [_]`)
             //   so they are valid and do not overlap.
-            // - Elements are :Copy so it's OK to copy them, without doing
-            //   anything with the original values
+            // - Elements implement `TrivialClone` so this is equivalent to calling
+            //   `clone` on every one of them.
             // - `count` is equal to the len of `source`, so source is valid for
             //   `count` reads
             // - `.reserve(count)` guarantees that `spare.len() >= count` so spare

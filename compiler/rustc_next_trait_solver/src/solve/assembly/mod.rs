@@ -454,7 +454,16 @@ where
                     self.assemble_object_bound_candidates(goal, &mut candidates);
                 }
             }
-            AssembleCandidatesFrom::EnvAndBounds => {}
+            AssembleCandidatesFrom::EnvAndBounds => {
+                // This is somewhat inconsistent and may make #57893 slightly easier to exploit.
+                // However, it matches the behavior of the old solver. See
+                // `tests/ui/traits/next-solver/normalization-shadowing/use_object_if_empty_env.rs`.
+                if matches!(normalized_self_ty.kind(), ty::Dynamic(..))
+                    && !candidates.iter().any(|c| matches!(c.source, CandidateSource::ParamEnv(_)))
+                {
+                    self.assemble_object_bound_candidates(goal, &mut candidates);
+                }
+            }
         }
 
         (candidates, failed_candidate_info)
@@ -538,9 +547,11 @@ where
                 Some(SolverTraitLangItem::PointeeSized) => {
                     unreachable!("`PointeeSized` is removed during lowering");
                 }
-                Some(SolverTraitLangItem::Copy | SolverTraitLangItem::Clone) => {
-                    G::consider_builtin_copy_clone_candidate(self, goal)
-                }
+                Some(
+                    SolverTraitLangItem::Copy
+                    | SolverTraitLangItem::Clone
+                    | SolverTraitLangItem::TrivialClone,
+                ) => G::consider_builtin_copy_clone_candidate(self, goal),
                 Some(SolverTraitLangItem::Fn) => {
                     G::consider_builtin_fn_trait_candidates(self, goal, ty::ClosureKind::Fn)
                 }
