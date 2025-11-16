@@ -1840,7 +1840,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
     // Process the function signature to generate calls to log runtime values.
     // Walk the function body and insert calls at exit points.
-    fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
+    fn visit_fn(&mut self, mut fk: FnKind<'_>, _attrs: &rustc_ast::AttrVec, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
         match &mut fk {
             FnKind::Fn(_, _, f) => {
                 let ppt_name = String::from(f.ident.as_str());
