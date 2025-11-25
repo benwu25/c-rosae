@@ -36,9 +36,11 @@ use super::{
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::{exp, fluent_generated as fluent};
 
-// Stores the output prefix.
-// E.g., foo.rs -> foo, or the name of the cargo project.
-pub static OUTPUT_NAME: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::from("")));
+// Stores the prefix for output files.
+// Decls and dtrace files will be named according to this value.
+// E.g., an input program foo.rs will produce foo.decls, foo.dtrace, etc.
+// Similarly a cargo project foo will generate foo.decls and foo.dtrace.
+pub static OUTPUT_PREFIX: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::from("")));
 
 // True if we are not bootstrapping the standard library.
 pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
@@ -50,15 +52,19 @@ static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
    Primary visitor pass for dtrace instrumentation.
 */
 struct DaikonDtraceVisitor<'a> {
-    // For parsing string fragments
+    // For parsing string fragments.
     pub parser: &'a Parser<'a>,
 
-    // For appending impl blocks to the file
+    // For appending impl blocks to the file.
+    // When we find structs while walking the file,
+    // we construct an impl block containing dtrace_*
+    // routines, which are added to this field.
+    // They are later mashed to the end of the file
+    // contents.
     pub mod_items: &'a mut ThinVec<Box<Item>>,
 }
 
-// Represents a coarse-grained breakdown of any Rust type.
-// Information about references is handled in get_basic_type.
+// Represents a Rust type.
 // E.g.,
 // i32 -> Prim("i32")
 // Vec<char> -> PrimVec("char")
@@ -75,114 +81,120 @@ struct DaikonDtraceVisitor<'a> {
 // enums, unions, and all UserDef types from outside the
 // crate.
 #[derive(PartialEq)]
-enum BasicType {
+enum RustType {
     Prim(String),
     UserDef(String),
     PrimVec(String),
     UserDefVec(String),
     PrimArray(String),
     UserDefArray(String),
-    NoRet,
-    Error,
+    NoRet, // For void-returning functions.
+    Error, // Used to indicate a type is not primitive.
 }
 
-// Given a pattern pat from a function signature representing a parameter name,
-// return the argument name in a String.
+// Convert a Pat representing a parameter name into a String representation.
 fn get_param_ident(pat: &Box<Pat>) -> String {
     match &pat.kind {
         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
-        _ => panic!("Formal arg does not have simple identifier"),
+        _ => panic!("Parameter does not have simple identifier"),
     }
 }
 
-// Given a reduced type String (i.e., no references or junk in front),
-// check if the type String is a primitive (i32, u32, String, etc.)
-// and return a BasicType representing it or BasicType::Error otherwise.
-// i32 -> BasicType::Prim("i32")
-// Vec<X> -> BasicType::Error
-fn check_prim(ty_str: &str) -> BasicType {
+// Given a type, check if the type is a primitive and return a RustType
+// representing it or RustType::Error otherwise.
+// i32 -> RustType::Prim("i32")
+// Vec<X> -> RustType::Error
+fn as_primitive(ty_str: &str) -> RustType {
     if ty_str == I8 {
-        return BasicType::Prim(String::from(I8));
+        return RustType::Prim(String::from(I8));
     } else if ty_str == I16 {
-        return BasicType::Prim(String::from(I16));
+        return RustType::Prim(String::from(I16));
     } else if ty_str == I32 {
-        return BasicType::Prim(String::from(I32));
+        return RustType::Prim(String::from(I32));
     } else if ty_str == I64 {
-        return BasicType::Prim(String::from(I64));
+        return RustType::Prim(String::from(I64));
     } else if ty_str == I128 {
-        return BasicType::Prim(String::from(I128));
+        return RustType::Prim(String::from(I128));
     } else if ty_str == ISIZE {
-        return BasicType::Prim(String::from(ISIZE));
+        return RustType::Prim(String::from(ISIZE));
     } else if ty_str == U8 {
-        return BasicType::Prim(String::from(U8));
+        return RustType::Prim(String::from(U8));
     } else if ty_str == U16 {
-        return BasicType::Prim(String::from(U16));
+        return RustType::Prim(String::from(U16));
     } else if ty_str == U32 {
-        return BasicType::Prim(String::from(U32));
+        return RustType::Prim(String::from(U32));
     } else if ty_str == U64 {
-        return BasicType::Prim(String::from(U64));
+        return RustType::Prim(String::from(U64));
     } else if ty_str == U128 {
-        return BasicType::Prim(String::from(U128));
+        return RustType::Prim(String::from(U128));
     } else if ty_str == USIZE {
-        return BasicType::Prim(String::from(USIZE));
+        return RustType::Prim(String::from(USIZE));
     } else if ty_str == F32 {
-        return BasicType::Prim(String::from(F32));
+        return RustType::Prim(String::from(F32));
     } else if ty_str == F64 {
-        return BasicType::Prim(String::from(F64));
+        return RustType::Prim(String::from(F64));
     } else if ty_str == CHAR {
-        return BasicType::Prim(String::from(CHAR));
+        return RustType::Prim(String::from(CHAR));
     } else if ty_str == BOOL {
-        return BasicType::Prim(String::from(BOOL));
+        return RustType::Prim(String::from(BOOL));
     } else if ty_str == UNIT {
-        return BasicType::Prim(String::from(UNIT));
+        return RustType::Prim(String::from(UNIT));
     } else if ty_str == STR {
-        return BasicType::Prim(String::from(STR));
+        return RustType::Prim(String::from(STR));
     } else if ty_str == STRING {
-        return BasicType::Prim(String::from(STRING));
+        return RustType::Prim(String::from(STRING));
     }
-    BasicType::Error
+    RustType::Error
 }
 
-// Given argument path representing the element type of a Vec,
-// return the complete BasicType for the Vec. Set is_ref to true
-// if the Vec contains references, otherwise false.
-// E.g.,
+// Given the type of the object contained in a Vec,
+// return a RustType representing the Vec.
+// is_ref is set to true if the Vec contains references.
 // Vec<X> -> UserDefVec("X")
 // &'a Vec<X> -> UserDefVec("X")
 // Vec<&X> -> UserDefVec("X"), is_ref == true
-fn grok_vec_args(path: &Path, is_ref: &mut bool) -> BasicType {
+// &Vec<X> -> UserDefVec("X")
+// &Vec<&X> -> UserDefVec("X"), is_ref == true
+fn grok_vec_args(path: &Path, is_ref: &mut bool) -> RustType {
     // Reset in case we have an &Vec<X>, since we want to know if
     // the Vec arguments are references are not, i.e., Vec<X> vs.
     // Vec<&X>.
     *is_ref = false;
     match &path.segments[path.segments.len() - 1].args {
-        None => BasicType::Error,
+        None => RustType::Error,
         Some(args) => match &**args {
             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
                 AngleBracketedArg::Arg(arg) => match &arg {
                     GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind, is_ref) {
-                        BasicType::Prim(p_type) => BasicType::PrimVec(String::from(p_type)),
-                        BasicType::UserDef(basic_type) => {
-                            BasicType::UserDefVec(String::from(basic_type))
+                        RustType::Prim(p_type) => RustType::PrimVec(String::from(p_type)),
+                        RustType::UserDef(basic_type) => {
+                            RustType::UserDefVec(String::from(basic_type))
                         }
-                        _ => BasicType::Error,
+                        _ => RustType::Error,
                     },
-                    _ => BasicType::Error,
+                    _ => RustType::Error,
                 },
-                _ => BasicType::Error,
+                _ => RustType::Error,
             },
-            _ => BasicType::Error,
+            _ => RustType::Error,
         },
     }
 }
 
-// Used to reduce a String like X<a, b> to X.
-// Not necessary in any cases I have found, but it is
-// used to make calls like
-// X::dtrace_print_... rather than
-// X<a, b>::dtrace_print...
-// For Vec<X>.
-fn cut_lifetimes(spliced_struct: String) -> String {
+// Note: this function is unused, TODO: remove
+// Reduce a String like X<'a, T> to X. Not strictly necessary, just allows
+// function calls like ``X::dtrace_print_*`` rather than
+// ``X<'a, T>::dtrace_print_*`` when we have Vec<X>.
+// spliced_struct represents a struct name + generics, like X<'a, T>.
+fn remove_angle_args(spliced_struct: String) -> String {
+    match spliced_struct.find('<') {
+        Some(idx) => {
+            let slice = &spliced_struct[0..idx - 1];
+            String::from(slice)
+        }
+        None => spliced_struct,
+    }
+    /*
     let mut res = String::from("");
     let mut i = 0;
     while i < spliced_struct.len() {
@@ -192,38 +204,36 @@ fn cut_lifetimes(spliced_struct: String) -> String {
         res.push_str(&String::from(spliced_struct.chars().nth(i).unwrap()));
         i += 1;
     }
-    res
+    res */
 }
 
+// Set global variable OUTPUT_PREFIX using input file path.
 // If there is no output file specified with -o and we have not
-// been invoked by cargo, take the OUTPUT_NAME from the input file
+// been invoked by cargo, take the OUTPUT_PREFIX from the input file
 // name.
 // foo.rs -> foo
-pub fn jot_output_name(s: String) {
-    let end = match s.rfind(".") {
+pub fn set_output_prefix(input_name: String) {
+    let dot_idx = match input_name.rfind(".") {
         // .rs
-        None => panic!("no . at the end of input file name"),
+        None => panic!("no '.' at the end of input file name {}", input_name),
         Some(end) => end,
     };
-    let mut start = match s.rfind("/") {
+    let slash_idx = match input_name.rfind("/") {
         // .../<crate>.rs
         None => 0,
         Some(slash) => slash + 1,
     };
-    let mut res = String::from("");
-    while start < end {
-        res.push_str(&format!("{}", s.chars().nth(start).unwrap()));
-        start += 1;
-    }
-    *OUTPUT_NAME.lock().unwrap() = res;
+    let res = &input_name[slash_idx..dot_idx];
+    *OUTPUT_PREFIX.lock().unwrap() = String::from(res);
 }
 
+// TODO: remove this unused function (it is used by gen_impl_noop which must be deleted soon!)
 // Hack.
 // Given a pretty-printed struct:
 // struct X<a, b> {
 // ...
 // }
-// Splice the name X<a, b> from this String. This is the only way
+// Extract the name X<a, b> from this String. This is the only way
 // I have found to take a struct Item and obtain its identifier
 // including generics in a String.
 // The identifier plus generics are required to synthesize impl blocks
@@ -276,25 +286,26 @@ fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
     }
 }
 
-// Given a Rust type, break it down into something that fits into
-// BasicType. If it is a reference, note this with is_ref.
+// Create a RustType for the given Rust type. If it is a reference,
+// note this with is_ref.
 // For Vec/array, is_ref indicates whether the contents of the
 // container are references or not rather than the container
 // itself. It does not matter if the container is_ref or not,
 // since we always make a copy Vec with references to contents.
-fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
+fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
     match &kind {
         TyKind::Array(arr_type, _anon_const) => match &get_basic_type(&arr_type.kind, is_ref) {
-            BasicType::Prim(p_type) => BasicType::PrimArray(String::from(p_type)),
-            BasicType::UserDef(basic_type) => BasicType::UserDefArray(String::from(basic_type)),
+            RustType::Prim(p_type) => RustType::PrimArray(String::from(p_type)),
+            RustType::UserDef(basic_type) => RustType::UserDefArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
         },
         TyKind::Slice(arr_type) => match &get_basic_type(&arr_type.kind, is_ref) {
-            BasicType::Prim(p_type) => BasicType::PrimArray(String::from(p_type)),
-            BasicType::UserDef(basic_type) => BasicType::UserDefArray(String::from(basic_type)),
+            RustType::Prim(p_type) => RustType::PrimArray(String::from(p_type)),
+            RustType::UserDef(basic_type) => RustType::UserDefArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
         },
-        TyKind::Ptr(_mut_ty) => BasicType::Error,
+        // TODO: implement logging and handling for Rust pointers.
+        TyKind::Ptr(_mut_ty) => RustType::Error,
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
             // recurse to get to the underlying type
@@ -305,17 +316,17 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
                 panic!("Path has no type");
             }
             let ty_string = path.segments[path.segments.len() - 1].ident.as_str();
-            let try_prim = check_prim(ty_string);
-            if try_prim != BasicType::Error {
+            let try_prim = as_primitive(ty_string);
+            if try_prim != RustType::Error {
                 return try_prim;
             }
             if ty_string == VEC {
                 return grok_vec_args(&path, is_ref);
             }
-            // Return full type: BasicType<args>, need generics in some cases.
-            BasicType::UserDef(ty_string.to_string())
+            // Return full type: RustType<args>, need generics in some cases.
+            RustType::UserDef(ty_string.to_string())
         }
-        _ => BasicType::Error,
+        _ => RustType::Error,
     }
 }
 
@@ -336,15 +347,15 @@ fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
     res
 }
 
-// Used to check if the last statement in each function is an
-// explicit void return. If it is not, an explicit void return
-// is added at the end to make it easy to identify the final
-// exit ppt.
-// This does not detect something like
+// Returns true if the last statement in each function is an
+// explicit void return.
+// Note: returns false in a case like the following:
 /*
 if cond { return; } else { return; }
 */
 // In this case, an extra void return is unreachable.
+// TODO: handle checking for exhaustive control flow with
+// explicit void returns.
 fn last_stmt_is_void_return(block: &Box<Block>) -> bool {
     if block.stmts.len() == 0 {
         panic!("no stmts to check");
@@ -359,8 +370,8 @@ fn last_stmt_is_void_return(block: &Box<Block>) -> bool {
 }
 
 impl<'a> DaikonDtraceVisitor<'a> {
-    // Given a block of stmts in a String and a block, parse the stmts
-    // into a Vec<Item>, and append all stmts to the block.
+    // Given a block of stmts in a String and a block, append parsed stmts
+    // to the end of the block.
     fn append_to_block(&self, stuff: String, block: &mut Box<Block>) {
         match &self.parser.parse_items_from_string(stuff.clone()) {
             Err(_why) => panic!("Parsing internal String failed"),
@@ -379,7 +390,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     }
 
     // Given a block of stmts in a String, a block, and an idx into the block,
-    // parse the stmts into a Vec<Item>, and insert all stmts at the specified index.
+    // insert parsed stmts at the specified index.
     fn insert_into_block(&self, loc: usize, stuff: String, block: &mut Box<Block>) -> usize {
         let mut i = loc;
         let items = self.parser.parse_items_from_string(stuff.clone());
@@ -401,8 +412,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
         i
     }
 
-    // Take an if stmt and use invariants about if stmts
-    // to walk all blocks and locate exit ppts.
+    // Take an if stmt and walk all blocks to locate exit ppts and insert
+    // log stmts to log exit ppts.
     // expr: If expression.
     // exit_counter: gives the previously seen number of exit ppts.
     // ppt_name: ppt name.
@@ -471,18 +482,23 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
     }
 
+    // TODO: noted elsewhere, but also here: implement data structures
+    // to store exit ppt information rather than in dtrace_param_blocks
+    // as a string. This allows for much greater flexibility, and avoids
+    // parse errors deep in the instrumentation pipeline.
+
     // Given a ret_expr from an explicit return stmt or a non-semi
     // trailing return, insert code into body at index i to log the
     // ret_expr.
     // i: index into block to insert logging.
     // ret_expr: Expr representing the return value at a given exit ppt.
     // body: the block to insert into.
-    // exit_counter: label for the next exit ppt.
+    // exit_counter: unique, function-local numeric identifier for an exit ppt.
     // ppt_name: program point name.
     // dtrace_param_blocks: Vec of logging code stored in Strings.
     // ret_ty: return type of the function.
     // daikon_tmp_counter: label for the next temporary variable.
-    fn build_return(
+    fn insert_return(
         &mut self,
         i: &mut usize,
         ret_expr: &Expr, // &Box<Expr>?
@@ -498,6 +514,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
             DTRACE_EXIT,
         );
         *exit_counter += 1;
+        // TODO: create overloads of build_instrument_code specialized for
+        // common tasks like creating exit ppts, which may also do operations
+        // like increment exit_counter.
 
         *i = self.insert_into_block(*i, exit.clone(), body);
 
@@ -507,7 +526,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         let mut ret_is_ref = false;
         let r_ty = match &ret_ty {
-            FnRetTy::Default(_span) => BasicType::NoRet,
+            FnRetTy::Default(_span) => RustType::NoRet,
             FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref),
         };
         let pr_ty = match &ret_ty {
@@ -519,7 +538,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
         *i = self.insert_into_block(*i, ret_let, body);
         match &r_ty {
-            BasicType::Prim(p_type) => {
+            RustType::Prim(p_type) => {
                 let prim_record_ret = if p_type == "String" || p_type == "str" {
                     build_instrument_code(
                         vec![String::from("__daikon_ret"), String::from("return")],
@@ -540,7 +559,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 };
                 *i = self.insert_into_block(*i, prim_record_ret, body);
             }
-            BasicType::UserDef(_) => {
+            RustType::UserDef(_) => {
                 if ret_is_ref == false {
                     let userdef_record_ret = build_userdef_ret_ampersand(3);
                     *i = self.insert_into_block(*i, userdef_record_ret, body);
@@ -549,7 +568,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     *i = self.insert_into_block(*i, userdef_record_ret, body);
                 }
             }
-            BasicType::PrimVec(p_type) => {
+            RustType::PrimVec(p_type) => {
                 let first_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let next_tmp = daikon_tmp_counter.to_string();
@@ -579,7 +598,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
                 *i = self.insert_into_block(*i, prim_vec_record_ret, body);
             }
-            BasicType::UserDefVec(basic_type) => {
+            RustType::UserDefVec(basic_type) => {
                 let first_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let next_tmp = daikon_tmp_counter.to_string();
@@ -606,7 +625,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
                 *i = self.insert_into_block(*i, userdef_vec_record_ret, body);
             }
-            BasicType::PrimArray(p_type) => {
+            RustType::PrimArray(p_type) => {
                 let first_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let next_tmp = daikon_tmp_counter.to_string();
@@ -636,7 +655,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
                 *i = self.insert_into_block(*i, prim_vec_record_ret, body);
             }
-            BasicType::UserDefArray(basic_type) => {
+            RustType::UserDefArray(basic_type) => {
                 let first_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let next_tmp = daikon_tmp_counter.to_string();
@@ -663,8 +682,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
                 *i = self.insert_into_block(*i, userdef_vec_record_ret, body);
             }
-            BasicType::NoRet => {}
-            BasicType::Error => panic!("ret_ty is BasicType::Error"),
+            RustType::NoRet => {}
+            RustType::Error => panic!("ret_ty is RustType::Error"),
         }
 
         *i = self.insert_into_block(*i, dtrace_newline(), body);
@@ -676,13 +695,13 @@ impl<'a> DaikonDtraceVisitor<'a> {
         body.stmts.remove(*i);
     }
 
-    // Given a block body and an index i, process the stmt
-    // body.stmts[i]. This may be a return stmt or a new block,
+    // Given a block body and an index i, check the stmt
+    // body.stmts[i] for a return stmt, a new block to walk,
     // or a stmt which invalidates one of the parameters such
-    // as drop(param1).
-    // Returns the index to the next stmt to process. If new
-    // stmts have been added, returns the next stmt after all
-    // inserted stmts.
+    // as drop(param).
+    // Returns the index to the next stmt in the block to process. If this
+    // method adds stmts immediately after the given index, returns the next
+    // stmt after all inserted stmts.
     // loc: index representing the index to the stmt to process.
     // body: surrounding block containing the stmt.
     // exit_counter: int representing the next number to use to
@@ -859,7 +878,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     i += 1;
                 }
                 ExprKind::Ret(Some(return_expr)) => {
-                    self.build_return(
+                    self.insert_return(
                         &mut i,
                         &return_expr,
                         body,
@@ -882,7 +901,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             // previous match block.
             StmtKind::Expr(no_semi_expr) => {
                 // we know it is not a block, so it must be trailing no-semi return expr
-                self.build_return(
+                self.insert_return(
                     &mut i,
                     &no_semi_expr,
                     body,
@@ -950,7 +969,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             },
         }
 
-        let plain_struct = cut_lifetimes(spliced_struct.clone());
+        let plain_struct = remove_angle_args(spliced_struct.clone());
         let dtrace_print_fields_vec = self.build_dtrace_print_fields_vec_noop(plain_struct.clone());
         match &self.parser.parse_items_from_string(dtrace_print_fields_vec) {
             Err(_) => panic!("Parsing dtrace_print_fields_vec failed"),
@@ -966,9 +985,17 @@ impl<'a> DaikonDtraceVisitor<'a> {
     }
 
     // This function generates a new impl for a user-defined struct with type
-    // ty. The impl will contain multiple synthesized functions, like
-    // dtrace_print_fields, dtrace_print_fields_vec, and more.
-    fn gen_impl(&mut self, fields: &mut ThinVec<FieldDef>, ty: &Ty, struct_generics: &Generics) {
+    // ty and enqueues the impl block into self.mod_items to be appended to
+    // the end of the current translation unit (file). The impl will contain
+    // multiple synthesized functions, like dtrace_print_fields,
+    // dtrace_print_fields_vec, and more.
+    // fields: fields of the struct for which we are generating a new impl blocl.
+    fn gen_impl(
+        &mut self,
+        struct_fields: &mut ThinVec<FieldDef>,
+        struct_ty: &Ty,
+        struct_generics: &Generics,
+    ) {
         let mut impl_item = self.base_impl_item();
         let the_impl = match &mut impl_item.kind {
             ItemKind::Impl(i) => i,
@@ -977,7 +1004,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // TODO: remove this.
         // let spliced_struct = splice_struct(&pp_struct);
         // let struct_as_ret = build_phony_ret(spliced_struct.clone()); // TODO: fix splice string to handle pub keyword
-        the_impl.self_ty = Box::new(ty.clone());
+        the_impl.self_ty = Box::new(struct_ty.clone());
         // TODO: remove this.
         // match &self.parser.parse_items_from_string(struct_as_ret) {
         //     Err(_why) => panic!("Parsing phony arg failed"),
@@ -991,7 +1018,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // };
         the_impl.generics = struct_generics.clone();
 
-        let dtrace_print_fields_fn = self.build_dtrace_print_fields(fields);
+        let dtrace_print_fields_fn = self.build_dtrace_print_fields(struct_fields);
         match &self.parser.parse_items_from_string(dtrace_print_fields_fn) {
             Err(_why) => panic!("Parsing dtrace_print_fields failed"),
             Ok(items) => match &items[0].kind {
@@ -1004,13 +1031,13 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         // TODO: remove this.
         // Is this even important?
-        // let plain_struct = cut_lifetimes(spliced_struct.clone());
-        let plain_struct = match &ty.kind {
+        // let plain_struct = remove_angle_args(spliced_struct.clone());
+        let plain_struct = match &struct_ty.kind {
             TyKind::Path(_, path) => String::from(path.segments[0].ident.as_str()),
             _ => panic!("Why don't we have a path?"),
         };
         let dtrace_print_fields_vec =
-            self.build_dtrace_print_fields_vec(plain_struct.clone(), fields);
+            self.build_dtrace_print_fields_vec(plain_struct.clone(), struct_fields);
         match &self.parser.parse_items_from_string(dtrace_print_fields_vec) {
             Err(_) => panic!("Parsing dtrace_print_fields_vec failed"),
             Ok(items) => match &items[0].kind {
@@ -1023,7 +1050,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         // TODO: remove this.
         // build dtrace_print_xfield_vec (AND dtrace_print_xfield...) here, then that should be it for generating fns in the impl.
-        let dtrace_print_xfields = self.build_dtrace_print_xfield_vec(plain_struct.clone(), fields);
+        let dtrace_print_xfields =
+            self.build_dtrace_print_xfield_vec(plain_struct.clone(), struct_fields);
         match &self.parser.parse_items_from_string(dtrace_print_xfields) {
             Err(_) => panic!("Parsing dtrace_print_xfields failed"),
             Ok(items) => match &items[0].kind {
@@ -1041,11 +1069,13 @@ impl<'a> DaikonDtraceVisitor<'a> {
         self.mod_items.push(impl_item.clone());
     }
 
-    // Given a struct fields, returns a String with code containing
-    // functions to log each field of the struct given a vec of
-    // such a struct.
+    // Given a struct with fields ``fields``, returns a String with code
+    // containing a function to log each field of the struct given a vec of
+    // such a struct. String is sufficient, since no further modifications
+    // or mutations will be done to this generated code.
     // Additionally, for any Vec or array fields, adds a function
-    // which is responsible for logging these fields.
+    // which is responsible for logging the field in pointer format.
+    // TODO: write a small example input/output.
     fn build_dtrace_print_xfield_vec(
         &mut self,
         plain_struct: String,
@@ -1055,7 +1085,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // dtrace_print_xfield_vec prints scalar fields out of a Vec<Me>, and dtrace_print_xfield takes one Me and prints Me.f which is a Vec.
         let mut dtrace_print_xfields_vec = dtrace_print_xfields_vec_prologue();
 
-        // not important for this to be here, these functions are self-contained so
+        // not important for this to be here, each function is self-contained so
         // the names don't matter.
         let mut daikon_tmp_counter = 0;
         let mut i = 0;
@@ -1067,7 +1097,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
             let mut is_ref = false;
             let dtrace_print_xfield = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
-                BasicType::Prim(p_type) => {
+                RustType::Prim(p_type) => {
                     // We have a vec of ourselves, and the field is
                     if p_type == "String" || p_type == "str" {
                         build_print_xfield_string(field_name.clone(), plain_struct.clone())
@@ -1083,7 +1113,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 //            build_dtrace_print_xfield_middle(),
                 //            build_print_prim_vec_for_field(),
                 //            build_dtrace_print_xfield_epilogue()
-                BasicType::PrimVec(p_type) => {
+                RustType::PrimVec(p_type) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1127,7 +1157,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 //            build_dtrace_print_xfield_middle() (depth check),
                 //            build_print_vec_fields_for_field() (for contents),
                 //            build_dtrace_print_xfield_epilogue() (closing brace)
-                BasicType::UserDefVec(basic_struct) => {
+                RustType::UserDefVec(basic_struct) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1171,7 +1201,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 // TODO: arrays, mighty similar to vec. Maybe you can cheat and just do the exact same thing... use | in pattern matching.
                 // Except pointer is diff, as_ptr() as usize vs as *const _ as *const () as usize...
-                BasicType::PrimArray(p_type) => {
+                RustType::PrimArray(p_type) => {
                     // UNTRUSTED:
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
@@ -1207,7 +1237,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         build_print_xfield_for_vec(field_name.clone(), plain_struct.to_string());
                     format!("{}\n{}", f1, f2)
                 }
-                BasicType::UserDefArray(basic_struct) => {
+                RustType::UserDefArray(basic_struct) => {
                     // UNTRUSTED:
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
@@ -1284,7 +1314,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             let mut is_ref = false;
             let dtrace_field_vec_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
                 // don't need p_type because we just call dtrace_print_xfield which handles the type.
-                BasicType::Prim(_) => {
+                RustType::Prim(_) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1303,7 +1333,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
-                BasicType::UserDef(field_type) => {
+                RustType::UserDef(field_type) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1339,7 +1369,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     )
                 }
                 // call X::dtrace_print_<field>_vec since it will be implemented to only print pointers. NOT TRUSTED CODE:
-                BasicType::PrimVec(_) => {
+                RustType::PrimVec(_) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1358,7 +1388,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
-                BasicType::UserDefVec(_) => {
+                RustType::UserDefVec(_) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1377,7 +1407,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
-                BasicType::PrimArray(_) => {
+                RustType::PrimArray(_) => {
                     // UNTRUSTED: is this exactly the same?
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
@@ -1397,7 +1427,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
-                BasicType::UserDefArray(_) => {
+                RustType::UserDefArray(_) => {
                     // UNTRUSTED: is this exactly the same?
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
@@ -1417,8 +1447,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
-                BasicType::NoRet => String::from(""),
-                BasicType::Error => panic!("Field type not handled"),
+                RustType::NoRet => String::from(""),
+                RustType::Error => panic!("Field type not handled"),
             };
 
             dtrace_print_fields_vec.push_str(&dtrace_field_vec_rec); // don't think a newline here would matter? Parsing doesn't care.
@@ -1440,6 +1470,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         let mut i = 0;
         while i < fields.len() {
+            // TODO: remove and add tests for private fields.
             // Make all fields public for access in dtrace routines.
             fields[i].vis.kind = VisibilityKind::Public;
 
@@ -1450,7 +1481,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
             let mut is_ref = false;
             let mut dtrace_field_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
-                BasicType::Prim(p_type) => {
+                RustType::Prim(p_type) => {
                     if p_type == "String" || p_type == "str" {
                         build_instrument_code(
                             vec![field_name.clone(), field_name.clone()],
@@ -1473,7 +1504,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     }
                 }
-                BasicType::UserDef(_) => {
+                RustType::UserDef(_) => {
                     if !is_ref {
                         build_field_userdef_with_ampersand_access(field_name.clone())
                     } else {
@@ -1481,18 +1512,18 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     }
                 }
                 // TODO: use the | operator here.
-                BasicType::PrimVec(_) => build_call_print_field(field_name.clone()),
-                BasicType::UserDefVec(_) => build_call_print_field(field_name.clone()),
-                BasicType::PrimArray(_p_type) => {
+                RustType::PrimVec(_) => build_call_print_field(field_name.clone()),
+                RustType::UserDefVec(_) => build_call_print_field(field_name.clone()),
+                RustType::PrimArray(_p_type) => {
                     // UNTRUSTED:
                     build_call_print_field(field_name.clone())
                 }
-                BasicType::UserDefArray(_) => {
+                RustType::UserDefArray(_) => {
                     // UNTRUSTED:
                     build_call_print_field(field_name.clone())
                 }
-                BasicType::NoRet => String::from(""),
-                BasicType::Error => panic!("Field type not handled"),
+                RustType::NoRet => String::from(""),
+                RustType::Error => panic!("Field type not handled"),
             };
             dtrace_field_rec.push_str("\n");
 
@@ -1504,8 +1535,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
     }
 
     // TODO: dtrace calls should be represented with a better data structures rather than
-    // Strings
-    // Given a function signature, generate a set of dtrace calls for each parameter. These
+    // Strings.
+    // Given a function signature, generate a set of dtrace calls for each parameter,
+    // such as logging a pointer value and logging contents for structs. These
     // will be reused at the function entry and each exit ppt.
     fn grok_fn_sig(&mut self, decl: &Box<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
         // grok params.
@@ -1527,7 +1559,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 )
             } else {
                 match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
-                    BasicType::Prim(p_type) => {
+                    RustType::Prim(p_type) => {
                         if p_type == "String" || p_type == "str" {
                             build_instrument_code(
                                 vec![
@@ -1557,7 +1589,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             )
                         }
                     }
-                    BasicType::UserDef(_) => {
+                    RustType::UserDef(_) => {
                         if !is_ref {
                             build_instrument_code(
                                 vec![
@@ -1582,7 +1614,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             )
                         }
                     }
-                    BasicType::PrimVec(p_type) => {
+                    RustType::PrimVec(p_type) => {
                         let first_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
@@ -1611,7 +1643,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             print_vec.clone()
                         )
                     }
-                    BasicType::UserDefVec(basic_type) => {
+                    RustType::UserDefVec(basic_type) => {
                         let first_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
@@ -1650,7 +1682,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         );
                         res
                     }
-                    BasicType::PrimArray(p_type) => {
+                    RustType::PrimArray(p_type) => {
                         let first_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
@@ -1679,7 +1711,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             print_vec.clone()
                         )
                     }
-                    BasicType::UserDefArray(basic_type) => {
+                    RustType::UserDefArray(basic_type) => {
                         let first_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
@@ -1718,8 +1750,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         );
                         res
                     }
-                    BasicType::NoRet => String::from(""),
-                    BasicType::Error => panic!("Formal arg type not handled."),
+                    RustType::NoRet => String::from(""),
+                    RustType::Error => panic!("Formal arg type not handled."),
                 }
             };
             dtrace_rec.push_str("\n");
@@ -1732,10 +1764,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
         dtrace_param_blocks
     }
 
-    // Walk a single block, used for recursing through nested
+    // Visit a single block, used for recursing through nested
     // blocks like if stmts and loops.
     // ppt_name: program point name.
-    // body: the block which we will walk.
+    // body: the block to walk.
     // dtrace_param_blocks: Vec of Strings containing dtrace
     //                      calls for each parameter.
     // param_to_block_idx: no description.
@@ -1838,9 +1870,17 @@ impl<'a> DaikonDtraceVisitor<'a> {
 // The main visitor routines and entry-points for function and struct
 // instrumentation.
 impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
-    // Process the function signature to generate calls to log runtime values.
-    // Walk the function body and insert calls at exit points.
-    fn visit_fn(&mut self, mut fk: FnKind<'_>, _attrs: &rustc_ast::AttrVec, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
+    // Process the function signature to generate calls to log arguments and
+    // return value.
+    // Visit the function body and insert calls at exit points via
+    // DaikonDtraceVisitor::insert_into_block.
+    fn visit_fn(
+        &mut self,
+        mut fk: FnKind<'_>,
+        _attrs: &rustc_ast::AttrVec,
+        _span: rustc_span::Span,
+        _id: rustc_ast::NodeId,
+    ) {
         match &mut fk {
             FnKind::Fn(_, _, f) => {
                 let ppt_name = String::from(f.ident.as_str());
@@ -1904,7 +1944,6 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                                 panic!("Enum has const generic arg.")
                             }
                         }
-                        // Return param-dependent dtrace calls.
                         i += 1;
                     }
                     let angle_bracketed_args =
@@ -2080,7 +2119,7 @@ impl<'a> Parser<'a> {
             }
 
             // pretty print the instrumented code (without library/imports) for testing.
-            let pp_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".pp");
+            let pp_path = format!("{}{}", *OUTPUT_PREFIX.lock().unwrap(), ".pp");
             let pp_as_path = std::path::Path::new(&pp_path);
             std::fs::File::create(&pp_as_path).unwrap();
             let mut pp =

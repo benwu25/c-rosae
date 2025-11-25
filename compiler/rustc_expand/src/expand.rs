@@ -14,7 +14,7 @@ use rustc_parse::parser::daikon_strs::{
     BOOL, CHAR, F32, F64, I8, I16, I32, I64, I128, ISIZE, STR, STRING, U8, U16, U32, U64, U128,
     UNIT, USIZE, VEC,
 };
-use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_NAME};
+use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_PREFIX};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::{LazyLock, Mutex};
@@ -1759,7 +1759,7 @@ static DECLS: LazyLock<Mutex<Option<std::fs::File>>> = LazyLock::new(|| Mutex::n
 
 // Open the decls file.
 fn dtrace_open() -> Option<std::fs::File> {
-    let decls_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".decls");
+    let decls_path = format!("{}{}", *OUTPUT_PREFIX.lock().unwrap(), ".decls");
     let decls = std::path::Path::new(&decls_path);
     Some(std::fs::File::options().write(true).append(true).open(&decls).unwrap())
 }
@@ -1801,10 +1801,10 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             map_builder.visit_crate(&krate);
 
             // create or overwrite decls/dtrace.
-            let decls_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".decls");
+            let decls_path = format!("{}{}", *OUTPUT_PREFIX.lock().unwrap(), ".decls");
             let decls = std::path::Path::new(&decls_path);
             std::fs::File::create(&decls).unwrap();
-            let dtrace_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".dtrace");
+            let dtrace_path = format!("{}{}", *OUTPUT_PREFIX.lock().unwrap(), ".dtrace");
             let dtrace = std::path::Path::new(&dtrace_path);
             std::fs::File::create(&dtrace).unwrap();
             write_header();

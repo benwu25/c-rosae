@@ -13,7 +13,7 @@
 #![feature(try_blocks)]
 // tidy-alphabetical-end
 
-use rustc_parse::parser::item::{OUTPUT_NAME, jot_output_name};
+use rustc_parse::parser::item::{OUTPUT_PREFIX, set_output_prefix};
 
 use std::cmp::max;
 use std::collections::{BTreeMap, BTreeSet};
@@ -283,13 +283,13 @@ pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) 
         match &sess.io.output_file {
             None => match &sess.io.input {
                 Input::File(path) => {
-                    jot_output_name(String::from(path.to_str().unwrap()));
+                    set_output_prefix(String::from(path.to_str().unwrap()));
                 }
                 _ => {}
             },
             Some(ofile) => match &ofile {
                 OutFileName::Real(path) => {
-                    *OUTPUT_NAME.lock().unwrap() = String::from(path.to_str().unwrap());
+                    *OUTPUT_PREFIX.lock().unwrap() = String::from(path.to_str().unwrap());
                 }
                 _ => {}
             },
@@ -298,7 +298,7 @@ pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) 
         // this is the expected path for builds with cargo
         match &sess.opts.crate_name {
             Some(name) => {
-                *OUTPUT_NAME.lock().unwrap() = String::from(name);
+                *OUTPUT_PREFIX.lock().unwrap() = String::from(name);
             }
             _ => {}
         }

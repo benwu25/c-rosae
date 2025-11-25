@@ -1,6 +1,6 @@
 // TODO: add one test for each String.
 
-use crate::parser::item::OUTPUT_NAME;
+use crate::parser::item::OUTPUT_PREFIX;
 
 // Proper primitive types
 // i8, i16, i32, i64, i128 and isize
@@ -787,7 +787,7 @@ pub(crate) fn build_print_xfield_for_vec(field_name: String, basic_type: String)
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[1]);
     res.push_str(&basic_type);
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[2]);
-    res.push_str(&*OUTPUT_NAME.lock().unwrap());
+    res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[3]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[4]);
@@ -877,7 +877,7 @@ pub(crate) fn build_print_xfield(field_name: String, basic_type: String) -> Stri
     res.push_str(DTRACE_PRINT_XFIELDS[1]);
     res.push_str(&basic_type);
     res.push_str(DTRACE_PRINT_XFIELDS[2]);
-    res.push_str(&*OUTPUT_NAME.lock().unwrap());
+    res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
     res.push_str(DTRACE_PRINT_XFIELDS[3]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS[4]);
@@ -914,7 +914,7 @@ pub(crate) fn build_print_xfield_string(field_name: String, basic_type: String) 
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[1]);
     res.push_str(&basic_type);
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[2]);
-    res.push_str(&*OUTPUT_NAME.lock().unwrap());
+    res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[3]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[4]);
@@ -1217,7 +1217,7 @@ fn dtrace_newline() {
 pub(crate) fn daikon_lib() -> String {
     let mut res = String::from(DAIKON_LIB[0]);
     for i in 1..DAIKON_LIB.len() {
-        res.push_str(&*OUTPUT_NAME.lock().unwrap());
+        res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
         res.push_str(DAIKON_LIB[i]);
     }
     res
