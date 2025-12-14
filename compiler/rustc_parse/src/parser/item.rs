@@ -2041,12 +2041,13 @@ impl<'a> Parser<'a> {
         let (source_file, _b, _c, _d, _e) = source_map.span_to_location_info(self.token.span);
         *DO_VISITOR.lock().unwrap() = match &source_file {
             Some(sf) => match &sf.name {
-                rustc_span::FileName::Real(file_name) => match &file_name {
-                    rustc_span::RealFileName::LocalPath(path) => match &path.to_str() {
-                        Some(str) => !str.starts_with("library") && !str.contains(".cargo"),
+                // RealFileName is no longer an enum
+                rustc_span::FileName::Real(file_name) => match &file_name.local_path() {
+                    Some(buf) => match &buf.to_str() {
+                        Some(s) => !s.starts_with("library") && !s.contains(".cargo"),
                         None => false,
                     },
-                    _ => false,
+                    None => false,
                 },
                 _ => false,
             },
