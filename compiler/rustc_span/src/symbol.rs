@@ -14,6 +14,7 @@ use rustc_data_structures::stable_hasher::{
 use rustc_data_structures::sync::Lock;
 use rustc_macros::{Decodable, Encodable, HashStable_Generic, symbols};
 
+use crate::edit_distance::find_best_match_for_name;
 use crate::{DUMMY_SP, Edition, Span, with_session_globals};
 
 #[cfg(test)]
@@ -571,6 +572,7 @@ symbols! {
         begin_panic,
         bench,
         bevy_ecs,
+        bikeshed,
         bikeshed_guaranteed_no_drop,
         bin,
         binaryheap_iter,
@@ -878,6 +880,7 @@ symbols! {
         destructuring_assignment,
         diagnostic,
         diagnostic_namespace,
+        diagnostic_on_const,
         dialect,
         direct,
         discriminant_kind,
@@ -1584,6 +1587,7 @@ symbols! {
         object_safe_for_dispatch,
         of,
         off,
+        offload,
         offset,
         offset_of,
         offset_of_enum,
@@ -1593,6 +1597,7 @@ symbols! {
         old_name,
         omit_gdb_pretty_printer_section,
         on,
+        on_const,
         on_unimplemented,
         opaque,
         opaque_module_name_placeholder: "<opaque>",
@@ -1966,6 +1971,7 @@ symbols! {
         rustc_objc_class,
         rustc_objc_selector,
         rustc_object_lifetime_default,
+        rustc_offload_kernel,
         rustc_on_unimplemented,
         rustc_outlives,
         rustc_paren_sugar,
@@ -2139,6 +2145,7 @@ symbols! {
         sparc,
         sparc64,
         sparc_target_feature,
+        spe_acc,
         specialization,
         speed,
         spirv,
@@ -2278,6 +2285,7 @@ symbols! {
         truncf64,
         truncf128,
         try_blocks,
+        try_blocks_heterogeneous,
         try_capture,
         try_from,
         try_from_fn,
@@ -2837,6 +2845,27 @@ impl Symbol {
     pub fn to_ident_string(self) -> String {
         // Avoid creating an empty identifier, because that asserts in debug builds.
         if self == sym::empty { String::new() } else { Ident::with_dummy_span(self).to_string() }
+    }
+
+    /// Checks if `self` is similar to any symbol in `candidates`.
+    ///
+    /// The returned boolean represents whether the candidate is the same symbol with a different
+    /// casing.
+    ///
+    /// All the candidates are assumed to be lowercase.
+    pub fn find_similar(
+        self,
+        candidates: &[Symbol],
+    ) -> Option<(Symbol, /* is incorrect case */ bool)> {
+        let lowercase = self.as_str().to_lowercase();
+        let lowercase_sym = Symbol::intern(&lowercase);
+        if candidates.contains(&lowercase_sym) {
+            Some((lowercase_sym, true))
+        } else if let Some(similar_sym) = find_best_match_for_name(candidates, self, None) {
+            Some((similar_sym, false))
+        } else {
+            None
+        }
     }
 }
 

@@ -379,17 +379,6 @@ pub(crate) struct ParenthesizedFnTraitExpansion {
 }
 
 #[derive(Diagnostic)]
-#[diag(hir_analysis_typeof_reserved_keyword_used, code = E0516)]
-pub(crate) struct TypeofReservedKeywordUsed<'tcx> {
-    pub ty: Ty<'tcx>,
-    #[primary_span]
-    #[label]
-    pub span: Span,
-    #[suggestion(style = "verbose", code = "{ty}")]
-    pub opt_sugg: Option<(Span, Applicability)>,
-}
-
-#[derive(Diagnostic)]
 #[diag(hir_analysis_value_of_associated_struct_already_specified, code = E0719)]
 pub(crate) struct ValueOfAssociatedStructAlreadySpecified {
     #[primary_span]
@@ -1562,11 +1551,11 @@ pub(crate) struct UnconstrainedGenericParameter {
 #[diag(hir_analysis_opaque_captures_higher_ranked_lifetime, code = E0657)]
 pub(crate) struct OpaqueCapturesHigherRankedLifetime {
     #[primary_span]
-    pub span: Span,
+    pub span: MultiSpan,
     #[label]
     pub label: Option<Span>,
     #[note]
-    pub decl_span: Span,
+    pub decl_span: MultiSpan,
     pub bad_place: &'static str,
 }
 

@@ -382,8 +382,6 @@ declare_features! (
     (unstable, arbitrary_self_types, "1.23.0", Some(44874)),
     /// Allows inherent and trait methods with arbitrary self types that are raw pointers.
     (unstable, arbitrary_self_types_pointers, "1.83.0", Some(44874)),
-    /// Allows #[cfg(...)] on inline assembly templates and operands.
-    (unstable, asm_cfg, "1.89.0", Some(140364)),
     /// Enables experimental inline assembly support for additional architectures.
     (unstable, asm_experimental_arch, "1.58.0", Some(93335)),
     /// Enables experimental register support in inline assembly.
@@ -485,6 +483,8 @@ declare_features! (
     (incomplete, deref_patterns, "1.79.0", Some(87121)),
     /// Allows deriving the From trait on single-field structs.
     (unstable, derive_from, "1.91.0", Some(144889)),
+    /// Allows giving non-const impls custom diagnostic messages if attempted to be used as const
+    (unstable, diagnostic_on_const, "CURRENT_RUSTC_VERSION", Some(143874)),
     /// Allows `#[doc(cfg(...))]`.
     (unstable, doc_cfg, "1.21.0", Some(43781)),
     /// Allows `#[doc(masked)]`.
@@ -594,8 +594,6 @@ declare_features! (
     (incomplete, never_patterns, "1.76.0", Some(118155)),
     /// Allows the `!` type. Does not imply 'exhaustive_patterns' (below) any more.
     (unstable, never_type, "1.13.0", Some(35121)),
-    /// Allows diverging expressions to fall back to `!` rather than `()`.
-    (unstable, never_type_fallback, "1.41.0", Some(65992)),
     /// Switch `..` syntax to use the new (`Copy + IntoIterator`) range types.
     (unstable, new_range, "1.86.0", Some(123741)),
     /// Allows `#![no_core]`.
@@ -665,6 +663,8 @@ declare_features! (
     (unstable, trivial_bounds, "1.28.0", Some(48214)),
     /// Allows using `try {...}` expressions.
     (unstable, try_blocks, "1.29.0", Some(31436)),
+    /// Allows using `try bikeshed TargetType {...}` expressions.
+    (unstable, try_blocks_heterogeneous, "CURRENT_RUSTC_VERSION", Some(149488)),
     /// Allows `impl Trait` to be used inside type aliases (RFC 2515).
     (unstable, type_alias_impl_trait, "1.38.0", Some(63063)),
     /// Allows creation of instances of a struct by moving fields that have

@@ -13,8 +13,7 @@ use find_msvc_tools;
 use itertools::Itertools;
 use regex::Regex;
 use rustc_arena::TypedArena;
-use rustc_ast::CRATE_NODE_ID;
-use rustc_attr_parsing::{ShouldEmit, eval_config_entry};
+use rustc_attr_parsing::eval_config_entry;
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_data_structures::memmap::Mmap;
 use rustc_data_structures::temp_dir::MaybeTempDir;
@@ -1763,10 +1762,6 @@ fn link_output_kind(sess: &Session, crate_type: CrateType) -> LinkOutputKind {
 
 // Returns true if linker is located within sysroot
 fn detect_self_contained_mingw(sess: &Session, linker: &Path) -> bool {
-    // Assume `-C linker=rust-lld` as self-contained mode
-    if linker == Path::new("rust-lld") {
-        return true;
-    }
     let linker_with_extension = if cfg!(windows) && linker.extension().is_none() {
         linker.with_extension("exe")
     } else {
@@ -2558,7 +2553,7 @@ fn add_order_independent_options(
         && sess.target.is_like_windows
         && let Some(s) = &codegen_results.crate_info.windows_subsystem
     {
-        cmd.subsystem(s);
+        cmd.windows_subsystem(*s);
     }
 
     // Try to strip as much out of the generated object by removing unused
@@ -3033,9 +3028,7 @@ fn add_dynamic_crate(cmd: &mut dyn Linker, sess: &Session, cratepath: &Path) {
 
 fn relevant_lib(sess: &Session, lib: &NativeLib) -> bool {
     match lib.cfg {
-        Some(ref cfg) => {
-            eval_config_entry(sess, cfg, CRATE_NODE_ID, ShouldEmit::ErrorsAndLints).as_bool()
-        }
+        Some(ref cfg) => eval_config_entry(sess, cfg).as_bool(),
         None => true,
     }
 }

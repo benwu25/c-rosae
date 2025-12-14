@@ -80,6 +80,8 @@ ast_passes_c_variadic_must_be_unsafe =
 ast_passes_c_variadic_no_extern = `...` is not supported for non-extern functions
     .help = only `extern "C"` and `extern "C-unwind"` functions may have a C variable argument list
 
+ast_passes_c_variadic_not_supported = the `{$target}` target does not support c-variadic functions
+
 ast_passes_const_and_c_variadic = functions cannot be both `const` and C-variadic
     .const = `const` because of this
     .variadic = C-variadic because of this
@@ -88,6 +90,9 @@ ast_passes_const_and_coroutine = functions cannot be both `const` and `{$corouti
     .const = `const` because of this
     .coroutine = `{$coroutine_kind}` because of this
     .label = {""}
+
+ast_passes_const_auto_trait = auto traits cannot be const
+    .help = remove the `const` keyword
 
 ast_passes_const_bound_trait_object = const trait bounds are not allowed in trait object types
 

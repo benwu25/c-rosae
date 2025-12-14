@@ -500,12 +500,12 @@ impl<'gcc, 'tcx> BackendTypes for Builder<'_, 'gcc, 'tcx> {
 }
 
 fn set_rvalue_location<'a, 'gcc, 'tcx>(
-    bx: &mut Builder<'a, 'gcc, 'tcx>,
+    _bx: &mut Builder<'a, 'gcc, 'tcx>,
     rvalue: RValue<'gcc>,
 ) -> RValue<'gcc> {
-    if bx.location.is_some() {
-        #[cfg(feature = "master")]
-        rvalue.set_location(bx.location.unwrap());
+    #[cfg(feature = "master")]
+    if let Some(location) = _bx.location {
+        rvalue.set_location(location);
     }
     rvalue
 }
@@ -1481,7 +1481,6 @@ impl<'a, 'gcc, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'gcc, 'tcx> {
         variable.to_rvalue()
     }
 
-    #[allow(dead_code)]
     fn va_arg(&mut self, _list: RValue<'gcc>, _ty: Type<'gcc>) -> RValue<'gcc> {
         unimplemented!();
     }
@@ -2517,7 +2516,7 @@ impl ToGccComp for RealPredicate {
 }
 
 #[repr(C)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types)]
 enum MemOrdering {
     __ATOMIC_RELAXED,
     __ATOMIC_CONSUME,

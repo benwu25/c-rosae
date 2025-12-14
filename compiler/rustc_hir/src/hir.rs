@@ -4,7 +4,7 @@ use std::fmt;
 
 use rustc_abi::ExternAbi;
 use rustc_ast::attr::AttributeExt;
-use rustc_ast::token::CommentKind;
+use rustc_ast::token::DocFragmentKind;
 use rustc_ast::util::parser::ExprPrecedence;
 use rustc_ast::{
     self as ast, FloatTy, InlineAsmOptions, InlineAsmTemplatePiece, IntTy, Label, LitIntType,
@@ -1193,10 +1193,15 @@ impl IntoDiagArg for AttrPath {
 }
 
 impl AttrPath {
-    pub fn from_ast(path: &ast::Path) -> Self {
+    pub fn from_ast(path: &ast::Path, lower_span: impl Copy + Fn(Span) -> Span) -> Self {
         AttrPath {
-            segments: path.segments.iter().map(|i| i.ident).collect::<Vec<_>>().into_boxed_slice(),
-            span: path.span,
+            segments: path
+                .segments
+                .iter()
+                .map(|i| Ident { name: i.ident.name, span: lower_span(i.ident.span) })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            span: lower_span(path.span),
         }
     }
 }
@@ -1371,7 +1376,6 @@ impl AttributeExt for Attribute {
     fn doc_str(&self) -> Option<Symbol> {
         match &self {
             Attribute::Parsed(AttributeKind::DocComment { comment, .. }) => Some(*comment),
-            Attribute::Unparsed(_) if self.has_name(sym::doc) => self.value_str(),
             _ => None,
         }
     }
@@ -1381,13 +1385,10 @@ impl AttributeExt for Attribute {
     }
 
     #[inline]
-    fn doc_str_and_comment_kind(&self) -> Option<(Symbol, CommentKind)> {
+    fn doc_str_and_fragment_kind(&self) -> Option<(Symbol, DocFragmentKind)> {
         match &self {
             Attribute::Parsed(AttributeKind::DocComment { kind, comment, .. }) => {
                 Some((*comment, *kind))
-            }
-            Attribute::Unparsed(_) if self.has_name(sym::doc) => {
-                self.value_str().map(|s| (s, CommentKind::Line))
             }
             _ => None,
         }
@@ -1412,6 +1413,14 @@ impl AttributeExt for Attribute {
                     | AttributeKind::ProcMacroDerive { .. }
             )
         )
+    }
+
+    fn is_doc_hidden(&self) -> bool {
+        matches!(self, Attribute::Parsed(AttributeKind::Doc(d)) if d.hidden.is_some())
+    }
+
+    fn is_doc_keyword_or_attribute(&self) -> bool {
+        matches!(self, Attribute::Parsed(AttributeKind::Doc(d)) if d.attribute.is_some() || d.keyword.is_some())
     }
 }
 
@@ -1498,8 +1507,8 @@ impl Attribute {
     }
 
     #[inline]
-    pub fn doc_str_and_comment_kind(&self) -> Option<(Symbol, CommentKind)> {
-        AttributeExt::doc_str_and_comment_kind(self)
+    pub fn doc_str_and_fragment_kind(&self) -> Option<(Symbol, DocFragmentKind)> {
+        AttributeExt::doc_str_and_fragment_kind(self)
     }
 }
 
@@ -1792,6 +1801,55 @@ impl<'hir> Pat<'hir> {
             _ => true,
         });
         is_never_pattern
+    }
+
+    /// Whether this pattern constitutes a read of value of the scrutinee that
+    /// it is matching against. This is used to determine whether we should
+    /// perform `NeverToAny` coercions.
+    ///
+    /// See [`expr_guaranteed_to_constitute_read_for_never`][m] for the nuances of
+    /// what happens when this returns true.
+    ///
+    /// [m]: ../../rustc_middle/ty/struct.TyCtxt.html#method.expr_guaranteed_to_constitute_read_for_never
+    pub fn is_guaranteed_to_constitute_read_for_never(&self) -> bool {
+        match self.kind {
+            // Does not constitute a read.
+            PatKind::Wild => false,
+
+            // The guard cannot affect if we make a read or not (it runs after the inner pattern
+            // has matched), therefore it's irrelevant.
+            PatKind::Guard(pat, _) => pat.is_guaranteed_to_constitute_read_for_never(),
+
+            // This is unnecessarily restrictive when the pattern that doesn't
+            // constitute a read is unreachable.
+            //
+            // For example `match *never_ptr { value => {}, _ => {} }` or
+            // `match *never_ptr { _ if false => {}, value => {} }`.
+            //
+            // It is however fine to be restrictive here; only returning `true`
+            // can lead to unsoundness.
+            PatKind::Or(subpats) => {
+                subpats.iter().all(|pat| pat.is_guaranteed_to_constitute_read_for_never())
+            }
+
+            // Does constitute a read, since it is equivalent to a discriminant read.
+            PatKind::Never => true,
+
+            // All of these constitute a read, or match on something that isn't `!`,
+            // which would require a `NeverToAny` coercion.
+            PatKind::Missing
+            | PatKind::Binding(_, _, _, _)
+            | PatKind::Struct(_, _, _)
+            | PatKind::TupleStruct(_, _, _)
+            | PatKind::Tuple(_, _)
+            | PatKind::Box(_)
+            | PatKind::Ref(_, _, _)
+            | PatKind::Deref(_)
+            | PatKind::Expr(_)
+            | PatKind::Range(_, _, _)
+            | PatKind::Slice(_, _, _)
+            | PatKind::Err(_) => true,
+        }
     }
 }
 
@@ -3680,8 +3738,6 @@ pub enum TyKind<'hir, Unambig = ()> {
     /// We use pointer tagging to represent a `&'hir Lifetime` and `TraitObjectSyntax` pair
     /// as otherwise this type being `repr(C)` would result in `TyKind` increasing in size.
     TraitObject(&'hir [PolyTraitRef<'hir>], TaggedRef<'hir, Lifetime, TraitObjectSyntax>),
-    /// Unused for now.
-    Typeof(&'hir AnonConst),
     /// Placeholder for a type that has failed to be defined.
     Err(rustc_span::ErrorGuaranteed),
     /// Pattern types (`pattern_type!(u32 is 1..)`)
@@ -3841,8 +3897,12 @@ impl IsAsync {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Encodable, Decodable, HashStable_Generic)]
+#[derive(Default)]
 pub enum Defaultness {
-    Default { has_value: bool },
+    Default {
+        has_value: bool,
+    },
+    #[default]
     Final,
 }
 
@@ -4186,8 +4246,13 @@ impl<'hir> Item<'hir> {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-#[derive(Encodable, Decodable, HashStable_Generic)]
+#[derive(Encodable, Decodable, HashStable_Generic, Default)]
 pub enum Safety {
+    /// This is the default variant, because the compiler messing up
+    /// metadata encoding and failing to encode a `Safe` flag, means
+    /// downstream crates think a thing is `Unsafe` instead of silently
+    /// treating an unsafe thing as safe.
+    #[default]
     Unsafe,
     Safe,
 }
@@ -4226,8 +4291,8 @@ impl fmt::Display for Safety {
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Encodable, Decodable, HashStable_Generic)]
 #[derive(Default)]
 pub enum Constness {
-    Const,
     #[default]
+    Const,
     NotConst,
 }
 

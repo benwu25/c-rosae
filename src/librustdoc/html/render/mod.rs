@@ -60,7 +60,7 @@ use rustc_hir::{ConstStability, Mutability, RustcVersion, StabilityLevel, Stable
 use rustc_middle::ty::print::PrintTraitRefExt;
 use rustc_middle::ty::{self, TyCtxt};
 use rustc_span::symbol::{Symbol, sym};
-use rustc_span::{BytePos, DUMMY_SP, FileName, RealFileName};
+use rustc_span::{BytePos, DUMMY_SP, FileName};
 use tracing::{debug, info};
 
 pub(crate) use self::context::*;
@@ -2020,13 +2020,11 @@ fn render_impl(
         let mut methods = Vec::new();
 
         if !impl_.is_negative_trait_impl() {
-            for trait_item in &impl_.items {
-                match trait_item.kind {
-                    clean::MethodItem(..) | clean::RequiredMethodItem(_) => {
-                        methods.push(trait_item)
-                    }
+            for impl_item in &impl_.items {
+                match impl_item.kind {
+                    clean::MethodItem(..) | clean::RequiredMethodItem(_) => methods.push(impl_item),
                     clean::RequiredAssocTypeItem(..) | clean::AssocTypeItem(..) => {
-                        assoc_types.push(trait_item)
+                        assoc_types.push(impl_item)
                     }
                     clean::RequiredAssocConstItem(..)
                     | clean::ProvidedAssocConstItem(_)
@@ -2036,7 +2034,7 @@ fn render_impl(
                             &mut default_impl_items,
                             &mut impl_items,
                             cx,
-                            trait_item,
+                            impl_item,
                             if trait_.is_some() { &i.impl_item } else { parent },
                             link,
                             render_mode,
@@ -2774,7 +2772,7 @@ fn render_call_locations<W: fmt::Write>(
             files
                 .iter()
                 .find(|file| match &file.name {
-                    FileName::Real(RealFileName::LocalPath(other_path)) => rel_path == other_path,
+                    FileName::Real(real) => real.local_path().map_or(false, |p| p == rel_path),
                     _ => false,
                 })
                 .map(|file| file.start_pos)
