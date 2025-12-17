@@ -7,6 +7,8 @@ To view a diff of this fork and the Rust compiler, see [https://github.com/benwu
      * `./x build library/std`
  * Set up daikon as a toolchain with the stage 1 build.
      * `rustup toolchain link daikon build/<platform>/stage1`
+ * Run end-to-end tests:
+     * `cd daikon_tests && cargo run`
  * Produce dtrace and decls files in one command via `cargo +daikon run`,
    or instrument with rustc via `rustc +daikon foo.rs`, and run to produce trace data.
 
