@@ -19,11 +19,12 @@ use crate::attributes::allow_unstable::{
     AllowConstFnUnstableParser, AllowInternalUnstableParser, UnstableFeatureBoundParser,
 };
 use crate::attributes::body::CoroutineParser;
+use crate::attributes::cfi_encoding::CfiEncodingParser;
 use crate::attributes::codegen_attrs::{
-    ColdParser, CoverageParser, ExportNameParser, ForceTargetFeatureParser, NakedParser,
-    NoMangleParser, ObjcClassParser, ObjcSelectorParser, OptimizeParser,
+    ColdParser, CoverageParser, EiiExternItemParser, ExportNameParser, ForceTargetFeatureParser,
+    NakedParser, NoMangleParser, ObjcClassParser, ObjcSelectorParser, OptimizeParser,
     RustcPassIndirectlyInNonRusticAbisParser, SanitizeParser, TargetFeatureParser,
-    TrackCallerParser, UsedParser,
+    ThreadLocalParser, TrackCallerParser, UsedParser,
 };
 use crate::attributes::confusables::ConfusablesParser;
 use crate::attributes::crate_level::{
@@ -50,6 +51,7 @@ use crate::attributes::macro_attrs::{
 };
 use crate::attributes::must_use::MustUseParser;
 use crate::attributes::no_implicit_prelude::NoImplicitPreludeParser;
+use crate::attributes::no_link::NoLinkParser;
 use crate::attributes::non_exhaustive::NonExhaustiveParser;
 use crate::attributes::path::PathParser as PathAttributeParser;
 use crate::attributes::pin_v2::PinV2Parser;
@@ -59,8 +61,12 @@ use crate::attributes::proc_macro_attrs::{
 use crate::attributes::prototype::CustomMirParser;
 use crate::attributes::repr::{AlignParser, AlignStaticParser, ReprParser};
 use crate::attributes::rustc_internal::{
-    RustcLayoutScalarValidRangeEndParser, RustcLayoutScalarValidRangeStartParser, RustcMainParser,
-    RustcObjectLifetimeDefaultParser, RustcSimdMonomorphizeLaneLimitParser,
+    RustcLayoutScalarValidRangeEndParser, RustcLayoutScalarValidRangeStartParser,
+    RustcLegacyConstGenericsParser, RustcLintDiagnosticsParser, RustcLintOptDenyFieldAccessParser,
+    RustcLintOptTyParser, RustcLintQueryInstabilityParser,
+    RustcLintUntrackedQueryInformationParser, RustcMainParser, RustcNeverReturnsNullPointerParser,
+    RustcNoImplicitAutorefsParser, RustcObjectLifetimeDefaultParser, RustcScalableVectorParser,
+    RustcSimdMonomorphizeLaneLimitParser,
 };
 use crate::attributes::semantics::MayDangleParser;
 use crate::attributes::stability::{
@@ -77,7 +83,7 @@ use crate::attributes::transparency::TransparencyParser;
 use crate::attributes::{AttributeParser as _, Combine, Single, WithoutArgs};
 use crate::parser::{ArgParser, RefPathParser};
 use crate::session_diagnostics::{
-    AttributeParseError, AttributeParseErrorReason, ParsedDescription, UnknownMetaItem,
+    AttributeParseError, AttributeParseErrorReason, ParsedDescription,
 };
 use crate::target_checking::AllowedTargets;
 
@@ -182,6 +188,7 @@ attribute_parsers!(
         // tidy-alphabetical-end
 
         // tidy-alphabetical-start
+        Single<CfiEncodingParser>,
         Single<CoverageParser>,
         Single<CrateNameParser>,
         Single<CustomMirParser>,
@@ -208,7 +215,10 @@ attribute_parsers!(
         Single<RustcForceInlineParser>,
         Single<RustcLayoutScalarValidRangeEndParser>,
         Single<RustcLayoutScalarValidRangeStartParser>,
+        Single<RustcLegacyConstGenericsParser>,
+        Single<RustcLintOptDenyFieldAccessParser>,
         Single<RustcObjectLifetimeDefaultParser>,
+        Single<RustcScalableVectorParser>,
         Single<RustcSimdMonomorphizeLaneLimitParser>,
         Single<SanitizeParser>,
         Single<ShouldPanicParser>,
@@ -227,6 +237,7 @@ attribute_parsers!(
         Single<WithoutArgs<CoroutineParser>>,
         Single<WithoutArgs<DenyExplicitImplParser>>,
         Single<WithoutArgs<DoNotImplementViaObjectParser>>,
+        Single<WithoutArgs<EiiExternItemParser>>,
         Single<WithoutArgs<ExportStableParser>>,
         Single<WithoutArgs<FfiConstParser>>,
         Single<WithoutArgs<FfiPureParser>>,
@@ -237,6 +248,7 @@ attribute_parsers!(
         Single<WithoutArgs<MayDangleParser>>,
         Single<WithoutArgs<NoCoreParser>>,
         Single<WithoutArgs<NoImplicitPreludeParser>>,
+        Single<WithoutArgs<NoLinkParser>>,
         Single<WithoutArgs<NoMangleParser>>,
         Single<WithoutArgs<NoStdParser>>,
         Single<WithoutArgs<NonExhaustiveParser>>,
@@ -248,11 +260,18 @@ attribute_parsers!(
         Single<WithoutArgs<ProcMacroParser>>,
         Single<WithoutArgs<PubTransparentParser>>,
         Single<WithoutArgs<RustcCoherenceIsCoreParser>>,
+        Single<WithoutArgs<RustcLintDiagnosticsParser>>,
+        Single<WithoutArgs<RustcLintOptTyParser>>,
+        Single<WithoutArgs<RustcLintQueryInstabilityParser>>,
+        Single<WithoutArgs<RustcLintUntrackedQueryInformationParser>>,
         Single<WithoutArgs<RustcMainParser>>,
+        Single<WithoutArgs<RustcNeverReturnsNullPointerParser>>,
+        Single<WithoutArgs<RustcNoImplicitAutorefsParser>>,
         Single<WithoutArgs<RustcPassIndirectlyInNonRusticAbisParser>>,
         Single<WithoutArgs<RustcShouldNotBeCalledOnConstItems>>,
         Single<WithoutArgs<SpecializationTraitParser>>,
         Single<WithoutArgs<StdInternalSymbolParser>>,
+        Single<WithoutArgs<ThreadLocalParser>>,
         Single<WithoutArgs<TrackCallerParser>>,
         Single<WithoutArgs<TypeConstParser>>,
         Single<WithoutArgs<UnsafeSpecializationMarkerParser>>,
@@ -425,13 +444,20 @@ impl<'f, 'sess: 'f, S: Stage> SharedContext<'f, 'sess, S> {
 }
 
 impl<'f, 'sess: 'f, S: Stage> AcceptContext<'f, 'sess, S> {
-    pub(crate) fn unknown_key(
+    fn emit_parse_error(
         &self,
         span: Span,
-        found: String,
-        options: &[&'static str],
+        reason: AttributeParseErrorReason<'_>,
     ) -> ErrorGuaranteed {
-        self.emit_err(UnknownMetaItem { span, item: found, expected: options })
+        self.emit_err(AttributeParseError {
+            span,
+            attr_span: self.attr_span,
+            template: self.template.clone(),
+            path: self.attr_path.clone(),
+            description: self.parsed_description,
+            reason,
+            suggestions: self.suggestions(),
+        })
     }
 
     /// error that a string literal was expected.
@@ -443,133 +469,73 @@ impl<'f, 'sess: 'f, S: Stage> AcceptContext<'f, 'sess, S> {
         span: Span,
         actual_literal: Option<&MetaItemLit>,
     ) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
+        self.emit_parse_error(
             span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::ExpectedStringLiteral {
+            AttributeParseErrorReason::ExpectedStringLiteral {
                 byte_string: actual_literal.and_then(|i| {
                     i.kind.is_bytestr().then(|| self.sess().source_map().start_point(i.span))
                 }),
             },
-            suggestions: self.suggestions(),
-        })
+        )
     }
 
     pub(crate) fn expected_integer_literal(&self, span: Span) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
-            span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::ExpectedIntegerLiteral,
-            suggestions: self.suggestions(),
-        })
+        self.emit_parse_error(span, AttributeParseErrorReason::ExpectedIntegerLiteral)
     }
 
-    pub(crate) fn expected_list(&self, span: Span) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
-            span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::ExpectedList,
-            suggestions: self.suggestions(),
-        })
+    pub(crate) fn expected_list(&self, span: Span, args: &ArgParser) -> ErrorGuaranteed {
+        let span = match args {
+            ArgParser::NoArgs => span,
+            ArgParser::List(list) => list.span,
+            ArgParser::NameValue(nv) => nv.args_span(),
+        };
+        self.emit_parse_error(span, AttributeParseErrorReason::ExpectedList)
     }
 
-    pub(crate) fn expected_no_args(&self, args_span: Span) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
-            span: args_span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::ExpectedNoArgs,
-            suggestions: self.suggestions(),
-        })
+    pub(crate) fn expected_list_or_no_args(&self, span: Span) -> ErrorGuaranteed {
+        self.emit_parse_error(span, AttributeParseErrorReason::ExpectedListOrNoArgs)
+    }
+
+    pub(crate) fn expected_nv_or_no_args(&self, span: Span) -> ErrorGuaranteed {
+        self.emit_parse_error(span, AttributeParseErrorReason::ExpectedNameValueOrNoArgs)
+    }
+
+    pub(crate) fn expected_non_empty_string_literal(&self, span: Span) -> ErrorGuaranteed {
+        self.emit_parse_error(span, AttributeParseErrorReason::ExpectedNonEmptyStringLiteral)
+    }
+
+    pub(crate) fn expected_no_args(&self, span: Span) -> ErrorGuaranteed {
+        self.emit_parse_error(span, AttributeParseErrorReason::ExpectedNoArgs)
     }
 
     /// emit an error that a `name` was expected here
     pub(crate) fn expected_identifier(&self, span: Span) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
-            span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::ExpectedIdentifier,
-            suggestions: self.suggestions(),
-        })
+        self.emit_parse_error(span, AttributeParseErrorReason::ExpectedIdentifier)
     }
 
     /// emit an error that a `name = value` pair was expected at this span. The symbol can be given for
     /// a nicer error message talking about the specific name that was found lacking a value.
     pub(crate) fn expected_name_value(&self, span: Span, name: Option<Symbol>) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
-            span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::ExpectedNameValue(name),
-            suggestions: self.suggestions(),
-        })
+        self.emit_parse_error(span, AttributeParseErrorReason::ExpectedNameValue(name))
     }
 
     /// emit an error that a `name = value` pair was found where that name was already seen.
     pub(crate) fn duplicate_key(&self, span: Span, key: Symbol) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
-            span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::DuplicateKey(key),
-            suggestions: self.suggestions(),
-        })
+        self.emit_parse_error(span, AttributeParseErrorReason::DuplicateKey(key))
     }
 
     /// an error that should be emitted when a [`MetaItemOrLitParser`](crate::parser::MetaItemOrLitParser)
     /// was expected *not* to be a literal, but instead a meta item.
     pub(crate) fn unexpected_literal(&self, span: Span) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
-            span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::UnexpectedLiteral,
-            suggestions: self.suggestions(),
-        })
+        self.emit_parse_error(span, AttributeParseErrorReason::UnexpectedLiteral)
     }
 
     pub(crate) fn expected_single_argument(&self, span: Span) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
-            span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::ExpectedSingleArgument,
-            suggestions: self.suggestions(),
-        })
+        self.emit_parse_error(span, AttributeParseErrorReason::ExpectedSingleArgument)
     }
 
     pub(crate) fn expected_at_least_one_argument(&self, span: Span) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
-            span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::ExpectedAtLeastOneArgument,
-            suggestions: self.suggestions(),
-        })
+        self.emit_parse_error(span, AttributeParseErrorReason::ExpectedAtLeastOneArgument)
     }
 
     /// produces an error along the lines of `expected one of [foo, meow]`
@@ -578,19 +544,14 @@ impl<'f, 'sess: 'f, S: Stage> AcceptContext<'f, 'sess, S> {
         span: Span,
         possibilities: &[Symbol],
     ) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
+        self.emit_parse_error(
             span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::ExpectedSpecificArgument {
+            AttributeParseErrorReason::ExpectedSpecificArgument {
                 possibilities,
                 strings: false,
                 list: false,
             },
-            suggestions: self.suggestions(),
-        })
+        )
     }
 
     /// produces an error along the lines of `expected one of [foo, meow] as an argument`.
@@ -600,19 +561,14 @@ impl<'f, 'sess: 'f, S: Stage> AcceptContext<'f, 'sess, S> {
         span: Span,
         possibilities: &[Symbol],
     ) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
+        self.emit_parse_error(
             span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::ExpectedSpecificArgument {
+            AttributeParseErrorReason::ExpectedSpecificArgument {
                 possibilities,
                 strings: false,
                 list: true,
             },
-            suggestions: self.suggestions(),
-        })
+        )
     }
 
     /// produces an error along the lines of `expected one of ["foo", "meow"]`
@@ -621,19 +577,14 @@ impl<'f, 'sess: 'f, S: Stage> AcceptContext<'f, 'sess, S> {
         span: Span,
         possibilities: &[Symbol],
     ) -> ErrorGuaranteed {
-        self.emit_err(AttributeParseError {
+        self.emit_parse_error(
             span,
-            attr_span: self.attr_span,
-            template: self.template.clone(),
-            path: self.attr_path.clone(),
-            description: self.parsed_description,
-            reason: AttributeParseErrorReason::ExpectedSpecificArgument {
+            AttributeParseErrorReason::ExpectedSpecificArgument {
                 possibilities,
                 strings: true,
                 list: false,
             },
-            suggestions: self.suggestions(),
-        })
+        )
     }
 
     pub(crate) fn warn_empty_attribute(&mut self, span: Span) {
