@@ -209,11 +209,6 @@ mod llvm_enzyme {
         mut item: Annotatable,
         mode: DiffMode,
     ) -> Vec<Annotatable> {
-        // FIXME(bjorn3) maybe have the backend directly tell if autodiff is supported?
-        if cfg!(not(feature = "llvm_enzyme")) {
-            ecx.sess.dcx().emit_err(errors::AutoDiffSupportNotBuild { span: meta_item.span });
-            return vec![item];
-        }
         let dcx = ecx.sess.dcx();
 
         // first get information about the annotable item: visibility, signature, name and generic
@@ -346,6 +341,7 @@ mod llvm_enzyme {
             contract: None,
             body: Some(d_body),
             define_opaque: None,
+            eii_impls: ThinVec::new(),
         });
         let mut rustc_ad_attr =
             Box::new(ast::NormalAttr::from_ident(Ident::with_dummy_span(sym::rustc_autodiff)));

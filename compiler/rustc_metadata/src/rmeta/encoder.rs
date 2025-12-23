@@ -35,6 +35,7 @@ use rustc_span::{
 };
 use tracing::{debug, instrument, trace};
 
+use crate::eii::EiiMapEncodedKeyValue;
 use crate::errors::{FailCreateFileEncoder, FailWriteFile};
 use crate::rmeta::*;
 
@@ -616,6 +617,9 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         // We have already encoded some things. Get their combined size from the current position.
         stats.push(("preamble", self.position()));
 
+        let externally_implementable_items = stat!("externally-implementable-items", || self
+            .encode_externally_implementable_items());
+
         let (crate_deps, dylib_dependency_formats) =
             stat!("dep", || (self.encode_crate_deps(), self.encode_dylib_dependency_formats()));
 
@@ -734,6 +738,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
                     attrs,
                     sym::default_lib_allocator,
                 ),
+                externally_implementable_items,
                 proc_macro_data,
                 debugger_visualizers,
                 compiler_builtins: ast::attr::contains_name(attrs, sym::compiler_builtins),
@@ -874,13 +879,9 @@ fn analyze_attr(attr: &hir::Attribute, state: &mut AnalyzeAttrState<'_>) -> bool
             should_encode = true;
         }
     } else if let hir::Attribute::Parsed(AttributeKind::Doc(d)) = attr {
-        // If this is a `doc` attribute that doesn't have anything except maybe `inline` (as in
-        // `#[doc(inline)]`), then we can remove it. It won't be inlinable in downstream crates.
-        if d.inline.is_empty() {
-            should_encode = true;
-            if d.hidden.is_some() {
-                state.is_doc_hidden = true;
-            }
+        should_encode = true;
+        if d.hidden.is_some() {
+            state.is_doc_hidden = true;
         }
     } else if let &[sym::diagnostic, seg] = &*attr.path() {
         should_encode = rustc_feature::is_stable_diagnostic_attribute(seg, state.features);
@@ -1446,7 +1447,10 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
                     _ => false,
                 }
             {
-                continue;
+                // MGCA doesn't have unnecessary DefIds
+                if !tcx.features().min_generic_const_args() {
+                    continue;
+                }
             }
 
             if def_kind == DefKind::Field
@@ -1643,6 +1647,15 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         for (def_id, traits) in &tcx.resolutions(()).doc_link_traits_in_scope {
             record_array!(self.tables.doc_link_traits_in_scope[def_id.to_def_id()] <- traits);
         }
+    }
+
+    fn encode_externally_implementable_items(&mut self) -> LazyArray<EiiMapEncodedKeyValue> {
+        empty_proc_macro!(self);
+        let externally_implementable_items = self.tcx.externally_implementable_items(LOCAL_CRATE);
+
+        self.lazy_array(externally_implementable_items.iter().map(|(decl_did, (decl, impls))| {
+            (*decl_did, (decl.clone(), impls.iter().map(|(impl_did, i)| (*impl_did, *i)).collect()))
+        }))
     }
 
     #[instrument(level = "trace", skip(self))]

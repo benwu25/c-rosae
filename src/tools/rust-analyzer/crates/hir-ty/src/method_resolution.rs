@@ -13,8 +13,8 @@ use tracing::{debug, instrument};
 
 use base_db::Crate;
 use hir_def::{
-    AssocItemId, BlockIdLt, ConstId, FunctionId, GenericParamId, HasModule, ImplId,
-    ItemContainerId, ModuleId, TraitId,
+    AssocItemId, BlockId, ConstId, FunctionId, GenericParamId, HasModule, ImplId, ItemContainerId,
+    ModuleId, TraitId,
     attrs::AttrFlags,
     expr_store::path::GenericArgs as HirGenericArgs,
     hir::ExprId,
@@ -26,7 +26,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_type_ir::{
     TypeVisitableExt,
     fast_reject::{TreatParams, simplify_type},
-    inherent::{BoundExistentialPredicates, IntoKind, SliceLike},
+    inherent::{BoundExistentialPredicates, IntoKind},
 };
 use stdx::impl_from;
 use triomphe::Arc;
@@ -362,7 +362,7 @@ pub fn lookup_impl_const<'db>(
         ItemContainerId::TraitId(id) => id,
         _ => return (const_id, subs),
     };
-    let trait_ref = TraitRef::new(interner, trait_id.into(), subs);
+    let trait_ref = TraitRef::new_from_args(interner, trait_id.into(), subs);
 
     let const_signature = db.const_signature(const_id);
     let name = match const_signature.name.as_ref() {
@@ -392,10 +392,10 @@ pub fn is_dyn_method<'db>(
     };
     let trait_params = db.generic_params(trait_id.into()).len();
     let fn_params = fn_subst.len() - trait_params;
-    let trait_ref = TraitRef::new(
+    let trait_ref = TraitRef::new_from_args(
         interner,
         trait_id.into(),
-        GenericArgs::new_from_iter(interner, fn_subst.iter().take(trait_params)),
+        GenericArgs::new_from_slice(&fn_subst[..trait_params]),
     );
     let self_ty = trait_ref.self_ty();
     if let TyKind::Dynamic(d, _) = self_ty.kind() {
@@ -427,10 +427,10 @@ pub(crate) fn lookup_impl_method_query<'db>(
         return (func, fn_subst);
     };
     let trait_params = db.generic_params(trait_id.into()).len();
-    let trait_ref = TraitRef::new(
+    let trait_ref = TraitRef::new_from_args(
         interner,
         trait_id.into(),
-        GenericArgs::new_from_iter(interner, fn_subst.iter().take(trait_params)),
+        GenericArgs::new_from_slice(&fn_subst[..trait_params]),
     );
 
     let name = &db.function_signature(func).name;
@@ -505,13 +505,19 @@ pub(crate) fn find_matching_impl<'db>(
 }
 
 #[salsa::tracked(returns(ref))]
-fn crates_containing_incoherent_inherent_impls(db: &dyn HirDatabase) -> Box<[Crate]> {
+fn crates_containing_incoherent_inherent_impls(db: &dyn HirDatabase, krate: Crate) -> Box<[Crate]> {
+    let _p = tracing::info_span!("crates_containing_incoherent_inherent_impls").entered();
     // We assume that only sysroot crates contain `#[rustc_has_incoherent_inherent_impls]`
     // impls, since this is an internal feature and only std uses it.
-    db.all_crates().iter().copied().filter(|krate| krate.data(db).origin.is_lang()).collect()
+    krate.transitive_deps(db).into_iter().filter(|krate| krate.data(db).origin.is_lang()).collect()
 }
 
-pub fn incoherent_inherent_impls(db: &dyn HirDatabase, self_ty: SimplifiedType) -> &[ImplId] {
+pub fn with_incoherent_inherent_impls(
+    db: &dyn HirDatabase,
+    krate: Crate,
+    self_ty: &SimplifiedType,
+    mut callback: impl FnMut(&[ImplId]),
+) {
     let has_incoherent_impls = match self_ty.def() {
         Some(def_id) => match def_id.try_into() {
             Ok(def_id) => AttrFlags::query(db, def_id)
@@ -520,26 +526,14 @@ pub fn incoherent_inherent_impls(db: &dyn HirDatabase, self_ty: SimplifiedType) 
         },
         _ => true,
     };
-    return if !has_incoherent_impls {
-        &[]
-    } else {
-        incoherent_inherent_impls_query(db, (), self_ty)
-    };
-
-    #[salsa::tracked(returns(ref))]
-    fn incoherent_inherent_impls_query(
-        db: &dyn HirDatabase,
-        _force_query_input_to_be_interned: (),
-        self_ty: SimplifiedType,
-    ) -> Box<[ImplId]> {
-        let _p = tracing::info_span!("incoherent_inherent_impl_crates").entered();
-
-        let mut result = Vec::new();
-        for &krate in crates_containing_incoherent_inherent_impls(db) {
-            let impls = InherentImpls::for_crate(db, krate);
-            result.extend_from_slice(impls.for_self_ty(&self_ty));
-        }
-        result.into_boxed_slice()
+    if !has_incoherent_impls {
+        return;
+    }
+    let _p = tracing::info_span!("incoherent_inherent_impls").entered();
+    let crates = crates_containing_incoherent_inherent_impls(db, krate);
+    for &krate in crates {
+        let impls = InherentImpls::for_crate(db, krate);
+        callback(impls.for_self_ty(self_ty));
     }
 }
 
@@ -558,9 +552,9 @@ pub struct InherentImpls {
 }
 
 #[salsa::tracked]
-impl<'db> InherentImpls {
+impl InherentImpls {
     #[salsa::tracked(returns(ref))]
-    pub fn for_crate(db: &'db dyn HirDatabase, krate: Crate) -> Self {
+    pub fn for_crate(db: &dyn HirDatabase, krate: Crate) -> Self {
         let _p = tracing::info_span!("inherent_impls_in_crate_query", ?krate).entered();
 
         let crate_def_map = crate_def_map(db, krate);
@@ -569,7 +563,7 @@ impl<'db> InherentImpls {
     }
 
     #[salsa::tracked(returns(ref))]
-    pub fn for_block(db: &'db dyn HirDatabase, block: BlockIdLt<'db>) -> Option<Box<Self>> {
+    pub fn for_block(db: &dyn HirDatabase, block: BlockId) -> Option<Box<Self>> {
         let _p = tracing::info_span!("inherent_impls_in_block_query").entered();
 
         let block_def_map = block_def_map(db, block);
@@ -627,13 +621,13 @@ impl InherentImpls {
         self.map.get(self_ty).map(|it| &**it).unwrap_or_default()
     }
 
-    pub fn for_each_crate_and_block<'db>(
-        db: &'db dyn HirDatabase,
+    pub fn for_each_crate_and_block(
+        db: &dyn HirDatabase,
         krate: Crate,
-        block: Option<BlockIdLt<'db>>,
+        block: Option<BlockId>,
         for_each: &mut dyn FnMut(&InherentImpls),
     ) {
-        let blocks = std::iter::successors(block, |block| block.module(db).block(db));
+        let blocks = std::iter::successors(block, |block| block.loc(db).module.block(db));
         blocks.filter_map(|block| Self::for_block(db, block).as_deref()).for_each(&mut *for_each);
         for_each(Self::for_crate(db, krate));
     }
@@ -670,9 +664,9 @@ pub struct TraitImpls {
 }
 
 #[salsa::tracked]
-impl<'db> TraitImpls {
+impl TraitImpls {
     #[salsa::tracked(returns(ref))]
-    pub fn for_crate(db: &'db dyn HirDatabase, krate: Crate) -> Arc<Self> {
+    pub fn for_crate(db: &dyn HirDatabase, krate: Crate) -> Arc<Self> {
         let _p = tracing::info_span!("inherent_impls_in_crate_query", ?krate).entered();
 
         let crate_def_map = crate_def_map(db, krate);
@@ -681,7 +675,7 @@ impl<'db> TraitImpls {
     }
 
     #[salsa::tracked(returns(ref))]
-    pub fn for_block(db: &'db dyn HirDatabase, block: BlockIdLt<'db>) -> Option<Box<Self>> {
+    pub fn for_block(db: &dyn HirDatabase, block: BlockId) -> Option<Box<Self>> {
         let _p = tracing::info_span!("inherent_impls_in_block_query").entered();
 
         let block_def_map = block_def_map(db, block);
@@ -690,7 +684,7 @@ impl<'db> TraitImpls {
     }
 
     #[salsa::tracked(returns(ref))]
-    pub fn for_crate_and_deps(db: &'db dyn HirDatabase, krate: Crate) -> Box<[Arc<Self>]> {
+    pub fn for_crate_and_deps(db: &dyn HirDatabase, krate: Crate) -> Box<[Arc<Self>]> {
         krate.transitive_deps(db).iter().map(|&dep| Self::for_crate(db, dep).clone()).collect()
     }
 }
@@ -792,23 +786,23 @@ impl TraitImpls {
         }
     }
 
-    pub fn for_each_crate_and_block<'db>(
-        db: &'db dyn HirDatabase,
+    pub fn for_each_crate_and_block(
+        db: &dyn HirDatabase,
         krate: Crate,
-        block: Option<BlockIdLt<'db>>,
+        block: Option<BlockId>,
         for_each: &mut dyn FnMut(&TraitImpls),
     ) {
-        let blocks = std::iter::successors(block, |block| block.module(db).block(db));
+        let blocks = std::iter::successors(block, |block| block.loc(db).module.block(db));
         blocks.filter_map(|block| Self::for_block(db, block).as_deref()).for_each(&mut *for_each);
         Self::for_crate_and_deps(db, krate).iter().map(|it| &**it).for_each(for_each);
     }
 
     /// Like [`Self::for_each_crate_and_block()`], but takes in account two blocks, one for a trait and one for a self type.
-    pub fn for_each_crate_and_block_trait_and_type<'db>(
-        db: &'db dyn HirDatabase,
+    pub fn for_each_crate_and_block_trait_and_type(
+        db: &dyn HirDatabase,
         krate: Crate,
-        type_block: Option<BlockIdLt<'db>>,
-        trait_block: Option<BlockIdLt<'db>>,
+        type_block: Option<BlockId>,
+        trait_block: Option<BlockId>,
         for_each: &mut dyn FnMut(&TraitImpls),
     ) {
         let in_self_and_deps = TraitImpls::for_crate_and_deps(db, krate);
@@ -819,11 +813,10 @@ impl TraitImpls {
         // that means there can't be duplicate impls; if they meet, we stop the search of the deeper block.
         // This breaks when they are equal (both will stop immediately), therefore we handle this case
         // specifically.
-        let blocks_iter = |block: Option<BlockIdLt<'db>>| {
-            std::iter::successors(block, |block| block.module(db).block(db))
+        let blocks_iter = |block: Option<BlockId>| {
+            std::iter::successors(block, |block| block.loc(db).module.block(db))
         };
-        let for_each_block = |current_block: Option<BlockIdLt<'db>>,
-                              other_block: Option<BlockIdLt<'db>>| {
+        let for_each_block = |current_block: Option<BlockId>, other_block: Option<BlockId>| {
             blocks_iter(current_block)
                 .take_while(move |&block| {
                     other_block.is_none_or(|other_block| other_block != block)

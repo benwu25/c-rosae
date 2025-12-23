@@ -449,6 +449,8 @@ pub(crate) enum PathSource<'a, 'ast, 'ra> {
     ReturnTypeNotation,
     /// Paths from `#[define_opaque]` attributes
     DefineOpaques,
+    /// Resolving a macro
+    Macro,
 }
 
 impl PathSource<'_, '_, '_> {
@@ -465,6 +467,7 @@ impl PathSource<'_, '_, '_> {
             | PathSource::ReturnTypeNotation => ValueNS,
             PathSource::TraitItem(ns, _) => ns,
             PathSource::PreciseCapturingArg(ns) => ns,
+            PathSource::Macro => MacroNS,
         }
     }
 
@@ -480,7 +483,8 @@ impl PathSource<'_, '_, '_> {
             | PathSource::TraitItem(..)
             | PathSource::DefineOpaques
             | PathSource::Delegation
-            | PathSource::PreciseCapturingArg(..) => false,
+            | PathSource::PreciseCapturingArg(..)
+            | PathSource::Macro => false,
         }
     }
 
@@ -522,6 +526,7 @@ impl PathSource<'_, '_, '_> {
             },
             PathSource::ReturnTypeNotation | PathSource::Delegation => "function",
             PathSource::PreciseCapturingArg(..) => "type or const parameter",
+            PathSource::Macro => "macro",
         }
     }
 
@@ -616,6 +621,7 @@ impl PathSource<'_, '_, '_> {
                 Res::Def(DefKind::TyParam, _) | Res::SelfTyParam { .. } | Res::SelfTyAlias { .. }
             ),
             PathSource::PreciseCapturingArg(MacroNS) => false,
+            PathSource::Macro => matches!(res, Res::Def(DefKind::Macro(_), _)),
         }
     }
 
@@ -635,6 +641,7 @@ impl PathSource<'_, '_, '_> {
             (PathSource::TraitItem(..) | PathSource::ReturnTypeNotation, false) => E0576,
             (PathSource::PreciseCapturingArg(..), true) => E0799,
             (PathSource::PreciseCapturingArg(..), false) => E0800,
+            (PathSource::Macro, _) => E0425,
         }
     }
 }
@@ -1059,6 +1066,12 @@ impl<'ast, 'ra, 'tcx> Visitor<'ast> for LateResolutionVisitor<'_, 'ast, 'ra, 'tc
             FnKind::Closure(..) => {}
         };
         debug!("(resolving function) entering function");
+
+        if let FnKind::Fn(_, _, f) = fn_kind {
+            for EiiImpl { node_id, eii_macro_path, .. } in &f.eii_impls {
+                self.smart_resolve_path(*node_id, &None, &eii_macro_path, PathSource::Macro);
+            }
+        }
 
         // Create a value rib for the function.
         self.with_rib(ValueNS, RibKind::FnOrCoroutine, |this| {
@@ -2132,7 +2145,8 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                 | PathSource::TraitItem(..)
                 | PathSource::Type
                 | PathSource::PreciseCapturingArg(..)
-                | PathSource::ReturnTypeNotation => false,
+                | PathSource::ReturnTypeNotation
+                | PathSource::Macro => false,
                 PathSource::Expr(..)
                 | PathSource::Pat
                 | PathSource::Struct(_)
@@ -2889,6 +2903,17 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                     let def_id = self.r.local_def_id(item.id);
                     self.parent_scope.macro_rules = self.r.macro_rules_scopes[&def_id];
                 }
+
+                if let Some(EiiExternTarget { extern_item_path, impl_unsafe: _, span: _ }) =
+                    &macro_def.eii_extern_target
+                {
+                    self.smart_resolve_path(
+                        item.id,
+                        &None,
+                        extern_item_path,
+                        PathSource::Expr(None),
+                    );
+                }
             }
 
             ItemKind::ForeignMod(_) | ItemKind::GlobalAsm(_) => {
@@ -2903,7 +2928,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                     item.id,
                     LifetimeBinderKind::Function,
                     span,
-                    |this| this.resolve_delegation(delegation),
+                    |this| this.resolve_delegation(delegation, item.id, false),
                 );
             }
 
@@ -3232,7 +3257,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                         item.id,
                         LifetimeBinderKind::Function,
                         delegation.path.segments.last().unwrap().ident.span,
-                        |this| this.resolve_delegation(delegation),
+                        |this| this.resolve_delegation(delegation, item.id, false),
                     );
                 }
                 AssocItemKind::Type(box TyAlias { generics, .. }) => self
@@ -3525,7 +3550,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                             |i, s, c| MethodNotMemberOfTrait(i, s, c),
                         );
 
-                        this.resolve_delegation(delegation)
+                        this.resolve_delegation(delegation, item.id, trait_id.is_some());
                     },
                 );
             }
@@ -3674,17 +3699,30 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         })
     }
 
-    fn resolve_delegation(&mut self, delegation: &'ast Delegation) {
+    fn resolve_delegation(
+        &mut self,
+        delegation: &'ast Delegation,
+        item_id: NodeId,
+        is_in_trait_impl: bool,
+    ) {
         self.smart_resolve_path(
             delegation.id,
             &delegation.qself,
             &delegation.path,
             PathSource::Delegation,
         );
+
         if let Some(qself) = &delegation.qself {
             self.visit_ty(&qself.ty);
         }
+
         self.visit_path(&delegation.path);
+
+        self.r.delegation_sig_resolution_nodes.insert(
+            self.r.local_def_id(item_id),
+            if is_in_trait_impl { item_id } else { delegation.id },
+        );
+
         let Some(body) = &delegation.body else { return };
         self.with_rib(ValueNS, RibKind::FnOrCoroutine, |this| {
             let span = delegation.path.segments.last().unwrap().ident.span;
@@ -4269,7 +4307,6 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         );
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn smart_resolve_path_fragment(
         &mut self,
         qself: &Option<Box<QSelf>>,
