@@ -47,13 +47,14 @@ use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_data_structures::sync::spawn;
 use rustc_data_structures::tagged_ptr::TaggedRef;
 use rustc_errors::{DiagArgFromDisplay, DiagCtxtHandle};
+use rustc_hir::attrs::AttributeKind;
 use rustc_hir::def::{DefKind, LifetimeRes, Namespace, PartialRes, PerNS, Res};
 use rustc_hir::def_id::{CRATE_DEF_ID, LOCAL_CRATE, LocalDefId};
 use rustc_hir::definitions::{DefPathData, DisambiguatorState};
 use rustc_hir::lints::DelayedLint;
 use rustc_hir::{
     self as hir, AngleBrackets, ConstArg, GenericArg, HirId, ItemLocalMap, LifetimeSource,
-    LifetimeSyntax, ParamName, Target, TraitCandidate,
+    LifetimeSyntax, ParamName, Target, TraitCandidate, find_attr,
 };
 use rustc_index::{Idx, IndexSlice, IndexVec};
 use rustc_macros::extension;
@@ -236,29 +237,32 @@ impl SpanLowerer {
 
 #[extension(trait ResolverAstLoweringExt)]
 impl ResolverAstLowering {
-    fn legacy_const_generic_args(&self, expr: &Expr) -> Option<Vec<usize>> {
-        if let ExprKind::Path(None, path) = &expr.kind {
-            // Don't perform legacy const generics rewriting if the path already
-            // has generic arguments.
-            if path.segments.last().unwrap().args.is_some() {
-                return None;
-            }
+    fn legacy_const_generic_args(&self, expr: &Expr, tcx: TyCtxt<'_>) -> Option<Vec<usize>> {
+        let ExprKind::Path(None, path) = &expr.kind else {
+            return None;
+        };
 
-            if let Res::Def(DefKind::Fn, def_id) = self.partial_res_map.get(&expr.id)?.full_res()? {
-                // We only support cross-crate argument rewriting. Uses
-                // within the same crate should be updated to use the new
-                // const generics style.
-                if def_id.is_local() {
-                    return None;
-                }
-
-                if let Some(v) = self.legacy_const_generic_args.get(&def_id) {
-                    return v.clone();
-                }
-            }
+        // Don't perform legacy const generics rewriting if the path already
+        // has generic arguments.
+        if path.segments.last().unwrap().args.is_some() {
+            return None;
         }
 
-        None
+        let def_id = self.partial_res_map.get(&expr.id)?.full_res()?.opt_def_id()?;
+
+        // We only support cross-crate argument rewriting. Uses
+        // within the same crate should be updated to use the new
+        // const generics style.
+        if def_id.is_local() {
+            return None;
+        }
+
+        find_attr!(
+            // we can use parsed attrs here since for other crates they're already available
+            tcx.get_all_attrs(def_id),
+            AttributeKind::RustcLegacyConstGenerics{fn_indexes,..} => fn_indexes
+        )
+        .map(|fn_indexes| fn_indexes.iter().map(|(num, _)| *num).collect())
     }
 
     fn get_partial_res(&self, id: NodeId) -> Option<PartialRes> {
@@ -971,11 +975,23 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         target_span: Span,
         target: Target,
     ) -> &'hir [hir::Attribute] {
-        if attrs.is_empty() {
+        self.lower_attrs_with_extra(id, attrs, target_span, target, &[])
+    }
+
+    fn lower_attrs_with_extra(
+        &mut self,
+        id: HirId,
+        attrs: &[Attribute],
+        target_span: Span,
+        target: Target,
+        extra_hir_attributes: &[hir::Attribute],
+    ) -> &'hir [hir::Attribute] {
+        if attrs.is_empty() && extra_hir_attributes.is_empty() {
             &[]
         } else {
-            let lowered_attrs =
+            let mut lowered_attrs =
                 self.lower_attrs_vec(attrs, self.lower_span(target_span), id, target);
+            lowered_attrs.extend(extra_hir_attributes.iter().cloned());
 
             assert_eq!(id.owner, self.current_hir_id_owner);
             let ret = self.arena.alloc_from_iter(lowered_attrs);
