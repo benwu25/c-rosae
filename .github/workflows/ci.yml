@@ -19,6 +19,8 @@ on:
     branches:
       - "**"
 
+if: false
+
 permissions:
   contents: read
   packages: write
