@@ -11,8 +11,10 @@ To view the changes from the upstream Rust compiler to this fork, see [https://g
      * `./x build library/std`
  * Set up daikon as a toolchain with the stage 1 build.
      * `rustup toolchain link daikon build/<platform>/stage1`
+
+   `<platform>` is, for example, `aarch64-unknown-linux-gnu`
  * Run end-to-end tests:
-     * `cd daikon_tests && cargo run`
+     * `cd daikon-tests && cargo run`
  * Produce dtrace and decls files in one command via `cargo +daikon run`,
    or instrument with rustc via `rustc +daikon foo.rs`, and run to produce trace data.
 

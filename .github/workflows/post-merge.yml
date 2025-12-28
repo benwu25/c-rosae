@@ -3,8 +3,6 @@
 
 name: Post merge analysis
 
-if: false
-
 on:
   push:
     branches:

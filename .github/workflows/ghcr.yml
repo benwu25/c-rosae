@@ -14,8 +14,6 @@
 
 name: GHCR image mirroring
 
-if: false
-
 on:
   workflow_dispatch:
   schedule:
