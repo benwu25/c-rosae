@@ -1985,6 +1985,10 @@ impl<'a> Parser<'a> {
     }
 }
 
+//
+// End of c-rosae additions.
+//
+
 enum ReuseKind {
     Path,
     Impl,
