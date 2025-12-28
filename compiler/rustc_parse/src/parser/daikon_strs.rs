@@ -56,7 +56,7 @@ drop(__unwrap_nonce);
 // Build dtrace entry call for each ppt-enter.
 // $1: ppt-name (e.g. MAIN, FOO)
 pub(crate) static DTRACE_ENTRY: &str =
-    "fn main() { dtrace_entry(\"$1:::ENTER\", __daikon_nonce); }";
+    "fn main() { dtrace_entry(\"$pptname:::ENTER\", __daikon_nonce); }";
 
 // Build dtrace exit call for each ppt-exit.
 // $1: ppt-name.

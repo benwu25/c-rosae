@@ -27,6 +27,8 @@ use rustc_span::{DUMMY_SP, ErrorGuaranteed, Ident, Span, Symbol, kw, source_map,
 use thin_vec::{ThinVec, thin_vec};
 use tracing::debug;
 
+use subst::substitute;
+
 use super::diagnostics::{ConsumeClosingDelim, dummy_arg};
 use super::ty::{AllowPlus, RecoverQPath, RecoverReturnSign};
 use super::{
@@ -1663,7 +1665,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // Currently there is a nonce counter per file which is not correct.
         i = self.insert_into_block(i, build_instrument_code(vec![], INIT_NONCE), body);
 
-        let entry = build_instrument_code(vec![ppt_name.clone()], DTRACE_ENTRY);
+        let entry = subst::substitute(DTRACE_ENTRY, HashMap::from([("pptname", ppt_name))));
         i = self.insert_into_block(i, entry, body);
         for param_block in &mut *dtrace_param_blocks {
             i = self.insert_into_block(i, param_block.clone(), body);
