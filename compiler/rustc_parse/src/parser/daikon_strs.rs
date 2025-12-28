@@ -51,7 +51,7 @@ let mut __unwrap_nonce = NONCE_COUNTER.lock().unwrap();
 __daikon_nonce = *__unwrap_nonce;
 *__unwrap_nonce += 1;
 drop(__unwrap_nonce);
- }";
+}";
 
 // Build dtrace entry call for each ppt-enter.
 // $1: ppt-name (e.g. MAIN, FOO)
