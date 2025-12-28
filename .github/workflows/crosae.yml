@@ -1,0 +1,20 @@
+name: c-rosae CI
+
+"on": [push, pull_request]
+
+jobs:
+  build:
+
+    runs-on: rust:latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          show-progress: false
+      - name: Build the compiler.
+        run: ./x setup && ./x build library/std
+      - name: Set up Daikon as a toolchain with the stage 1 build.
+        run: rustup toolchain link daikon build/<platform>/stage1
+      - name: Run end-to-end tests.
+        run: cd daikon_tests && cargo run
