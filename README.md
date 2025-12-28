@@ -9,7 +9,7 @@ To view the changes from the upstream Rust compiler to this fork, see [https://g
  * Build the compiler.
      * `./x setup`
      * `./x build library/std`
- * Set up daikon as a toolchain with the stage 1 build.
+ * Set up Daikon as a toolchain with the stage 1 build.
      * `rustup toolchain link daikon build/<platform>/stage1`
  * Run end-to-end tests:
      * `cd daikon_tests && cargo run`
