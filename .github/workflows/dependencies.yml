@@ -24,8 +24,6 @@ env:
     The following is the output from `cargo update`:
   COMMIT_MESSAGE: "cargo update \n\n"
 
-if: false
-
 jobs:
   not-waiting-on-bors:
     if: github.repository_owner == 'rust-lang'
