@@ -184,16 +184,6 @@ impl fmt::Debug for ty::BoundTy {
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for ty::Placeholder<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.universe == ty::UniverseIndex::ROOT {
-            write!(f, "!{:?}", self.bound)
-        } else {
-            write!(f, "!{}_{:?}", self.universe.index(), self.bound)
-        }
-    }
-}
-
 impl<'tcx> fmt::Debug for GenericArg<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind() {
@@ -253,7 +243,6 @@ TrivialTypeTraversalImpls! {
     crate::mir::FakeReadCause,
     crate::mir::Local,
     crate::mir::MirPhase,
-    crate::mir::NullOp<'tcx>,
     crate::mir::Promoted,
     crate::mir::RawPtrKind,
     crate::mir::RetagKind,
@@ -294,8 +283,9 @@ TrivialTypeTraversalImpls! {
 // interners).
 TrivialTypeTraversalAndLiftImpls! {
     // tidy-alphabetical-start
+    crate::mir::RuntimeChecks,
+    crate::ty::BoundTy,
     crate::ty::ParamTy,
-    crate::ty::PlaceholderType,
     crate::ty::instance::ReifyReason,
     rustc_hir::def_id::DefId,
     // tidy-alphabetical-end

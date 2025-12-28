@@ -1327,6 +1327,10 @@ pub enum Operand<'tcx> {
 
     /// Constants are already semantically values, and remain unchanged.
     Constant(Box<ConstOperand<'tcx>>),
+
+    /// Query the compilation session of the current crate for a particular flag. This is not quite
+    /// a const since its value can differ across crates within a single crate graph.
+    RuntimeChecks(RuntimeChecks),
 }
 
 #[derive(Clone, Copy, PartialEq, TyEncodable, TyDecodable, Hash, HashStable)]
@@ -1417,9 +1421,6 @@ pub enum Rvalue<'tcx> {
     /// * The remaining operations accept signed integers, unsigned integers, or floats with
     ///   matching types and return a value of that type.
     BinaryOp(BinOp, Box<(Operand<'tcx>, Operand<'tcx>)>),
-
-    /// Computes a value as described by the operation.
-    NullaryOp(NullOp<'tcx>, Ty<'tcx>),
 
     /// Exactly like `BinaryOp`, but less operands.
     ///
@@ -1562,15 +1563,26 @@ pub enum AggregateKind<'tcx> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, TyEncodable, TyDecodable, Hash, HashStable)]
-pub enum NullOp<'tcx> {
-    /// Returns the offset of a field
-    OffsetOf(&'tcx List<(VariantIdx, FieldIdx)>),
+pub enum RuntimeChecks {
     /// Returns whether we should perform some UB-checking at runtime.
     /// See the `ub_checks` intrinsic docs for details.
     UbChecks,
     /// Returns whether we should perform contract-checking at runtime.
     /// See the `contract_checks` intrinsic docs for details.
     ContractChecks,
+    /// Returns whether we should perform some overflow-checking at runtime.
+    /// See the `overflow_checks` intrinsic docs for details.
+    OverflowChecks,
+}
+
+impl RuntimeChecks {
+    pub fn value(self, sess: &rustc_session::Session) -> bool {
+        match self {
+            Self::UbChecks => sess.ub_checks(),
+            Self::ContractChecks => sess.contract_checks(),
+            Self::OverflowChecks => sess.overflow_checks(),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

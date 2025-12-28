@@ -63,7 +63,7 @@ use std::{rc::Rc, sync::Arc};
 
 use intern::{Symbol, sym};
 use smallvec::{SmallVec, smallvec};
-use span::{Edition, Span};
+use span::Span;
 use tt::{
     DelimSpan,
     iter::{TtElement, TtIter},
@@ -71,7 +71,7 @@ use tt::{
 
 use crate::{
     ExpandError, ExpandErrorKind, MetaTemplate, ValueResult,
-    expander::{Binding, Bindings, ExpandResult, Fragment},
+    expander::{Binding, Bindings, ExpandResult, Fragment, TokensOrigin},
     expect_fragment,
     parser::{ExprKind, MetaVarKind, Op, RepeatKind, Separator},
 };
@@ -112,11 +112,11 @@ impl Match<'_> {
 
 /// Matching errors are added to the `Match`.
 pub(super) fn match_<'t>(
+    db: &dyn salsa::Database,
     pattern: &'t MetaTemplate,
     input: &'t tt::TopSubtree<Span>,
-    edition: Edition,
 ) -> Match<'t> {
-    let mut res = match_loop(pattern, input, edition);
+    let mut res = match_loop(db, pattern, input);
     res.bound_count = count(res.bindings.bindings());
     return res;
 
@@ -365,6 +365,7 @@ struct MatchState<'t> {
 /// - `error_items`: the set of items in errors, used for error-resilient parsing
 #[inline]
 fn match_loop_inner<'t>(
+    db: &dyn salsa::Database,
     src: TtIter<'t, Span>,
     stack: &[TtIter<'t, Span>],
     res: &mut Match<'t>,
@@ -375,7 +376,6 @@ fn match_loop_inner<'t>(
     eof_items: &mut SmallVec<[MatchState<'t>; 1]>,
     error_items: &mut SmallVec<[MatchState<'t>; 1]>,
     delim_span: tt::DelimSpan<Span>,
-    edition: Edition,
 ) {
     macro_rules! try_push {
         ($items: expr, $it:expr) => {
@@ -486,7 +486,7 @@ fn match_loop_inner<'t>(
             OpDelimited::Op(Op::Var { kind, name, .. }) => {
                 if let &Some(kind) = kind {
                     let mut fork = src.clone();
-                    let match_res = match_meta_var(kind, &mut fork, delim_span, edition);
+                    let match_res = match_meta_var(db, kind, &mut fork, delim_span);
                     match match_res.err {
                         None => {
                             // Some meta variables are optional (e.g. vis)
@@ -621,9 +621,9 @@ fn match_loop_inner<'t>(
 }
 
 fn match_loop<'t>(
+    db: &dyn salsa::Database,
     pattern: &'t MetaTemplate,
     src: &'t tt::TopSubtree<Span>,
-    edition: Edition,
 ) -> Match<'t> {
     let span = src.top_subtree().delimiter.delim_span();
     let mut src = src.iter();
@@ -655,6 +655,7 @@ fn match_loop<'t>(
         stdx::always!(next_items.is_empty());
 
         match_loop_inner(
+            db,
             src.clone(),
             &stack,
             &mut res,
@@ -665,7 +666,6 @@ fn match_loop<'t>(
             &mut eof_items,
             &mut error_items,
             span,
-            edition,
         );
         stdx::always!(cur_items.is_empty());
 
@@ -772,14 +772,14 @@ fn match_loop<'t>(
 }
 
 fn match_meta_var<'t>(
+    db: &dyn salsa::Database,
     kind: MetaVarKind,
     input: &mut TtIter<'t, Span>,
     delim_span: DelimSpan<Span>,
-    edition: Edition,
 ) -> ExpandResult<Fragment<'t>> {
     let fragment = match kind {
         MetaVarKind::Path => {
-            return expect_fragment(input, parser::PrefixEntryPoint::Path, edition, delim_span)
+            return expect_fragment(db, input, parser::PrefixEntryPoint::Path, delim_span)
                 .map(Fragment::Path);
         }
         MetaVarKind::Expr(expr) => {
@@ -807,7 +807,7 @@ fn match_meta_var<'t>(
                 }
                 _ => {}
             };
-            return expect_fragment(input, parser::PrefixEntryPoint::Expr, edition, delim_span)
+            return expect_fragment(db, input, parser::PrefixEntryPoint::Expr, delim_span)
                 .map(Fragment::Expr);
         }
         MetaVarKind::Ident | MetaVarKind::Tt | MetaVarKind::Lifetime | MetaVarKind::Literal => {
@@ -842,18 +842,23 @@ fn match_meta_var<'t>(
             }
             .err();
             let tt_result = input.from_savepoint(savepoint);
-            return ValueResult { value: Fragment::Tokens(tt_result), err };
+            return ValueResult {
+                value: Fragment::Tokens { tree: tt_result, origin: TokensOrigin::Raw },
+                err,
+            };
         }
-        MetaVarKind::Ty => parser::PrefixEntryPoint::Ty,
-        MetaVarKind::Pat => parser::PrefixEntryPoint::PatTop,
-        MetaVarKind::PatParam => parser::PrefixEntryPoint::Pat,
-        MetaVarKind::Stmt => parser::PrefixEntryPoint::Stmt,
-        MetaVarKind::Block => parser::PrefixEntryPoint::Block,
-        MetaVarKind::Meta => parser::PrefixEntryPoint::MetaItem,
-        MetaVarKind::Item => parser::PrefixEntryPoint::Item,
-        MetaVarKind::Vis => parser::PrefixEntryPoint::Vis,
+        MetaVarKind::Ty => (parser::PrefixEntryPoint::Ty, TokensOrigin::Ast),
+        MetaVarKind::Pat => (parser::PrefixEntryPoint::PatTop, TokensOrigin::Ast),
+        MetaVarKind::PatParam => (parser::PrefixEntryPoint::Pat, TokensOrigin::Ast),
+        MetaVarKind::Stmt => (parser::PrefixEntryPoint::Stmt, TokensOrigin::Ast),
+        MetaVarKind::Block => (parser::PrefixEntryPoint::Block, TokensOrigin::Ast),
+        MetaVarKind::Meta => (parser::PrefixEntryPoint::MetaItem, TokensOrigin::Ast),
+        MetaVarKind::Item => (parser::PrefixEntryPoint::Item, TokensOrigin::Ast),
+        MetaVarKind::Vis => (parser::PrefixEntryPoint::Vis, TokensOrigin::Ast),
     };
-    expect_fragment(input, fragment, edition, delim_span).map(Fragment::Tokens)
+    let (entry_point, origin) = fragment;
+    expect_fragment(db, input, entry_point, delim_span)
+        .map(|tree| Fragment::Tokens { tree, origin })
 }
 
 fn collect_vars(collector_fun: &mut impl FnMut(Symbol), pattern: &MetaTemplate) {

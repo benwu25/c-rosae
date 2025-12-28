@@ -191,7 +191,7 @@ pub(crate) struct LifetimesOrBoundsMismatchOnTrait {
     #[label]
     pub span: Span,
     #[label(hir_analysis_generics_label)]
-    pub generics_span: Option<Span>,
+    pub generics_span: Span,
     #[label(hir_analysis_where_label)]
     pub where_span: Option<Span>,
     #[label(hir_analysis_bounds_label)]
@@ -379,17 +379,6 @@ pub(crate) struct ParenthesizedFnTraitExpansion {
 }
 
 #[derive(Diagnostic)]
-#[diag(hir_analysis_typeof_reserved_keyword_used, code = E0516)]
-pub(crate) struct TypeofReservedKeywordUsed<'tcx> {
-    pub ty: Ty<'tcx>,
-    #[primary_span]
-    #[label]
-    pub span: Span,
-    #[suggestion(style = "verbose", code = "{ty}")]
-    pub opt_sugg: Option<(Span, Applicability)>,
-}
-
-#[derive(Diagnostic)]
 #[diag(hir_analysis_value_of_associated_struct_already_specified, code = E0719)]
 pub(crate) struct ValueOfAssociatedStructAlreadySpecified {
     #[primary_span]
@@ -500,13 +489,8 @@ pub(crate) struct ConstImplForNonConstTrait {
     #[label]
     pub trait_ref_span: Span,
     pub trait_name: String,
-    #[suggestion(
-        applicability = "machine-applicable",
-        // FIXME(const_trait_impl) fix this suggestion
-        code = "#[const_trait] ",
-        style = "verbose"
-    )]
-    pub local_trait_span: Option<Span>,
+    #[suggestion(applicability = "machine-applicable", code = "const ", style = "verbose")]
+    pub suggestion: Option<Span>,
     pub suggestion_pre: &'static str,
     #[note]
     pub marking: (),
@@ -523,14 +507,9 @@ pub(crate) struct ConstBoundForNonConstTrait {
     pub modifier: &'static str,
     #[note]
     pub def_span: Option<Span>,
-    pub suggestion_pre: &'static str,
-    #[suggestion(
-        applicability = "machine-applicable",
-        // FIXME(const_trait_impl) fix this suggestion
-        code = "#[const_trait] ",
-        style = "verbose"
-    )]
+    #[suggestion(applicability = "machine-applicable", code = "const ", style = "verbose")]
     pub suggestion: Option<Span>,
+    pub suggestion_pre: &'static str,
     pub trait_name: String,
 }
 
@@ -1572,11 +1551,11 @@ pub(crate) struct UnconstrainedGenericParameter {
 #[diag(hir_analysis_opaque_captures_higher_ranked_lifetime, code = E0657)]
 pub(crate) struct OpaqueCapturesHigherRankedLifetime {
     #[primary_span]
-    pub span: Span,
+    pub span: MultiSpan,
     #[label]
     pub label: Option<Span>,
     #[note]
-    pub decl_span: Span,
+    pub decl_span: MultiSpan,
     pub bad_place: &'static str,
 }
 
@@ -1717,4 +1696,29 @@ pub(crate) struct AbiCustomClothedFunction {
 pub(crate) struct AsyncDropWithoutSyncDrop {
     #[primary_span]
     pub span: Span,
+}
+
+#[derive(Diagnostic)]
+#[diag(hir_analysis_lifetimes_or_bounds_mismatch_on_eii)]
+pub(crate) struct LifetimesOrBoundsMismatchOnEii {
+    #[primary_span]
+    #[label]
+    pub span: Span,
+    #[label(hir_analysis_generics_label)]
+    pub generics_span: Span,
+    #[label(hir_analysis_where_label)]
+    pub where_span: Option<Span>,
+    #[label(hir_analysis_bounds_label)]
+    pub bounds_span: Vec<Span>,
+    pub ident: Symbol,
+}
+
+#[derive(Diagnostic)]
+#[diag(hir_analysis_eii_with_generics)]
+pub(crate) struct EiiWithGenerics {
+    #[primary_span]
+    pub span: Span,
+    #[label]
+    pub attr: Span,
+    pub eii_name: Symbol,
 }

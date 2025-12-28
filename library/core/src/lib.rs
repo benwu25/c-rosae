@@ -121,14 +121,11 @@
 #![feature(ptr_alignment_type)]
 #![feature(ptr_metadata)]
 #![feature(set_ptr_value)]
-#![feature(slice_as_array)]
 #![feature(slice_ptr_get)]
 #![feature(str_internals)]
 #![feature(str_split_inclusive_remainder)]
 #![feature(str_split_remainder)]
 #![feature(ub_checks)]
-#![feature(unchecked_neg)]
-#![feature(unchecked_shifts)]
 #![feature(unsafe_pinned)]
 #![feature(utf16_extra)]
 #![feature(variant_count)]
@@ -150,6 +147,7 @@
 #![feature(decl_macro)]
 #![feature(deprecated_suggestion)]
 #![feature(derive_const)]
+#![feature(diagnostic_on_const)]
 #![feature(doc_cfg)]
 #![feature(doc_notable_trait)]
 #![feature(extern_types)]
@@ -196,6 +194,7 @@
 // tidy-alphabetical-start
 #![feature(aarch64_unstable_target_feature)]
 #![feature(arm_target_feature)]
+#![feature(avx10_target_feature)]
 #![feature(hexagon_target_feature)]
 #![feature(loongarch_target_feature)]
 #![feature(mips_target_feature)]
@@ -282,6 +281,8 @@ pub mod num;
 pub mod hint;
 pub mod intrinsics;
 pub mod mem;
+#[unstable(feature = "profiling_marker_api", issue = "148197")]
+pub mod profiling;
 pub mod ptr;
 #[unstable(feature = "ub_checks", issue = "none")]
 pub mod ub_checks;

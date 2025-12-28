@@ -73,7 +73,7 @@ use ide_db::{
 };
 use ide_db::{MiniCore, ra_fixture::RaFixtureAnalysis};
 use macros::UpmapFromRaFixture;
-use syntax::{SourceFile, ast};
+use syntax::{AstNode, SourceFile, ast};
 use triomphe::Arc;
 use view_memory_layout::{RecursiveMemoryLayout, view_memory_layout};
 
@@ -86,6 +86,7 @@ pub use crate::{
     file_structure::{FileStructureConfig, StructureNode, StructureNodeKind},
     folding_ranges::{Fold, FoldKind},
     goto_definition::GotoDefinitionConfig,
+    goto_implementation::GotoImplementationConfig,
     highlight_related::{HighlightRelatedConfig, HighlightedRange},
     hover::{
         HoverAction, HoverConfig, HoverDocFormat, HoverGotoTypeData, HoverResult,
@@ -106,7 +107,7 @@ pub use crate::{
     move_item::Direction,
     navigation_target::{NavigationTarget, TryToNav, UpmappingResult},
     references::{FindAllRefsConfig, ReferenceSearchResult},
-    rename::RenameError,
+    rename::{RenameConfig, RenameError},
     runnables::{Runnable, RunnableKind, TestId, UpdateTest},
     signature_help::SignatureHelp,
     static_index::{
@@ -253,6 +254,7 @@ impl Analysis {
             TryFrom::try_from(&*std::env::current_dir().unwrap().as_path().to_string_lossy())
                 .unwrap(),
         );
+        let crate_attrs = Vec::new();
         cfg_options.insert_atom(sym::test);
         crate_graph.add_crate_root(
             file_id,
@@ -263,6 +265,7 @@ impl Analysis {
             None,
             Env::default(),
             CrateOrigin::Local { repo: None, name: None },
+            crate_attrs,
             false,
             proc_macro_cwd,
             Arc::new(CrateWorkspaceData {
@@ -331,7 +334,8 @@ impl Analysis {
     pub fn parse(&self, file_id: FileId) -> Cancellable<SourceFile> {
         // FIXME edition
         self.with_db(|db| {
-            let editioned_file_id_wrapper = EditionedFileId::current_edition(&self.db, file_id);
+            let editioned_file_id_wrapper =
+                EditionedFileId::current_edition_guess_origin(&self.db, file_id);
 
             db.parse(editioned_file_id_wrapper).tree()
         })
@@ -360,7 +364,7 @@ impl Analysis {
     /// supported).
     pub fn matching_brace(&self, position: FilePosition) -> Cancellable<Option<TextSize>> {
         self.with_db(|db| {
-            let file_id = EditionedFileId::current_edition(&self.db, position.file_id);
+            let file_id = EditionedFileId::current_edition_guess_origin(&self.db, position.file_id);
             let parse = db.parse(file_id);
             let file = parse.tree();
             matching_brace::matching_brace(&file, position.offset)
@@ -421,7 +425,7 @@ impl Analysis {
     pub fn join_lines(&self, config: &JoinLinesConfig, frange: FileRange) -> Cancellable<TextEdit> {
         self.with_db(|db| {
             let editioned_file_id_wrapper =
-                EditionedFileId::current_edition(&self.db, frange.file_id);
+                EditionedFileId::current_edition_guess_origin(&self.db, frange.file_id);
             let parse = db.parse(editioned_file_id_wrapper);
             join_lines::join_lines(config, &parse.tree(), frange.range)
         })
@@ -462,7 +466,8 @@ impl Analysis {
     ) -> Cancellable<Vec<StructureNode>> {
         // FIXME: Edition
         self.with_db(|db| {
-            let editioned_file_id_wrapper = EditionedFileId::current_edition(&self.db, file_id);
+            let editioned_file_id_wrapper =
+                EditionedFileId::current_edition_guess_origin(&self.db, file_id);
             let source_file = db.parse(editioned_file_id_wrapper).tree();
             file_structure::file_structure(&source_file, config)
         })
@@ -493,7 +498,8 @@ impl Analysis {
     /// Returns the set of folding ranges.
     pub fn folding_ranges(&self, file_id: FileId) -> Cancellable<Vec<Fold>> {
         self.with_db(|db| {
-            let editioned_file_id_wrapper = EditionedFileId::current_edition(&self.db, file_id);
+            let editioned_file_id_wrapper =
+                EditionedFileId::current_edition_guess_origin(&self.db, file_id);
 
             folding_ranges::folding_ranges(&db.parse(editioned_file_id_wrapper).tree())
         })
@@ -537,9 +543,10 @@ impl Analysis {
     /// Returns the impls from the symbol at `position`.
     pub fn goto_implementation(
         &self,
+        config: &GotoImplementationConfig,
         position: FilePosition,
     ) -> Cancellable<Option<RangeInfo<Vec<NavigationTarget>>>> {
-        self.with_db(|db| goto_implementation::goto_implementation(db, position))
+        self.with_db(|db| goto_implementation::goto_implementation(db, config, position))
     }
 
     /// Returns the type definitions for the symbol at `position`.
@@ -640,7 +647,7 @@ impl Analysis {
 
     /// Returns crates that this file belongs to.
     pub fn transitive_rev_deps(&self, crate_id: Crate) -> Cancellable<Vec<Crate>> {
-        self.with_db(|db| Vec::from_iter(db.transitive_rev_deps(crate_id)))
+        self.with_db(|db| Vec::from_iter(crate_id.transitive_rev_deps(db)))
     }
 
     /// Returns crates that this file *might* belong to.
@@ -830,8 +837,9 @@ impl Analysis {
         &self,
         position: FilePosition,
         new_name: &str,
+        config: &RenameConfig,
     ) -> Cancellable<Result<SourceChange, RenameError>> {
-        self.with_db(|db| rename::rename(db, position, new_name))
+        self.with_db(|db| rename::rename(db, position, new_name, config))
     }
 
     pub fn prepare_rename(
@@ -895,6 +903,18 @@ impl Analysis {
         position: FilePosition,
     ) -> Cancellable<Option<RecursiveMemoryLayout>> {
         self.with_db(|db| view_memory_layout(db, position))
+    }
+
+    pub fn get_failed_obligations(&self, offset: TextSize, file_id: FileId) -> Cancellable<String> {
+        self.with_db(|db| {
+            let sema = Semantics::new(db);
+            let source_file = sema.parse_guess_edition(file_id);
+
+            let Some(token) = source_file.syntax().token_at_offset(offset).next() else {
+                return String::new();
+            };
+            sema.get_failed_obligations(token).unwrap_or_default()
+        })
     }
 
     pub fn editioned_file_id_to_vfs(&self, file_id: hir::EditionedFileId) -> FileId {

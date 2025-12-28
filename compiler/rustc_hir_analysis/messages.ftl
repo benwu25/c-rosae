@@ -165,6 +165,10 @@ hir_analysis_drop_impl_reservation = reservation `Drop` impls are not supported
 hir_analysis_duplicate_precise_capture = cannot capture parameter `{$name}` twice
     .label = parameter captured again here
 
+hir_analysis_eii_with_generics =
+    #[{$eii_name}] cannot have generic parameters other than lifetimes
+    .label = required by this attribute
+
 hir_analysis_empty_specialization = specialization impl does not specialize any associated items
     .note = impl is a specialization of this impl
 
@@ -299,6 +303,13 @@ hir_analysis_lifetime_must_be_first = lifetime parameter `{$name}` must be liste
 hir_analysis_lifetime_not_captured = `impl Trait` captures lifetime parameter, but it is not mentioned in `use<...>` precise captures list
     .label = lifetime captured due to being mentioned in the bounds of the `impl Trait`
     .param_label = this lifetime parameter is captured
+
+hir_analysis_lifetimes_or_bounds_mismatch_on_eii =
+    lifetime parameters or bounds of `{$ident}` do not match the declaration
+    .label = lifetimes do not match
+    .generics_label = lifetimes in impl do not match this signature
+    .where_label = this `where` clause might not match the one in the declaration
+    .bounds_label = this bound might be missing in the implementation
 
 hir_analysis_lifetimes_or_bounds_mismatch_on_trait =
     lifetime parameters or bounds on {$item_kind} `{$ident}` do not match the trait declaration
@@ -551,11 +562,6 @@ hir_analysis_ty_param_some = type parameter `{$param}` must be used as the type 
     .only_note = only traits defined in the current crate can be implemented for a type parameter
 
 hir_analysis_type_of = {$ty}
-
-hir_analysis_typeof_reserved_keyword_used =
-    `typeof` is a reserved keyword but unimplemented
-    .suggestion = consider replacing `typeof(...)` with an actual type
-    .label = reserved keyword
 
 hir_analysis_unconstrained_generic_parameter = the {$param_def_kind} `{$param_name}` is not constrained by the impl trait, self type, or predicates
     .label = unconstrained {$param_def_kind}

@@ -13,18 +13,24 @@ use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_hir::{self as hir};
 use rustc_middle::mir::BinOp;
 use rustc_middle::ty::layout::{FnAbiOf, HasTyCtxt, HasTypingEnv, LayoutOf};
-use rustc_middle::ty::{self, GenericArgsRef, Instance, Ty, TyCtxt, TypingEnv};
+use rustc_middle::ty::offload_meta::OffloadMetadata;
+use rustc_middle::ty::{self, GenericArgsRef, Instance, SimdAlign, Ty, TyCtxt, TypingEnv};
 use rustc_middle::{bug, span_bug};
+use rustc_session::config::CrateType;
 use rustc_span::{Span, Symbol, sym};
 use rustc_symbol_mangling::{mangle_internal_symbol, symbol_name_for_instance_in_crate};
 use rustc_target::callconv::PassMode;
+use rustc_target::spec::Os;
 use tracing::debug;
 
 use crate::abi::FnAbiLlvmExt;
 use crate::builder::Builder;
 use crate::builder::autodiff::{adjust_activity_to_abi, generate_enzyme_call};
+use crate::builder::gpu_offload::{gen_call_handling, gen_define_handling};
 use crate::context::CodegenCx;
-use crate::errors::AutoDiffWithoutEnable;
+use crate::errors::{
+    AutoDiffWithoutEnable, AutoDiffWithoutLto, OffloadWithoutEnable, OffloadWithoutFatLTO,
+};
 use crate::llvm::{self, Metadata, Type, Value};
 use crate::type_of::LayoutLlvmExt;
 use crate::va_arg::emit_va_arg;
@@ -193,6 +199,18 @@ impl<'ll, 'tcx> IntrinsicCallBuilderMethods<'tcx> for Builder<'_, 'll, 'tcx> {
             }
             sym::autodiff => {
                 codegen_autodiff(self, tcx, instance, args, result);
+                return Ok(());
+            }
+            sym::offload => {
+                if tcx.sess.opts.unstable_opts.offload.is_empty() {
+                    let _ = tcx.dcx().emit_almost_fatal(OffloadWithoutEnable);
+                }
+
+                if tcx.sess.lto() != rustc_session::config::Lto::Fat {
+                    let _ = tcx.dcx().emit_almost_fatal(OffloadWithoutFatLTO);
+                }
+
+                codegen_offload(self, tcx, instance, args);
                 return Ok(());
             }
             sym::is_val_statically_known => {
@@ -377,8 +395,6 @@ impl<'ll, 'tcx> IntrinsicCallBuilderMethods<'tcx> for Builder<'_, 'll, 'tcx> {
             | sym::ctpop
             | sym::bswap
             | sym::bitreverse
-            | sym::rotate_left
-            | sym::rotate_right
             | sym::saturating_add
             | sym::saturating_sub
             | sym::unchecked_funnel_shl
@@ -423,19 +439,11 @@ impl<'ll, 'tcx> IntrinsicCallBuilderMethods<'tcx> for Builder<'_, 'll, 'tcx> {
                     sym::bitreverse => {
                         self.call_intrinsic("llvm.bitreverse", &[llty], &[args[0].immediate()])
                     }
-                    sym::rotate_left
-                    | sym::rotate_right
-                    | sym::unchecked_funnel_shl
-                    | sym::unchecked_funnel_shr => {
-                        let is_left = name == sym::rotate_left || name == sym::unchecked_funnel_shl;
+                    sym::unchecked_funnel_shl | sym::unchecked_funnel_shr => {
+                        let is_left = name == sym::unchecked_funnel_shl;
                         let lhs = args[0].immediate();
-                        let (rhs, raw_shift) =
-                            if name == sym::rotate_left || name == sym::rotate_right {
-                                // rotate = funnel shift with first two args the same
-                                (lhs, args[1].immediate())
-                            } else {
-                                (args[1].immediate(), args[2].immediate())
-                            };
+                        let rhs = args[1].immediate();
+                        let raw_shift = args[2].immediate();
                         let llvm_name = format!("llvm.fsh{}", if is_left { 'l' } else { 'r' });
 
                         // llvm expects shift to be the same type as the values, but rust
@@ -466,6 +474,14 @@ impl<'ll, 'tcx> IntrinsicCallBuilderMethods<'tcx> for Builder<'_, 'll, 'tcx> {
                 let use_integer_compare = match layout.backend_repr() {
                     Scalar(_) | ScalarPair(_, _) => true,
                     SimdVector { .. } => false,
+                    ScalableVector { .. } => {
+                        tcx.dcx().emit_err(InvalidMonomorphization::NonScalableType {
+                            span,
+                            name: sym::raw_eq,
+                            ty: tp_ty,
+                        });
+                        return Ok(());
+                    }
                     Memory { .. } => {
                         // For rusty ABIs, small aggregates are actually passed
                         // as `RegKind::Integer` (see `FnAbi::adjust_for_abi`),
@@ -681,7 +697,7 @@ fn catch_unwind_intrinsic<'ll, 'tcx>(
         codegen_msvc_try(bx, try_func, data, catch_func, dest);
     } else if wants_wasm_eh(bx.sess()) {
         codegen_wasm_try(bx, try_func, data, catch_func, dest);
-    } else if bx.sess().target.os == "emscripten" {
+    } else if bx.sess().target.os == Os::Emscripten {
         codegen_emcc_try(bx, try_func, data, catch_func, dest);
     } else {
         codegen_gnu_try(bx, try_func, data, catch_func, dest);
@@ -1146,6 +1162,18 @@ fn codegen_autodiff<'ll, 'tcx>(
         let _ = tcx.dcx().emit_almost_fatal(AutoDiffWithoutEnable);
     }
 
+    let ct = tcx.crate_types();
+    let lto = tcx.sess.lto();
+    if ct.len() == 1 && ct.contains(&CrateType::Executable) {
+        if lto != rustc_session::config::Lto::Fat {
+            let _ = tcx.dcx().emit_almost_fatal(AutoDiffWithoutLto);
+        }
+    } else {
+        if lto != rustc_session::config::Lto::Fat && !tcx.sess.opts.cg.linker_plugin_lto.enabled() {
+            let _ = tcx.dcx().emit_almost_fatal(AutoDiffWithoutLto);
+        }
+    }
+
     let fn_args = instance.args;
     let callee_ty = instance.ty(tcx, bx.typing_env());
 
@@ -1225,6 +1253,59 @@ fn codegen_autodiff<'ll, 'tcx>(
         result,
         fnc_tree,
     );
+}
+
+// Generates the LLVM code to offload a Rust function to a target device (e.g., GPU).
+// For each kernel call, it generates the necessary globals (including metadata such as
+// size and pass mode), manages memory mapping to and from the device, handles all
+// data transfers, and launches the kernel on the target device.
+fn codegen_offload<'ll, 'tcx>(
+    bx: &mut Builder<'_, 'll, 'tcx>,
+    tcx: TyCtxt<'tcx>,
+    instance: ty::Instance<'tcx>,
+    args: &[OperandRef<'tcx, &'ll Value>],
+) {
+    let cx = bx.cx;
+    let fn_args = instance.args;
+
+    let (target_id, target_args) = match fn_args.into_type_list(tcx)[0].kind() {
+        ty::FnDef(def_id, params) => (def_id, params),
+        _ => bug!("invalid offload intrinsic arg"),
+    };
+
+    let fn_target = match Instance::try_resolve(tcx, cx.typing_env(), *target_id, target_args) {
+        Ok(Some(instance)) => instance,
+        Ok(None) => bug!(
+            "could not resolve ({:?}, {:?}) to a specific offload instance",
+            target_id,
+            target_args
+        ),
+        Err(_) => {
+            // An error has already been emitted
+            return;
+        }
+    };
+
+    let args = get_args_from_tuple(bx, args[1], fn_target);
+    let target_symbol = symbol_name_for_instance_in_crate(tcx, fn_target, LOCAL_CRATE);
+
+    let sig = tcx.fn_sig(fn_target.def_id()).skip_binder().skip_binder();
+    let inputs = sig.inputs();
+
+    let metadata = inputs.iter().map(|ty| OffloadMetadata::from_ty(tcx, *ty)).collect::<Vec<_>>();
+
+    let types = inputs.iter().map(|ty| cx.layout_of(*ty).llvm_type(cx)).collect::<Vec<_>>();
+
+    let offload_globals_ref = cx.offload_globals.borrow();
+    let offload_globals = match offload_globals_ref.as_ref() {
+        Some(globals) => globals,
+        None => {
+            // Offload is not initialized, cannot continue
+            return;
+        }
+    };
+    let offload_data = gen_define_handling(&cx, &metadata, &types, target_symbol, offload_globals);
+    gen_call_handling(bx, &offload_data, &args, &types, &metadata, offload_globals);
 }
 
 fn get_args_from_tuple<'ll, 'tcx>(
@@ -1597,11 +1678,27 @@ fn generic_simd_intrinsic<'ll, 'tcx>(
             m_len == v_len,
             InvalidMonomorphization::MismatchedLengths { span, name, m_len, v_len }
         );
-        let in_elem_bitwidth = require_int_or_uint_ty!(
-            m_elem_ty.kind(),
-            InvalidMonomorphization::MaskWrongElementType { span, name, ty: m_elem_ty }
-        );
-        let m_i1s = vector_mask_to_bitmask(bx, args[0].immediate(), in_elem_bitwidth, m_len);
+
+        let m_i1s = if args[1].layout.ty.is_scalable_vector() {
+            match m_elem_ty.kind() {
+                ty::Bool => {}
+                _ => return_error!(InvalidMonomorphization::MaskWrongElementType {
+                    span,
+                    name,
+                    ty: m_elem_ty
+                }),
+            };
+            let i1 = bx.type_i1();
+            let i1xn = bx.type_scalable_vector(i1, m_len as u64);
+            bx.trunc(args[0].immediate(), i1xn)
+        } else {
+            let in_elem_bitwidth = require_int_or_uint_ty!(
+                m_elem_ty.kind(),
+                InvalidMonomorphization::MaskWrongElementType { span, name, ty: m_elem_ty }
+            );
+            vector_mask_to_bitmask(bx, args[0].immediate(), in_elem_bitwidth, m_len)
+        };
+
         return Ok(bx.select(m_i1s, args[1].immediate(), args[2].immediate()));
     }
 
@@ -1674,11 +1771,10 @@ fn generic_simd_intrinsic<'ll, 'tcx>(
             }};
         }
 
-        let elem_ty = if let ty::Float(f) = in_elem.kind() {
-            bx.cx.type_float_from_ty(*f)
-        } else {
+        let ty::Float(f) = in_elem.kind() else {
             return_error!(InvalidMonomorphization::FloatingPointType { span, name, in_ty });
         };
+        let elem_ty = bx.cx.type_float_from_ty(*f);
 
         let vec_ty = bx.type_vector(elem_ty, in_len);
 
@@ -1840,14 +1936,31 @@ fn generic_simd_intrinsic<'ll, 'tcx>(
         return Ok(call);
     }
 
+    fn llvm_alignment<'ll, 'tcx>(
+        bx: &mut Builder<'_, 'll, 'tcx>,
+        alignment: SimdAlign,
+        vector_ty: Ty<'tcx>,
+        element_ty: Ty<'tcx>,
+    ) -> u64 {
+        match alignment {
+            SimdAlign::Unaligned => 1,
+            SimdAlign::Element => bx.align_of(element_ty).bytes(),
+            SimdAlign::Vector => bx.align_of(vector_ty).bytes(),
+        }
+    }
+
     if name == sym::simd_masked_load {
-        // simd_masked_load(mask: <N x i{M}>, pointer: *_ T, values: <N x T>) -> <N x T>
+        // simd_masked_load<_, _, _, const ALIGN: SimdAlign>(mask: <N x i{M}>, pointer: *_ T, values: <N x T>) -> <N x T>
         // * N: number of elements in the input vectors
         // * T: type of the element to load
         // * M: any integer width is supported, will be truncated to i1
         // Loads contiguous elements from memory behind `pointer`, but only for
         // those lanes whose `mask` bit is enabled.
         // The memory addresses corresponding to the “off” lanes are not accessed.
+
+        let alignment = fn_args[3].expect_const().to_value().valtree.unwrap_branch()[0]
+            .unwrap_leaf()
+            .to_simd_alignment();
 
         // The element type of the "mask" argument must be a signed integer type of any width
         let mask_ty = in_ty;
@@ -1905,7 +2018,7 @@ fn generic_simd_intrinsic<'ll, 'tcx>(
         let mask = vector_mask_to_bitmask(bx, args[0].immediate(), m_elem_bitwidth, mask_len);
 
         // Alignment of T, must be a constant integer value:
-        let alignment = bx.align_of(values_elem).bytes();
+        let alignment = llvm_alignment(bx, alignment, values_ty, values_elem);
 
         let llvm_pointer = bx.type_ptr();
 
@@ -1932,13 +2045,17 @@ fn generic_simd_intrinsic<'ll, 'tcx>(
     }
 
     if name == sym::simd_masked_store {
-        // simd_masked_store(mask: <N x i{M}>, pointer: *mut T, values: <N x T>) -> ()
+        // simd_masked_store<_, _, _, const ALIGN: SimdAlign>(mask: <N x i{M}>, pointer: *mut T, values: <N x T>) -> ()
         // * N: number of elements in the input vectors
         // * T: type of the element to load
         // * M: any integer width is supported, will be truncated to i1
         // Stores contiguous elements to memory behind `pointer`, but only for
         // those lanes whose `mask` bit is enabled.
         // The memory addresses corresponding to the “off” lanes are not accessed.
+
+        let alignment = fn_args[3].expect_const().to_value().valtree.unwrap_branch()[0]
+            .unwrap_leaf()
+            .to_simd_alignment();
 
         // The element type of the "mask" argument must be a signed integer type of any width
         let mask_ty = in_ty;
@@ -1990,7 +2107,7 @@ fn generic_simd_intrinsic<'ll, 'tcx>(
         let mask = vector_mask_to_bitmask(bx, args[0].immediate(), m_elem_bitwidth, mask_len);
 
         // Alignment of T, must be a constant integer value:
-        let alignment = bx.align_of(values_elem).bytes();
+        let alignment = llvm_alignment(bx, alignment, values_ty, values_elem);
 
         let llvm_pointer = bx.type_ptr();
 

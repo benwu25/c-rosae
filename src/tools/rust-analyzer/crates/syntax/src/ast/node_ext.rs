@@ -10,7 +10,7 @@ use parser::SyntaxKind;
 use rowan::{GreenNodeData, GreenTokenData};
 
 use crate::{
-    NodeOrToken, SmolStr, SyntaxElement, SyntaxToken, T, TokenText,
+    NodeOrToken, SmolStr, SyntaxElement, SyntaxElementChildren, SyntaxToken, T, TokenText,
     ast::{
         self, AstNode, AstToken, HasAttrs, HasGenericArgs, HasGenericParams, HasName,
         HasTypeBounds, SyntaxNode, support,
@@ -813,13 +813,16 @@ pub enum TypeBoundKind {
 }
 
 impl ast::TypeBound {
-    pub fn kind(&self) -> TypeBoundKind {
+    pub fn kind(&self) -> Option<TypeBoundKind> {
         if let Some(path_type) = support::children(self.syntax()).next() {
-            TypeBoundKind::PathType(self.for_binder(), path_type)
+            Some(TypeBoundKind::PathType(self.for_binder(), path_type))
+        } else if let Some(for_binder) = support::children::<ast::ForType>(&self.syntax).next() {
+            let Some(ast::Type::PathType(path_type)) = for_binder.ty() else { return None };
+            Some(TypeBoundKind::PathType(for_binder.for_binder(), path_type))
         } else if let Some(args) = self.use_bound_generic_args() {
-            TypeBoundKind::Use(args)
+            Some(TypeBoundKind::Use(args))
         } else if let Some(lifetime) = self.lifetime() {
-            TypeBoundKind::Lifetime(lifetime)
+            Some(TypeBoundKind::Lifetime(lifetime))
         } else {
             unreachable!()
         }
@@ -1093,6 +1096,16 @@ impl ast::MatchGuard {
     }
 }
 
+impl ast::MatchArm {
+    pub fn parent_match(&self) -> ast::MatchExpr {
+        self.syntax()
+            .parent()
+            .and_then(|it| it.parent())
+            .and_then(ast::MatchExpr::cast)
+            .expect("MatchArms are always nested in MatchExprs")
+    }
+}
+
 impl From<ast::Item> for ast::AnyHasAttrs {
     fn from(node: ast::Item) -> Self {
         Self::new(node)
@@ -1112,5 +1125,41 @@ impl ast::OrPat {
             .find(|it| !it.kind().is_trivia())
             .and_then(NodeOrToken::into_token)
             .filter(|it| it.kind() == T![|])
+    }
+}
+
+/// An iterator over the elements in an [`ast::TokenTree`].
+///
+/// Does not yield trivia or the delimiters.
+#[derive(Clone)]
+pub struct TokenTreeChildren {
+    iter: SyntaxElementChildren,
+}
+
+impl TokenTreeChildren {
+    #[inline]
+    pub fn new(tt: &ast::TokenTree) -> Self {
+        let mut iter = tt.syntax.children_with_tokens();
+        iter.next(); // Bump the opening delimiter.
+        Self { iter }
+    }
+}
+
+impl Iterator for TokenTreeChildren {
+    type Item = NodeOrToken<ast::TokenTree, SyntaxToken>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.find_map(|item| match item {
+            NodeOrToken::Node(node) => ast::TokenTree::cast(node).map(NodeOrToken::Node),
+            NodeOrToken::Token(token) => {
+                let kind = token.kind();
+                (!matches!(
+                    kind,
+                    SyntaxKind::WHITESPACE | SyntaxKind::COMMENT | T![')'] | T![']'] | T!['}']
+                ))
+                .then_some(NodeOrToken::Token(token))
+            }
+        })
     }
 }

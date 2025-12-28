@@ -2,7 +2,6 @@
 
 // tidy-alphabetical-start
 #![allow(internal_features)]
-#![doc(rust_logo)]
 #![feature(assert_matches)]
 #![feature(box_patterns)]
 #![feature(file_buffered)]
@@ -10,7 +9,6 @@
 #![feature(negative_impls)]
 #![feature(never_type)]
 #![feature(rustc_attrs)]
-#![feature(rustdoc_internals)]
 #![feature(stmt_expr_attributes)]
 #![feature(try_blocks)]
 // tidy-alphabetical-end
@@ -663,7 +661,7 @@ impl<'tcx> BorrowckInferCtxt<'tcx> {
 
     pub(crate) fn next_region_var<F>(
         &self,
-        origin: RegionVariableOrigin,
+        origin: RegionVariableOrigin<'tcx>,
         get_ctxt_fn: F,
     ) -> ty::Region<'tcx>
     where
@@ -685,7 +683,7 @@ impl<'tcx> BorrowckInferCtxt<'tcx> {
     #[instrument(skip(self, get_ctxt_fn), level = "debug")]
     pub(crate) fn next_nll_region_var<F>(
         &self,
-        origin: NllRegionVariableOrigin,
+        origin: NllRegionVariableOrigin<'tcx>,
         get_ctxt_fn: F,
     ) -> ty::Region<'tcx>
     where
@@ -1561,10 +1559,6 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, '_, 'tcx> {
                 self.consume_operand(location, (operand2, span), state);
             }
 
-            Rvalue::NullaryOp(_op, _ty) => {
-                // nullary ops take no dynamic input; no borrowck effect.
-            }
-
             Rvalue::Aggregate(aggregate_kind, operands) => {
                 // We need to report back the list of mutable upvars that were
                 // moved into the closure and subsequently used by the closure,
@@ -1701,7 +1695,7 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, '_, 'tcx> {
                     _ => propagate_closure_used_mut_place(self, place),
                 }
             }
-            Operand::Constant(..) => {}
+            Operand::Constant(..) | Operand::RuntimeChecks(_) => {}
         }
     }
 
@@ -1752,7 +1746,7 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, '_, 'tcx> {
                     state,
                 );
             }
-            Operand::Constant(_) => {}
+            Operand::Constant(_) | Operand::RuntimeChecks(_) => {}
         }
     }
 

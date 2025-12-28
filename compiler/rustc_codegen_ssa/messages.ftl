@@ -129,6 +129,7 @@ codegen_ssa_invalid_monomorphization_mask_wrong_element_type = invalid monomorph
 
 codegen_ssa_invalid_monomorphization_mismatched_lengths = invalid monomorphization of `{$name}` intrinsic: mismatched lengths: mask length `{$m_len}` != other vector length `{$v_len}`
 
+codegen_ssa_invalid_monomorphization_non_scalable_type = invalid monomorphization of `{$name}` intrinsic: expected non-scalable type, found scalable type `{$ty}`
 codegen_ssa_invalid_monomorphization_return_element = invalid monomorphization of `{$name}` intrinsic: expected return element type `{$in_elem}` (element of input `{$in_ty}`), found `{$ret_ty}` with element type `{$out_ty}`
 
 codegen_ssa_invalid_monomorphization_return_integer_type = invalid monomorphization of `{$name}` intrinsic: expected return type with integer elements, found `{$ret_ty}` with non-integer `{$out_ty}`
@@ -168,8 +169,6 @@ codegen_ssa_invalid_monomorphization_unsupported_operation = invalid monomorphiz
 codegen_ssa_invalid_monomorphization_unsupported_symbol = invalid monomorphization of `{$name}` intrinsic: unsupported {$symbol} from `{$in_ty}` with element `{$in_elem}` to `{$ret_ty}`
 
 codegen_ssa_invalid_monomorphization_unsupported_symbol_of_size = invalid monomorphization of `{$name}` intrinsic: unsupported {$symbol} from `{$in_ty}` with element `{$in_elem}` of size `{$size}` to `{$ret_ty}`
-
-codegen_ssa_invalid_windows_subsystem = invalid windows subsystem `{$subsystem}`, only `windows` and `console` are allowed
 
 codegen_ssa_ld64_unimplemented_modifier = `as-needed` modifier not implemented yet for ld64
 

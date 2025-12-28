@@ -14,7 +14,7 @@ use rustc_parse::parser::daikon_strs::{
     BOOL, CHAR, F32, F64, I8, I16, I32, I64, I128, ISIZE, STR, STRING, U8, U16, U32, U64, U128,
     UNIT, USIZE, VEC,
 };
-use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_NAME};
+use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_PREFIX};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::{LazyLock, Mutex};
@@ -615,10 +615,8 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
 #[allow(rustc::default_hash_types)]
 fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
     let mut res = HashMap::new();
-    let mut i = 0;
-    while i < decl.inputs.len() {
+    for i in 0..decl.inputs.len() {
         res.insert(get_param_ident(&decl.inputs[i].pat), i as i32);
-        i += 1;
     }
     res
 }
@@ -749,19 +747,8 @@ impl<'a> ArrayContents<'a> {
         match &mut self.sub_contents {
             None => {}
             Some(sub_contents) => {
-                /// MDE: You use this idiom for iterating in several places.
-                /// Please replace them all by something like:
-                ///   for i in 0..sub_contents.len() {
-                ///     sub_contents[i].write()
-                /// }
-                /// or, even better:
-                ///   for sub_content in sub_contents {
-                ///       sub_content.write();
-                /// }
-                let mut i = 0;
-                while i < sub_contents.len() {
+                for i in 0..sub_contents.len() {
                     sub_contents[i].write();
-                    i += 1;
                 }
             }
         }
@@ -816,8 +803,7 @@ impl<'a> ArrayContents<'a> {
             return;
         }
 
-        let mut i = 0;
-        while i < fields.len() {
+        for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
@@ -853,10 +839,8 @@ impl<'a> ArrayContents<'a> {
                         match &mut tmp.sub_contents {
                             None => panic!("Expected some field_decls 1"),
                             Some(sub_contents) => {
-                                let mut j = 0;
-                                while j < sub_contents.len() {
+                                for j in 0..sub_contents.len() {
                                     sub_contents[j].var_name = String::from("false");
-                                    j += 1;
                                 }
                             }
                         }
@@ -898,8 +882,6 @@ impl<'a> ArrayContents<'a> {
                     sub_contents.push(var_decl);
                 }
             }
-
-            i += 1;
         }
     }
 }
@@ -929,10 +911,8 @@ impl<'a> FieldDecl<'a> {
         match &mut self.decl.field_decls {
             None => {}
             Some(field_decls) => {
-                let mut i = 0;
-                while i < field_decls.len() {
+                for i in 0..field_decls.len() {
                     field_decls[i].write();
-                    i += 1;
                 }
                 return;
             }
@@ -977,10 +957,8 @@ impl<'a> TopLevlDecl<'a> {
         match &mut self.field_decls {
             None => {}
             Some(field_decls) => {
-                let mut i = 0;
-                while i < field_decls.len() {
+                for i in 0..field_decls.len() {
                     field_decls[i].write();
-                    i += 1;
                 }
                 return;
             }
@@ -1008,8 +986,7 @@ impl<'a> TopLevlDecl<'a> {
             return;
         }
 
-        let mut i = 0;
-        while i < fields.len() {
+        for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
@@ -1057,10 +1034,8 @@ impl<'a> TopLevlDecl<'a> {
                         match &mut tmp.decl.field_decls {
                             None => panic!("Expected some field_decls 1"),
                             Some(field_decls) => {
-                                let mut j = 0;
-                                while j < field_decls.len() {
+                                for j in 0..field_decls.len() {
                                     field_decls[j].decl.var_name = String::from("false");
-                                    j += 1;
                                 }
                             }
                         }
@@ -1130,10 +1105,8 @@ impl<'a> TopLevlDecl<'a> {
                                 match &mut contents.sub_contents {
                                     None => panic!("Expected some field_decls 1"),
                                     Some(sub_contents) => {
-                                        let mut j = 0;
-                                        while j < sub_contents.len() {
+                                        for j in 0..sub_contents.len() {
                                             sub_contents[j].var_name = String::from("false");
-                                            j += 1;
                                         }
                                     }
                                 }
@@ -1154,8 +1127,6 @@ impl<'a> TopLevlDecl<'a> {
                     field_decls.push(var_decl);
                 }
             }
-
-            i += 1;
         }
     }
 
@@ -1409,10 +1380,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 ExprKind::Ret(None) => {
                     write_exit(ppt_name.clone(), *exit_counter);
                     *exit_counter += 1;
-                    let mut idx = 0;
-                    while idx < param_decls.len() {
+                    for idx in 0..param_decls.len() {
                         param_decls[idx].write();
-                        idx += 1;
                     }
                     write_newline();
 
@@ -1423,10 +1392,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 ExprKind::Ret(Some(_)) => {
                     write_exit(ppt_name.clone(), *exit_counter);
                     *exit_counter += 1;
-                    let mut idx = 0;
-                    while idx < param_decls.len() {
+                    for idx in 0..param_decls.len() {
                         param_decls[idx].write();
-                        idx += 1;
                     }
 
                     // make return TopLevlDecl.
@@ -1469,11 +1436,9 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         match &mut tmp.field_decls {
                                             None => panic!("Expected some field_decls 1"),
                                             Some(field_decls) => {
-                                                let mut j = 0;
-                                                while j < field_decls.len() {
+                                                for j in 0..field_decls.len() {
                                                     field_decls[j].decl.var_name =
                                                         String::from("false");
-                                                    j += 1;
                                                 }
                                             }
                                         }
@@ -1538,11 +1503,9 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 match &mut contents.sub_contents {
                                                     None => panic!("Expected some field_decls 1"),
                                                     Some(sub_contents) => {
-                                                        let mut j = 0;
-                                                        while j < sub_contents.len() {
+                                                        for j in 0..sub_contents.len() {
                                                             sub_contents[j].var_name =
                                                                 String::from("false");
-                                                            j += 1;
                                                         }
                                                     }
                                                 }
@@ -1670,8 +1633,7 @@ fn grok_fn_sig<'a>(
     depth_limit: u32,
 ) -> Vec<TopLevlDecl<'a>> {
     let mut var_decls: Vec<TopLevlDecl<'_>> = Vec::new();
-    let mut i = 0;
-    while i < decl.inputs.len() {
+    for i in 0..decl.inputs.len() {
         let var_name = get_param_ident(&decl.inputs[i].pat);
         let mut is_ref = false;
         let mut do_write = true;
@@ -1707,10 +1669,8 @@ fn grok_fn_sig<'a>(
                     match &mut tmp.field_decls {
                         None => panic!("Expected some field_decls 1"),
                         Some(field_decls) => {
-                            let mut j = 0;
-                            while j < field_decls.len() {
+                            for j in 0..field_decls.len() {
                                 field_decls[j].decl.var_name = String::from("false");
-                                j += 1;
                             }
                         }
                     }
@@ -1770,10 +1730,8 @@ fn grok_fn_sig<'a>(
                             match &mut contents.sub_contents {
                                 None => panic!("Expected some field_decls 1"),
                                 Some(sub_contents) => {
-                                    let mut j = 0;
-                                    while j < sub_contents.len() {
+                                    for j in 0..sub_contents.len() {
                                         sub_contents[j].var_name = String::from("false");
-                                        j += 1;
                                     }
                                 }
                             }
@@ -1789,7 +1747,6 @@ fn grok_fn_sig<'a>(
             }
         };
         var_decls.push(toplevl_decl);
-        i += 1;
     }
 
     var_decls
@@ -1797,7 +1754,7 @@ fn grok_fn_sig<'a>(
 
 impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
     // Process a new function and write it to the decls file.
-    fn visit_fn(&mut self, fk: FnKind<'a>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
+    fn visit_fn(&mut self, fk: FnKind<'a>, _attrs: &rustc_ast::AttrVec, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
         match &fk {
             FnKind::Fn(_, _, f) => {
                 if !f.ident.as_str().starts_with("dtrace") {
@@ -1805,10 +1762,8 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                     write_entry(ppt_name.clone());
                     let param_to_block_idx = map_params(&f.sig.decl);
                     let mut param_decls = grok_fn_sig(&f.sig.decl, self.map, self.depth_limit);
-                    let mut i = 0;
-                    while i < param_decls.len() {
+                    for i in 0..param_decls.len() {
                         param_decls[i].write();
-                        i += 1;
                     }
                     write_newline();
                     match &f.body {
@@ -1839,7 +1794,7 @@ static DECLS: LazyLock<Mutex<Option<std::fs::File>>> = LazyLock::new(|| Mutex::n
 // Open the decls file.
 /// MDE: "dtrace" in the function name is at odds with the documentation and function body.
 fn dtrace_open() -> Option<std::fs::File> {
-    let decls_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".decls");
+    let decls_path = format!("{}{}", *OUTPUT_PREFIX.lock().unwrap(), ".decls");
     let decls = std::path::Path::new(&decls_path);
     Some(std::fs::File::options().write(true).append(true).open(&decls).unwrap())
 }
@@ -1860,7 +1815,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             FileName::Real(name) => name
                 .into_local_path()
                 .expect("attempting to resolve a file path in an external file"),
-            other => PathBuf::from(other.prefer_local().to_string()),
+            other => PathBuf::from(other.prefer_local_unconditionally().to_string()),
         };
         let dir_path = file_path.parent().unwrap_or(&file_path).to_owned();
         self.cx.root_path = dir_path.clone();
@@ -1881,10 +1836,10 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             map_builder.visit_crate(&krate);
 
             // create or overwrite decls/dtrace.
-            let decls_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".decls");
+            let decls_path = format!("{}{}", *OUTPUT_PREFIX.lock().unwrap(), ".decls");
             let decls = std::path::Path::new(&decls_path);
             std::fs::File::create(&decls).unwrap();
-            let dtrace_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".dtrace");
+            let dtrace_path = format!("{}{}", *OUTPUT_PREFIX.lock().unwrap(), ".dtrace");
             let dtrace = std::path::Path::new(&dtrace_path);
             std::fs::File::create(&dtrace).unwrap();
             write_header();
@@ -2298,9 +2253,6 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                         }
                     }
                 } else if let SyntaxExtensionKind::NonMacroAttr = ext {
-                    if let ast::Safety::Unsafe(span) = attr.get_normal_item().unsafety {
-                        self.cx.dcx().span_err(span, "unnecessary `unsafe` on safe attribute");
-                    }
                     // `-Zmacro-stats` ignores these because they don't do any real expansion.
                     self.cx.expanded_inert_attrs.mark(&attr);
                     item.visit_attrs(|attrs| attrs.insert(pos, attr));
@@ -3573,11 +3525,7 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
         let mut span: Option<Span> = None;
         while let Some(attr) = attrs.next() {
             rustc_ast_passes::feature_gate::check_attribute(attr, self.cx.sess, features);
-            validate_attr::check_attr(
-                &self.cx.sess.psess,
-                attr,
-                self.cx.current_expansion.lint_node_id,
-            );
+            validate_attr::check_attr(&self.cx.sess.psess, attr);
             AttributeParser::parse_limited_all(
                 self.cx.sess,
                 slice::from_ref(attr),
@@ -3596,7 +3544,7 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
                 continue;
             }
 
-            if attr.is_doc_comment() {
+            if attr.doc_str_and_fragment_kind().is_some() {
                 self.cx.sess.psess.buffer_lint(
                     UNUSED_DOC_COMMENTS,
                     current_span,
@@ -3632,7 +3580,7 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
         attr: ast::Attribute,
         pos: usize,
     ) -> EvalConfigResult {
-        let res = self.cfg().cfg_true(&attr, node.node_id(), ShouldEmit::ErrorsAndLints);
+        let res = self.cfg().cfg_true(&attr, ShouldEmit::ErrorsAndLints);
         if res.as_bool() {
             // A trace attribute left in AST in place of the original `cfg` attribute.
             // It can later be used by lints or other diagnostics.
@@ -3801,10 +3749,10 @@ impl<'a, 'b> MutVisitor for InvocationCollector<'a, 'b> {
     ) -> SmallVec<[Box<ast::AssocItem>; 1]> {
         match ctxt {
             AssocCtxt::Trait => self.flat_map_node(AstNodeWrapper::new(node, TraitItemTag)),
-            AssocCtxt::Impl { of_trait: false } => {
+            AssocCtxt::Impl { of_trait: false, .. } => {
                 self.flat_map_node(AstNodeWrapper::new(node, ImplItemTag))
             }
-            AssocCtxt::Impl { of_trait: true } => {
+            AssocCtxt::Impl { of_trait: true, .. } => {
                 self.flat_map_node(AstNodeWrapper::new(node, TraitImplItemTag))
             }
         }

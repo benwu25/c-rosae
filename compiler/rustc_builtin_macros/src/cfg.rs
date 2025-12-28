@@ -3,7 +3,7 @@
 //! current compilation environment.
 
 use rustc_ast::tokenstream::TokenStream;
-use rustc_ast::{AttrStyle, CRATE_NODE_ID, token};
+use rustc_ast::{AttrStyle, token};
 use rustc_attr_parsing as attr;
 use rustc_attr_parsing::parser::MetaItemOrLitParser;
 use rustc_attr_parsing::{
@@ -26,14 +26,7 @@ pub(crate) fn expand_cfg(
 
     ExpandResult::Ready(match parse_cfg(cx, sp, tts) {
         Ok(cfg) => {
-            let matches_cfg = attr::eval_config_entry(
-                cx.sess,
-                &cfg,
-                cx.current_expansion.lint_node_id,
-                Some(cx.ecfg.features),
-                ShouldEmit::ErrorsAndLints,
-            )
-            .as_bool();
+            let matches_cfg = attr::eval_config_entry(cx.sess, &cfg).as_bool();
 
             MacEager::expr(cx.expr_bool(sp, matches_cfg))
         }
@@ -55,9 +48,10 @@ fn parse_cfg(cx: &ExtCtxt<'_>, span: Span, tts: TokenStream) -> Result<CfgEntry,
         span,
         AttrStyle::Inner,
         AttrPath { segments: vec![Ident::from_str("cfg")].into_boxed_slice(), span },
+        None,
         ParsedDescription::Macro,
         span,
-        CRATE_NODE_ID,
+        cx.current_expansion.lint_node_id,
         Some(cx.ecfg.features),
         ShouldEmit::ErrorsAndLints,
         &meta,

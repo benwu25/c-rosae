@@ -3,9 +3,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 use rustc_abi::{HasDataLayout, Size};
 use rustc_hir::def_id::DefId;
 use rustc_macros::{HashStable, Lift, TyDecodable, TyEncodable, TypeFoldable, TypeVisitable};
-use rustc_session::RemapFileNameExt;
-use rustc_session::config::RemapPathScopeComponents;
-use rustc_span::{DUMMY_SP, Span, Symbol};
+use rustc_span::{DUMMY_SP, RemapPathScopeComponents, Span, Symbol};
 use rustc_type_ir::TypeVisitableExt;
 
 use super::interpret::ReportedErrorInfo;
@@ -16,7 +14,7 @@ use crate::ty::{self, ConstKind, GenericArgsRef, ScalarInt, Ty, TyCtxt};
 
 ///////////////////////////////////////////////////////////////////////////
 /// Evaluated Constants
-
+///
 /// Represents the result of const evaluation via the `eval_to_allocation` query.
 /// Not to be confused with `ConstAllocation`, which directly refers to the underlying data!
 /// Here we indirect via an `AllocId`.
@@ -587,11 +585,7 @@ impl<'tcx> TyCtxt<'tcx> {
         let caller = self.sess.source_map().lookup_char_pos(topmost.lo());
         self.const_caller_location(
             Symbol::intern(
-                &caller
-                    .file
-                    .name
-                    .for_scope(self.sess, RemapPathScopeComponents::MACRO)
-                    .to_string_lossy(),
+                &caller.file.name.display(RemapPathScopeComponents::MACRO).to_string_lossy(),
             ),
             caller.line as u32,
             caller.col_display as u32 + 1,

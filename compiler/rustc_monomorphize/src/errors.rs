@@ -78,6 +78,20 @@ pub(crate) struct AbiErrorDisabledVectorType<'a> {
     pub ty: Ty<'a>,
     /// Whether this is a problem at a call site or at a declaration.
     pub is_call: bool,
+    /// Whether this is a problem with a fixed length vector or a scalable vector
+    pub is_scalable: bool,
+}
+
+#[derive(Diagnostic)]
+#[diag(monomorphize_abi_error_unsupported_unsized_parameter)]
+#[help]
+pub(crate) struct AbiErrorUnsupportedUnsizedParameter<'a> {
+    #[primary_span]
+    #[label]
+    pub span: Span,
+    pub ty: Ty<'a>,
+    /// Whether this is a problem at a call site or at a declaration.
+    pub is_call: bool,
 }
 
 #[derive(Diagnostic)]

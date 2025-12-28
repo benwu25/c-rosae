@@ -14,10 +14,13 @@ use ast::token::IdentIsRaw;
 use rustc_ast::token::{self, Delimiter, InvisibleOrigin, MetaVarKind, TokenKind};
 use rustc_ast::tokenstream::{DelimSpan, TokenStream, TokenTree};
 use rustc_ast::util::case::Case;
-use rustc_ast::{self as ast};
+use rustc_ast::{
+    attr, {self as ast},
+};
 use rustc_ast_pretty::pprust;
 use rustc_errors::codes::*;
 use rustc_errors::{Applicability, PResult, StashKey, struct_span_code_err};
+use rustc_session::lint::builtin::VARARGS_WITHOUT_PATTERN;
 use rustc_span::edit_distance::edit_distance;
 use rustc_span::edition::Edition;
 use rustc_span::{DUMMY_SP, ErrorGuaranteed, Ident, Span, Symbol, kw, source_map, sym};
@@ -33,11 +36,11 @@ use super::{
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::{exp, fluent_generated as fluent};
 
-/// MDE: the prefix for what?  For a file name?  For program points?
-// Stores the output prefix.
-// E.g., foo.rs -> foo, or the name of the cargo project.
-/// MDE: if this is a prefix, put _PREFIX in the name.
-pub static OUTPUT_NAME: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::from("")));
+// Stores the prefix for output files.
+// Decls and dtrace files will be named according to this value.
+// E.g., an input program foo.rs will produce foo.decls, foo.dtrace, etc.
+// Similarly a cargo project foo will generate foo.decls and foo.dtrace.
+pub static OUTPUT_PREFIX: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::from("")));
 
 // True if we are not bootstrapping the standard library.
 pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
@@ -52,15 +55,16 @@ struct DaikonDtraceVisitor<'a> {
     // For parsing string fragments.
     pub parser: &'a Parser<'a>,
 
-    /// MDE: Please explain.
     // For appending impl blocks to the file.
+    // When we find structs while walking the file,
+    // we construct an impl block containing dtrace_*
+    // routines, which are added to this field.
+    // They are later mashed to the end of the file
+    // contents.
     pub mod_items: &'a mut ThinVec<Box<Item>>,
 }
 
 // Represents a Rust type.
-/// MDE: I don't understand how the following sentence belongs here in the
-/// struct definition.  Nor do I understand what "handled" means.
-// Information about references is handled in get_basic_type.
 // E.g.,
 // i32 -> Prim("i32")
 // Vec<char> -> PrimVec("char")
@@ -77,273 +81,146 @@ struct DaikonDtraceVisitor<'a> {
 // enums, unions, and all UserDef types from outside the
 // crate.
 #[derive(PartialEq)]
-/// MDE: What is "basic" about this type?  Could you name it RustType or the like?
-enum BasicType {
+enum RustType {
     Prim(String),
     UserDef(String),
     PrimVec(String),
     UserDefVec(String),
     PrimArray(String),
     UserDefArray(String),
-    /// MDE: Is this only ever used for void-returning functions?
-    NoRet,
-    /// MDE: Document what this means and when it is used.
-    Error,
+    NoRet, // For void-returning functions.
+    Error, // Used to indicate a type is not primitive.
 }
 
-/// MDE: A "formal parameter" is written in a function definition.  An
-/// "actual argument" is written at a call site.  Is this really
-/// mapping from a parameter name to an argument expression?  If not,
-/// please use the standard terminology.
-// Given a pattern pat from a function signature representing a parameter name,
-// return the argument name in a String.
+// Convert a Pat representing a parameter name into a String representation.
 fn get_param_ident(pat: &Box<Pat>) -> String {
     match &pat.kind {
         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
-        /// MDE: There is no such thing as a "formal argument".
-        _ => panic!("Formal arg does not have simple identifier"),
+        _ => panic!("Parameter does not have simple identifier"),
     }
 }
 
-/// MDE: What is the definition of "reduced"?  Is that a standard Rust
-/// term?  I think this is the same as a "simple name", but I am not
-/// sure.
-// Given a reduced type (i.e., no references or junk in front),
-// check if the type is a primitive (i32, u32, String, etc.)
-// and return a BasicType representing it or BasicType::Error otherwise.
-// i32 -> BasicType::Prim("i32")
-// Vec<X> -> BasicType::Error
-/// MDE: I would name this "as_primitive" (or "as_prim") if you prefer,
-/// to clarify what it returns.
-fn check_prim(ty_str: &str) -> BasicType {
+// Given a type, check if the type is a primitive and return a RustType
+// representing it or RustType::Error otherwise.
+// i32 -> RustType::Prim("i32")
+// Vec<X> -> RustType::Error
+fn as_primitive(ty_str: &str) -> RustType {
     if ty_str == I8 {
-        return BasicType::Prim(String::from(I8));
+        return RustType::Prim(String::from(I8));
     } else if ty_str == I16 {
-        return BasicType::Prim(String::from(I16));
+        return RustType::Prim(String::from(I16));
     } else if ty_str == I32 {
-        return BasicType::Prim(String::from(I32));
+        return RustType::Prim(String::from(I32));
     } else if ty_str == I64 {
-        return BasicType::Prim(String::from(I64));
+        return RustType::Prim(String::from(I64));
     } else if ty_str == I128 {
-        return BasicType::Prim(String::from(I128));
+        return RustType::Prim(String::from(I128));
     } else if ty_str == ISIZE {
-        return BasicType::Prim(String::from(ISIZE));
+        return RustType::Prim(String::from(ISIZE));
     } else if ty_str == U8 {
-        return BasicType::Prim(String::from(U8));
+        return RustType::Prim(String::from(U8));
     } else if ty_str == U16 {
-        return BasicType::Prim(String::from(U16));
+        return RustType::Prim(String::from(U16));
     } else if ty_str == U32 {
-        return BasicType::Prim(String::from(U32));
+        return RustType::Prim(String::from(U32));
     } else if ty_str == U64 {
-        return BasicType::Prim(String::from(U64));
+        return RustType::Prim(String::from(U64));
     } else if ty_str == U128 {
-        return BasicType::Prim(String::from(U128));
+        return RustType::Prim(String::from(U128));
     } else if ty_str == USIZE {
-        return BasicType::Prim(String::from(USIZE));
+        return RustType::Prim(String::from(USIZE));
     } else if ty_str == F32 {
-        return BasicType::Prim(String::from(F32));
+        return RustType::Prim(String::from(F32));
     } else if ty_str == F64 {
-        return BasicType::Prim(String::from(F64));
+        return RustType::Prim(String::from(F64));
     } else if ty_str == CHAR {
-        return BasicType::Prim(String::from(CHAR));
+        return RustType::Prim(String::from(CHAR));
     } else if ty_str == BOOL {
-        return BasicType::Prim(String::from(BOOL));
+        return RustType::Prim(String::from(BOOL));
     } else if ty_str == UNIT {
-        return BasicType::Prim(String::from(UNIT));
+        return RustType::Prim(String::from(UNIT));
     } else if ty_str == STR {
-        return BasicType::Prim(String::from(STR));
+        return RustType::Prim(String::from(STR));
     } else if ty_str == STRING {
-        return BasicType::Prim(String::from(STRING));
+        return RustType::Prim(String::from(STRING));
     }
-    BasicType::Error
+    RustType::Error
 }
 
-/// MDE: What is an "argument path"?  Is it related to arguments or
-/// parameters or something else?
-// Given argument path representing the element type of a Vec,
-/// MDE: What does "complete" mean here?
-// return the complete BasicType for the Vec. Set is_ref to true
-// if the Vec contains references, otherwise false.
-// E.g.,
-/// MDE: Show what &Vec<X> and &Vec<&X> yield; that is, add them as examples.
+// Given the type of the object contained in a Vec,
+// return a RustType representing the Vec.
+// is_ref is set to true if the Vec contains references.
 // Vec<X> -> UserDefVec("X")
 // &'a Vec<X> -> UserDefVec("X")
 // Vec<&X> -> UserDefVec("X"), is_ref == true
-fn grok_vec_args(path: &Path, is_ref: &mut bool) -> BasicType {
+// &Vec<X> -> UserDefVec("X")
+// &Vec<&X> -> UserDefVec("X"), is_ref == true
+fn grok_vec_args(path: &Path, is_ref: &mut bool) -> RustType {
     // Reset in case we have an &Vec<X>, since we want to know if
     // the Vec arguments are references are not, i.e., Vec<X> vs.
     // Vec<&X>.
     *is_ref = false;
     match &path.segments[path.segments.len() - 1].args {
-        None => BasicType::Error,
+        None => RustType::Error,
         Some(args) => match &**args {
             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
                 AngleBracketedArg::Arg(arg) => match &arg {
                     GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind, is_ref) {
-                        BasicType::Prim(p_type) => BasicType::PrimVec(String::from(p_type)),
-                        BasicType::UserDef(basic_type) => {
-                            BasicType::UserDefVec(String::from(basic_type))
+                        RustType::Prim(p_type) => RustType::PrimVec(String::from(p_type)),
+                        RustType::UserDef(basic_type) => {
+                            RustType::UserDefVec(String::from(basic_type))
                         }
-                        _ => BasicType::Error,
+                        _ => RustType::Error,
                     },
-                    _ => BasicType::Error,
+                    _ => RustType::Error,
                 },
-                _ => BasicType::Error,
+                _ => RustType::Error,
             },
-            _ => BasicType::Error,
+            _ => RustType::Error,
         },
     }
 }
 
-// Reduce a String like X<a, b> to X.
-// Not necessary in any cases I have found, but it is
-// used to make calls like
-// X::dtrace_print_... rather than
-// X<a, b>::dtrace_print...
-// For Vec<X>.
-/// MDE: This doesn't seem to have anything to do with Rust lifetimes.  Does it
-/// remove the type parameters from a generic struct?
-/// MDE: Is "spliced_struct" a full struct declaration?  Or is it a struct name?
-/// Please document.
-fn cut_lifetimes(spliced_struct: String) -> String {
-    let mut res = String::from("");
-    /// MDE: I suggest that you first find the "<", and then create a
-    /// substring using the index if found.  That will be shorter and
-    /// clearer than this loop.
-    let mut i = 0;
-    while i < spliced_struct.len() {
-        if spliced_struct.chars().nth(i).unwrap() == '<' {
-            return res;
-        }
-        res.push_str(&String::from(spliced_struct.chars().nth(i).unwrap()));
-        i += 1;
-    }
-    res
-}
-
-/// MDE: Write the overall specification before giving implementation
-/// details.  What does this function do?
+// Set global variable OUTPUT_PREFIX using input file path.
 // If there is no output file specified with -o and we have not
-// been invoked by cargo, take the OUTPUT_NAME from the input file
+// been invoked by cargo, take the OUTPUT_PREFIX from the input file
 // name.
 // foo.rs -> foo
-/// MDE: What does "jot" mean?
-/// MDE: What is s?  Is it an input file name?  Please give it a more
-/// descriptive name.
-pub fn jot_output_name(s: String) {
-    /// MDE: "end" is not very descriptive; it does not help people
-    /// who are reading the code to understand what the code does.  I
-    /// suggest calling it "dot_position" or "dot_pos" instead.
-    let end = match s.rfind(".") {
+pub fn set_output_prefix(input_name: String) {
+    let dot_idx = match input_name.rfind(".") {
         // .rs
-        /// MDE: It is helpful to give the file name as well, in the message.
-        None => panic!("no . in input file name"),
+        None => panic!("no '.' at the end of input file name {}", input_name),
         Some(end) => end,
     };
-    /// MDE: "start" can be called "slash_position" or "slash_pos".
-    let mut start = match s.rfind("/") {
+    let slash_idx = match input_name.rfind("/") {
         // .../<crate>.rs
         None => 0,
         Some(slash) => slash + 1,
     };
-    let mut res = String::from("");
-    while start < end {
-        res.push_str(&format!("{}", s.chars().nth(start).unwrap()));
-        start += 1;
-    }
-    *OUTPUT_NAME.lock().unwrap() = res;
+    let res = &input_name[slash_idx..dot_idx];
+    *OUTPUT_PREFIX.lock().unwrap() = String::from(res);
 }
 
-// Hack.
-// Given a pretty-printed struct:
-// struct X<a, b> {
-// ...
-// }
-/// MDE: What does "splice" mean?  Usually it means to insert something, but
-/// here you might be using to mean "extract".
-// Splice the name X<a, b> from this String. This is the only way
-// I have found to take a struct Item and obtain its identifier
-// including generics in a String.
-// The identifier plus generics are required to synthesize impl blocks
-// with dtrace routines:
-// impl X<a, b> {
-//     dtrace_print_fields(self, ...)
-// }
-/// MDE: This is a triple-slash comment, not a triple-bar comment.
-// This method is broken in many cases. Pretty-printing can include triple-bar
-// comments or attributes.
-// Indeed, the pretty-printed String could be as bad as:
-/// MDE: Why not insert the below after leading "//"?  That is, why are you
-/// using a /*...*/ style comment?
-/*
-
-/// This is an awesome struct
-#[cfg(test)]
-struct X<a, b> {
-    ...
-}
-
-*/
-/// MDE: "pp" means "pretty-printed".  Add a comment explaining this
-/// to the function documentation.
-/// MDE: What does "stop" mean?  Please document.
-fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
-    /// MDE: I would name this "space_position" or "space_pos".
-    /// Likewise, rename "bound".
-    let start_idx = pp_struct.find(" ");
-    match &start_idx {
-        None => panic!("Can't find space in pp_struct"),
-        Some(idx) => {
-            let bound = pp_struct.find("{");
-            match &bound {
-                None => {
-                    *stop = true;
-                    String::from("")
-                }
-                Some(bound) => {
-                    let mut i = idx + 1;
-                    let mut res = String::from("");
-                    while i < *bound - 1 {
-                        res.push_str(&String::from(pp_struct.chars().nth(i).unwrap()));
-                        i += 1;
-                    }
-                    // don't forget pub struct
-                    if res.starts_with("struct") {
-                        return res[7..].to_string();
-                    } else if res.starts_with("enum") {
-                        return res[5..].to_string();
-                    } else if res.starts_with("union") {
-                        return res[6..].to_string();
-                    }
-                    res
-                }
-            }
-        }
-    }
-}
-
-// Create a BasicType for the given Rust type.
-/// MDE: The remainder belongs in the BasicType documentation, not here.
-/// Why isn't "is_ref" a field in BasicType?
-// If it is a reference, note this with is_ref.
+// Create a RustType for the given Rust type. If it is a reference,
+// note this with is_ref.
 // For Vec/array, is_ref indicates whether the contents of the
 // container are references or not rather than the container
 // itself. It does not matter if the container is_ref or not,
 // since we always make a copy Vec with references to contents.
-fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
+fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
     match &kind {
         TyKind::Array(arr_type, _anon_const) => match &get_basic_type(&arr_type.kind, is_ref) {
-            BasicType::Prim(p_type) => BasicType::PrimArray(String::from(p_type)),
-            BasicType::UserDef(basic_type) => BasicType::UserDefArray(String::from(basic_type)),
+            RustType::Prim(p_type) => RustType::PrimArray(String::from(p_type)),
+            RustType::UserDef(basic_type) => RustType::UserDefArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
         },
         TyKind::Slice(arr_type) => match &get_basic_type(&arr_type.kind, is_ref) {
-            BasicType::Prim(p_type) => BasicType::PrimArray(String::from(p_type)),
-            BasicType::UserDef(basic_type) => BasicType::UserDefArray(String::from(basic_type)),
+            RustType::Prim(p_type) => RustType::PrimArray(String::from(p_type)),
+            RustType::UserDef(basic_type) => RustType::UserDefArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
         },
-        /// MDE: Why is this an error?  Could a pointer be output as a (large) integer?
-        TyKind::Ptr(_mut_ty) => BasicType::Error,
+        // TODO: implement logging and handling for Rust pointers.
+        TyKind::Ptr(_mut_ty) => RustType::Error,
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
             // recurse to get to the underlying type
@@ -354,20 +231,21 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
                 panic!("Path has no type");
             }
             let ty_string = path.segments[path.segments.len() - 1].ident.as_str();
-            let try_prim = check_prim(ty_string);
-            if try_prim != BasicType::Error {
+            let try_prim = as_primitive(ty_string);
+            if try_prim != RustType::Error {
                 return try_prim;
             }
             if ty_string == VEC {
                 return grok_vec_args(&path, is_ref);
             }
-            // Return full type: BasicType<args>, need generics in some cases.
-            BasicType::UserDef(ty_string.to_string())
+            // Return full type: RustType<args>, need generics in some cases.
+            RustType::UserDef(ty_string.to_string())
         }
-        _ => BasicType::Error,
+        _ => RustType::Error,
     }
 }
 
+// TODO: replace this idea with better data structures for the logging code.
 // Unused. This was intended to allow easy invalidation
 // of parameters. E.g., if parameter x was invalidated with
 // drop(x), we need to know which idx it belongs to in our
@@ -377,27 +255,21 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
 #[allow(rustc::default_hash_types)]
 fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
     let mut res = HashMap::new();
-    let mut i = 0;
-    while i < decl.inputs.len() {
+    for i in 0..decl.inputs.len() {
         res.insert(get_param_ident(&decl.inputs[i].pat), i as i32);
-        i += 1;
     }
     res
 }
 
 // Returns true if the last statement in each function is an
 // explicit void return.
-/// MDE: The next sentence belongs at the use site, not here.
-// If it is not, an explicit void return
-// is added at the end to make it easy to identify the final
-// exit ppt.
-/// MDE: "Does not detect" is ambiguous.  Be specific about what value the
-/// function returns, given code like the example.
-// This does not detect something like
+// Note: returns false in a case like the following:
 /*
 if cond { return; } else { return; }
 */
 // In this case, an extra void return is unreachable.
+// TODO: handle checking for exhaustive control flow with
+// explicit void returns.
 fn last_stmt_is_void_return(block: &Box<Block>) -> bool {
     if block.stmts.len() == 0 {
         panic!("no stmts to check");
@@ -412,8 +284,8 @@ fn last_stmt_is_void_return(block: &Box<Block>) -> bool {
 }
 
 impl<'a> DaikonDtraceVisitor<'a> {
-    // Given a block of stmts in a String and a block,
-    // and append parsed stmts to the end of the block.
+    // Given a block of stmts in a String and a block, append parsed stmts
+    // to the end of the block.
     fn append_to_block(&self, stuff: String, block: &mut Box<Block>) {
         match &self.parser.parse_items_from_string(stuff.clone()) {
             Err(_why) => panic!("Parsing internal String failed"),
@@ -454,10 +326,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
         i
     }
 
-    /// MDE: What invariants?
-    /// MDE: What does this with the located exit points?
-    // Take an if stmt and use invariants about if stmts
-    // to walk all blocks and locate exit ppts.
+    // Take an if stmt and walk all blocks to locate exit ppts and insert
+    // log stmts to log exit ppts.
     // expr: If expression.
     // exit_counter: gives the previously seen number of exit ppts.
     // ppt_name: ppt name.
@@ -526,14 +396,18 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
     }
 
+    // TODO: noted elsewhere, but also here: implement data structures
+    // to store exit ppt information rather than in dtrace_param_blocks
+    // as a string. This allows for much greater flexibility, and avoids
+    // parse errors deep in the instrumentation pipeline.
+
     // Given a ret_expr from an explicit return stmt or a non-semi
     // trailing return, insert code into body at index i to log the
     // ret_expr.
     // i: index into block to insert logging.
     // ret_expr: Expr representing the return value at a given exit ppt.
     // body: the block to insert into.
-    /// MDE: Is this a unique identifier?  Where is "label" defined?
-    // exit_counter: label for the next exit ppt.
+    // exit_counter: unique, function-local numeric identifier for an exit ppt.
     // ppt_name: program point name.
     /// MDE: Throughout, why is the code stored in strings rather than
     /// parsed and returned as a data structure?  That would lead to
@@ -542,10 +416,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // dtrace_param_blocks: Vec of logging code stored in Strings.
     // ret_ty: return type of the function.
     // daikon_tmp_counter: label for the next temporary variable.
-    /// MDE: The name "insert_return" would be more appropriate, because this
-    /// does not create and return any value.  And, the first sentence of the
-    /// documentation uses "insert" which is a hint that it is a good name.
-    fn build_return(
+    fn insert_return(
         &mut self,
         i: &mut usize,
         ret_expr: &Expr, // &Box<Expr>?
@@ -563,6 +434,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
         /// MDE: Would it make sense to perform this operation within
         /// build_instrument_code (or within an overload of it?
         *exit_counter += 1;
+        // TODO: create overloads of build_instrument_code specialized for
+        // common tasks like creating exit ppts, which may also do operations
+        // like increment exit_counter.
 
         *i = self.insert_into_block(*i, exit.clone(), body);
 
@@ -572,7 +446,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         let mut ret_is_ref = false;
         let r_ty = match &ret_ty {
-            FnRetTy::Default(_span) => BasicType::NoRet,
+            FnRetTy::Default(_span) => RustType::NoRet,
             FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref),
         };
         let pr_ty = match &ret_ty {
@@ -584,7 +458,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
         *i = self.insert_into_block(*i, ret_let, body);
         match &r_ty {
-            BasicType::Prim(p_type) => {
+            RustType::Prim(p_type) => {
                 let prim_record_ret = if p_type == "String" || p_type == "str" {
                     build_instrument_code(
                         vec![String::from("__daikon_ret"), String::from("return")],
@@ -605,7 +479,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 };
                 *i = self.insert_into_block(*i, prim_record_ret, body);
             }
-            BasicType::UserDef(_) => {
+            RustType::UserDef(_) => {
                 if ret_is_ref == false {
                     let userdef_record_ret = build_userdef_ret_ampersand(3);
                     *i = self.insert_into_block(*i, userdef_record_ret, body);
@@ -614,7 +488,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     *i = self.insert_into_block(*i, userdef_record_ret, body);
                 }
             }
-            BasicType::PrimVec(p_type) => {
+            RustType::PrimVec(p_type) => {
                 let first_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let next_tmp = daikon_tmp_counter.to_string();
@@ -644,7 +518,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
                 *i = self.insert_into_block(*i, prim_vec_record_ret, body);
             }
-            BasicType::UserDefVec(basic_type) => {
+            RustType::UserDefVec(basic_type) => {
                 let first_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let next_tmp = daikon_tmp_counter.to_string();
@@ -671,7 +545,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
                 *i = self.insert_into_block(*i, userdef_vec_record_ret, body);
             }
-            BasicType::PrimArray(p_type) => {
+            RustType::PrimArray(p_type) => {
                 let first_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let next_tmp = daikon_tmp_counter.to_string();
@@ -701,7 +575,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
                 *i = self.insert_into_block(*i, prim_vec_record_ret, body);
             }
-            BasicType::UserDefArray(basic_type) => {
+            RustType::UserDefArray(basic_type) => {
                 let first_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let next_tmp = daikon_tmp_counter.to_string();
@@ -728,8 +602,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
                 *i = self.insert_into_block(*i, userdef_vec_record_ret, body);
             }
-            BasicType::NoRet => {}
-            BasicType::Error => panic!("ret_ty is BasicType::Error"),
+            RustType::NoRet => {}
+            RustType::Error => panic!("ret_ty is RustType::Error"),
         }
 
         *i = self.insert_into_block(*i, dtrace_newline(), body);
@@ -741,14 +615,13 @@ impl<'a> DaikonDtraceVisitor<'a> {
         body.stmts.remove(*i);
     }
 
-    /// MDE: What does it mean to "process"?
-    // Given a block body and an index i, process the stmt
-    // body.stmts[i]. This may be a return stmt or a new block,
+    // Given a block body and an index i, check the stmt
+    // body.stmts[i] for a return stmt, a new block to walk,
     // or a stmt which invalidates one of the parameters such
-    // as drop(param1).
+    // as drop(param).
     // Returns the index to the next stmt in the block to process. If this
-    // method adds stmts have been added immediately after the given index,
-    // returns the next stmt after all inserted stmts.
+    // method adds stmts immediately after the given index, returns the next
+    // stmt after all inserted stmts.
     // loc: index representing the index to the stmt to process.
     // body: surrounding block containing the stmt.
     /// MDE: Was this called "loc" elsewhere?  Please use consistent naming
@@ -873,8 +746,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 // Not sure how to handle match blocks
                 ExprKind::Match(_, arms, _) => {
-                    let mut j = 0;
-                    while j < arms.len() {
+                    for j in 0..arms.len() {
                         match &mut arms[j].body {
                             None => {}
                             Some(bd) => match &mut bd.kind {
@@ -891,7 +763,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 _ => {} // TODO: more careful analysis on whether this is supposed to be a return expr or not, e.g. println/panic vs 7.
                             },
                         }
-                        j += 1;
                     }
                     return i + 1;
                 } // TryBlock, Const block? probably more
@@ -927,7 +798,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     i += 1;
                 }
                 ExprKind::Ret(Some(return_expr)) => {
-                    self.build_return(
+                    self.insert_return(
                         &mut i,
                         &return_expr,
                         body,
@@ -950,7 +821,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             // previous match block.
             StmtKind::Expr(no_semi_expr) => {
                 // we know it is not a block, so it must be trailing no-semi return expr
-                self.build_return(
+                self.insert_return(
                     &mut i,
                     &no_semi_expr,
                     body,
@@ -979,67 +850,18 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
     }
 
-    // Hack: this routine is currently used to handle enums and unions.
-    // This will be fixed by using a /tmp file in a first pass.
-    fn gen_impl_noop(&mut self, pp_struct: &String, struct_generics: &Generics) {
-        let mut impl_item = self.base_impl_item();
-        let the_impl = match &mut impl_item.kind {
-            ItemKind::Impl(i) => i,
-            _ => panic!("Base impl is not impl"),
-        };
-        let mut stop = false;
-        let spliced_struct = splice_struct(&pp_struct, &mut stop);
-        if stop {
-            return;
-        }
-
-        let struct_as_ret = build_phony_ret(spliced_struct.clone());
-        the_impl.self_ty = match &self.parser.parse_items_from_string(struct_as_ret) {
-            Err(_why) => panic!("Parsing phony arg failed"),
-            Ok(arg_items) => match &arg_items[0].kind {
-                ItemKind::Fn(phony) => match &phony.sig.decl.output {
-                    FnRetTy::Ty(ty) => ty.clone(),
-                    _ => panic!("Phony ret is none"),
-                },
-                _ => panic!("Parsing phony fn failed"),
-            },
-        };
-        the_impl.generics = struct_generics.clone();
-
-        // We only need dtrace_print_fields and dtrace_print_fields_vec. xfield routines are only internal.
-        let dtrace_print_fields_fn_noop = self.build_dtrace_print_fields_noop();
-        match &self.parser.parse_items_from_string(dtrace_print_fields_fn_noop) {
-            Err(_) => panic!("Parsing dtrace_print_fields_noop failed"),
-            Ok(items) => match &items[0].kind {
-                ItemKind::Impl(tmp_impl) => {
-                    the_impl.items.push(tmp_impl.items[0].clone());
-                }
-                _ => panic!("Expected impl for noop 1"),
-            },
-        }
-
-        let plain_struct = cut_lifetimes(spliced_struct.clone());
-        let dtrace_print_fields_vec = self.build_dtrace_print_fields_vec_noop(plain_struct.clone());
-        match &self.parser.parse_items_from_string(dtrace_print_fields_vec) {
-            Err(_) => panic!("Parsing dtrace_print_fields_vec failed"),
-            Ok(items) => match &items[0].kind {
-                ItemKind::Impl(tmp_impl) => {
-                    the_impl.items.push(tmp_impl.items[0].clone());
-                }
-                _ => panic!("Expected phony impl 2"),
-            },
-        }
-
-        self.mod_items.push(impl_item.clone());
-    }
-
-    /// MDE: What does this function do with the new impl after generating it?
     // This function generates a new impl for a user-defined struct with type
-    // ty. The impl will contain multiple synthesized functions, like
-    // dtrace_print_fields, dtrace_print_fields_vec, and more.
-    /// MDE: Is "fields" the fields of the struct?  Why is "struct_generics"
-    /// prefixed by "struct_" but the other parameter names are not?
-    fn gen_impl(&mut self, fields: &mut ThinVec<FieldDef>, ty: &Ty, struct_generics: &Generics) {
+    // ty and enqueues the impl block into self.mod_items to be appended to
+    // the end of the current translation unit (file). The impl will contain
+    // multiple synthesized functions, like dtrace_print_fields,
+    // dtrace_print_fields_vec, and more.
+    // fields: fields of the struct for which we are generating a new impl blocl.
+    fn gen_impl(
+        &mut self,
+        struct_fields: &mut ThinVec<FieldDef>,
+        struct_ty: &Ty,
+        struct_generics: &Generics,
+    ) {
         let mut impl_item = self.base_impl_item();
         let the_impl = match &mut impl_item.kind {
             ItemKind::Impl(i) => i,
@@ -1048,7 +870,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // TODO: remove this.
         // let spliced_struct = splice_struct(&pp_struct);
         // let struct_as_ret = build_phony_ret(spliced_struct.clone()); // TODO: fix splice string to handle pub keyword
-        the_impl.self_ty = Box::new(ty.clone());
+        the_impl.self_ty = Box::new(struct_ty.clone());
         // TODO: remove this.
         // match &self.parser.parse_items_from_string(struct_as_ret) {
         //     Err(_why) => panic!("Parsing phony arg failed"),
@@ -1062,7 +884,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // };
         the_impl.generics = struct_generics.clone();
 
-        let dtrace_print_fields_fn = self.build_dtrace_print_fields(fields);
+        let dtrace_print_fields_fn = self.build_dtrace_print_fields(struct_fields);
         match &self.parser.parse_items_from_string(dtrace_print_fields_fn) {
             Err(_why) => panic!("Parsing dtrace_print_fields failed"),
             Ok(items) => match &items[0].kind {
@@ -1073,15 +895,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
             },
         }
 
-        // TODO: remove this.
-        // Is this even important?
-        // let plain_struct = cut_lifetimes(spliced_struct.clone());
-        let plain_struct = match &ty.kind {
+        let plain_struct = match &struct_ty.kind {
             TyKind::Path(_, path) => String::from(path.segments[0].ident.as_str()),
             _ => panic!("Why don't we have a path?"),
         };
         let dtrace_print_fields_vec =
-            self.build_dtrace_print_fields_vec(plain_struct.clone(), fields);
+            self.build_dtrace_print_fields_vec(plain_struct.clone(), struct_fields);
         match &self.parser.parse_items_from_string(dtrace_print_fields_vec) {
             Err(_) => panic!("Parsing dtrace_print_fields_vec failed"),
             Ok(items) => match &items[0].kind {
@@ -1094,15 +913,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         // TODO: remove this.
         // build dtrace_print_xfield_vec (AND dtrace_print_xfield...) here, then that should be it for generating fns in the impl.
-        let dtrace_print_xfields = self.build_dtrace_print_xfield_vec(plain_struct.clone(), fields);
+        let dtrace_print_xfields =
+            self.build_dtrace_print_xfield_vec(plain_struct.clone(), struct_fields);
         match &self.parser.parse_items_from_string(dtrace_print_xfields) {
             Err(_) => panic!("Parsing dtrace_print_xfields failed"),
             Ok(items) => match &items[0].kind {
                 ItemKind::Impl(tmp_impl) => {
-                    let mut i = 0;
-                    while i < tmp_impl.items.len() {
+                    for i in 0..tmp_impl.items.len() {
                         the_impl.items.push(tmp_impl.items[i].clone());
-                        i += 1;
                     }
                 }
                 _ => panic!("Expected phony impl 3"),
@@ -1112,14 +930,13 @@ impl<'a> DaikonDtraceVisitor<'a> {
         self.mod_items.push(impl_item.clone());
     }
 
-    /// MDE: Should this be: "Given a struct whose fields are `fields`, ..."?
-    /// MDE: Why does it return a String rather than a parsed AST?
-    // Given a struct fields, returns a String with code containing
-    /// MDE: How many functions?  Why is more than one needed?
-    // functions to log each field of the struct given a vec of
-    // such a struct.
+    // Given a struct with fields ``fields``, returns a String with code
+    // containing a function to log each field of the struct given a vec of
+    // such a struct. String is sufficient, since no further modifications
+    // or mutations will be done to this generated code.
     // Additionally, for any Vec or array fields, adds a function
-    // which is responsible for logging these fields.
+    // which is responsible for logging the field in pointer format.
+    // TODO: write a small example input/output.
     fn build_dtrace_print_xfield_vec(
         &mut self,
         plain_struct: String,
@@ -1129,12 +946,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // dtrace_print_xfield_vec prints scalar fields out of a Vec<Me>, and dtrace_print_xfield takes one Me and prints Me.f which is a Vec.
         let mut dtrace_print_xfields_vec = dtrace_print_xfields_vec_prologue();
 
-        /// MDE: Which are "these functions"?
-        // Not important for this to be here, these functions are self-contained so
+        // not important for this to be here, each function is self-contained so
         // the names don't matter.
         let mut daikon_tmp_counter = 0;
-        let mut i = 0;
-        while i < fields.len() {
+        for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
@@ -1142,7 +957,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
             let mut is_ref = false;
             let dtrace_print_xfield = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
-                BasicType::Prim(p_type) => {
+                RustType::Prim(p_type) => {
                     // We have a vec of ourselves, and the field is
                     if p_type == "String" || p_type == "str" {
                         build_print_xfield_string(field_name.clone(), plain_struct.clone())
@@ -1158,7 +973,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 //            build_dtrace_print_xfield_middle(),
                 //            build_print_prim_vec_for_field(),
                 //            build_dtrace_print_xfield_epilogue()
-                BasicType::PrimVec(p_type) => {
+                RustType::PrimVec(p_type) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1202,7 +1017,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 //            build_dtrace_print_xfield_middle() (depth check),
                 //            build_print_vec_fields_for_field() (for contents),
                 //            build_dtrace_print_xfield_epilogue() (closing brace)
-                BasicType::UserDefVec(basic_struct) => {
+                RustType::UserDefVec(basic_struct) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1246,7 +1061,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 // TODO: arrays, mighty similar to vec. Maybe you can cheat and just do the exact same thing... use | in pattern matching.
                 // Except pointer is diff, as_ptr() as usize vs as *const _ as *const () as usize...
-                BasicType::PrimArray(p_type) => {
+                RustType::PrimArray(p_type) => {
                     // UNTRUSTED:
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
@@ -1282,7 +1097,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         build_print_xfield_for_vec(field_name.clone(), plain_struct.to_string());
                     format!("{}\n{}", f1, f2)
                 }
-                BasicType::UserDefArray(basic_struct) => {
+                RustType::UserDefArray(basic_struct) => {
                     // UNTRUSTED:
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
@@ -1329,15 +1144,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
             };
 
             dtrace_print_xfields_vec.push_str(&dtrace_print_xfield);
-            i += 1;
         }
         let res = format!("{}{}", dtrace_print_xfields_vec, dtrace_print_xfields_vec_epilogue());
         res
-    }
-
-    // Just stuff the plain_struct in there.
-    fn build_dtrace_print_fields_vec_noop(&mut self, plain_struct: String) -> String {
-        format!("impl __skip {{ {} }}", build_dtrace_print_fields_vec_noop(plain_struct))
     }
 
     // Builds the top-level function which is called to log a Vec or array of a given struct.
@@ -1349,8 +1158,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut dtrace_print_fields_vec = dtrace_print_fields_vec_prologue(plain_struct.clone());
 
         let mut daikon_tmp_counter = 0;
-        let mut i = 0;
-        while i < fields.len() {
+        for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
@@ -1359,7 +1167,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             let mut is_ref = false;
             let dtrace_field_vec_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
                 // don't need p_type because we just call dtrace_print_xfield which handles the type.
-                BasicType::Prim(_) => {
+                RustType::Prim(_) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1378,7 +1186,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
-                BasicType::UserDef(field_type) => {
+                RustType::UserDef(field_type) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1414,7 +1222,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     )
                 }
                 // call X::dtrace_print_<field>_vec since it will be implemented to only print pointers. NOT TRUSTED CODE:
-                BasicType::PrimVec(_) => {
+                RustType::PrimVec(_) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1433,7 +1241,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
-                BasicType::UserDefVec(_) => {
+                RustType::UserDefVec(_) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
@@ -1452,7 +1260,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
-                BasicType::PrimArray(_) => {
+                RustType::PrimArray(_) => {
                     // UNTRUSTED: is this exactly the same?
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
@@ -1472,7 +1280,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
-                BasicType::UserDefArray(_) => {
+                RustType::UserDefArray(_) => {
                     // UNTRUSTED: is this exactly the same?
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
@@ -1492,20 +1300,15 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
-                BasicType::NoRet => String::from(""),
-                BasicType::Error => panic!("Field type not handled"),
+                RustType::NoRet => String::from(""),
+                RustType::Error => panic!("Field type not handled"),
             };
 
             dtrace_print_fields_vec.push_str(&dtrace_field_vec_rec); // don't think a newline here would matter? Parsing doesn't care.
-            i += 1;
         }
 
         let res = format!("{}{}", dtrace_print_fields_vec, dtrace_print_fields_vec_epilogue());
         res
-    }
-
-    fn build_dtrace_print_fields_noop(&mut self) -> String {
-        format!("impl __skip {{ {} }}", build_dtrace_print_fields_noop())
     }
 
     // Given a struct's field declarations, generate the function dtrace_print_fields(self)
@@ -1513,11 +1316,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
     fn build_dtrace_print_fields(&mut self, fields: &mut ThinVec<FieldDef>) -> String {
         let mut dtrace_print_fields: String = dtrace_print_fields_prologue();
 
-        let mut i = 0;
-        while i < fields.len() {
-            /// MDE: Why is this necessary?  I would think that the fields of a
-            /// struct are only accessed by methods that are added to that
-            /// struct, and those methods should have access to all the fields.
+        for i in 0..fields.len() {
+            // TODO: remove and add tests for private fields.
             // Make all fields public for access in dtrace routines.
             fields[i].vis.kind = VisibilityKind::Public;
 
@@ -1528,7 +1328,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
             let mut is_ref = false;
             let mut dtrace_field_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
-                BasicType::Prim(p_type) => {
+                RustType::Prim(p_type) => {
                     if p_type == "String" || p_type == "str" {
                         build_instrument_code(
                             vec![field_name.clone(), field_name.clone()],
@@ -1551,7 +1351,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     }
                 }
-                BasicType::UserDef(_) => {
+                RustType::UserDef(_) => {
                     if !is_ref {
                         build_field_userdef_with_ampersand_access(field_name.clone())
                     } else {
@@ -1559,23 +1359,22 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     }
                 }
                 // TODO: use the | operator here.
-                BasicType::PrimVec(_) => build_call_print_field(field_name.clone()),
-                BasicType::UserDefVec(_) => build_call_print_field(field_name.clone()),
-                BasicType::PrimArray(_p_type) => {
+                RustType::PrimVec(_) => build_call_print_field(field_name.clone()),
+                RustType::UserDefVec(_) => build_call_print_field(field_name.clone()),
+                RustType::PrimArray(_p_type) => {
                     // UNTRUSTED:
                     build_call_print_field(field_name.clone())
                 }
-                BasicType::UserDefArray(_) => {
+                RustType::UserDefArray(_) => {
                     // UNTRUSTED:
                     build_call_print_field(field_name.clone())
                 }
-                BasicType::NoRet => String::from(""),
-                BasicType::Error => panic!("Field type not handled"),
+                RustType::NoRet => String::from(""),
+                RustType::Error => panic!("Field type not handled"),
             };
             dtrace_field_rec.push_str("\n");
 
             dtrace_print_fields.push_str(&format!("{}{}", dtrace_field_rec, "\n"));
-            i += 1;
         }
 
         format!("{}{}", dtrace_print_fields, dtrace_print_fields_epilogue())
@@ -1583,16 +1382,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     /// MDE: Yes, I agree with this TODO.
     // TODO: dtrace calls should be represented with a better data structures rather than
-    // Strings
-    /// MDE: Why as set of dtrace calls per parameter?  Or is it *one* dtrace
-    /// call for each parameter?
-    // Given a function signature, generate a set of dtrace calls for each parameter. These
+    // Strings.
+    // Given a function signature, generate a set of dtrace calls for each parameter,
+    // such as logging a pointer value and logging contents for structs. These
     // will be reused at the function entry and each exit ppt.
     fn grok_fn_sig(&mut self, decl: &Box<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
         // grok params.
-        let mut i = 0;
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
-        while i < decl.inputs.len() {
+        for i in 0..decl.inputs.len() {
             let mut is_ref = false;
             let var_name = get_param_ident(&decl.inputs[i].pat);
             let mut dtrace_rec = if get_param_ident(&decl.inputs[i].pat) == "self" {
@@ -1608,7 +1405,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 )
             } else {
                 match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
-                    BasicType::Prim(p_type) => {
+                    RustType::Prim(p_type) => {
                         if p_type == "String" || p_type == "str" {
                             build_instrument_code(
                                 vec![
@@ -1638,7 +1435,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             )
                         }
                     }
-                    BasicType::UserDef(_) => {
+                    RustType::UserDef(_) => {
                         if !is_ref {
                             build_instrument_code(
                                 vec![
@@ -1663,7 +1460,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             )
                         }
                     }
-                    BasicType::PrimVec(p_type) => {
+                    RustType::PrimVec(p_type) => {
                         let first_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
@@ -1692,7 +1489,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             print_vec.clone()
                         )
                     }
-                    BasicType::UserDefVec(basic_type) => {
+                    RustType::UserDefVec(basic_type) => {
                         let first_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
@@ -1731,7 +1528,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         );
                         res
                     }
-                    BasicType::PrimArray(p_type) => {
+                    RustType::PrimArray(p_type) => {
                         let first_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
@@ -1760,7 +1557,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             print_vec.clone()
                         )
                     }
-                    BasicType::UserDefArray(basic_type) => {
+                    RustType::UserDefArray(basic_type) => {
                         let first_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
@@ -1799,23 +1596,20 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         );
                         res
                     }
-                    BasicType::NoRet => String::from(""),
-                    BasicType::Error => panic!("Formal arg type not handled."),
+                    RustType::NoRet => String::from(""),
+                    RustType::Error => panic!("Formal arg type not handled."),
                 }
             };
             dtrace_rec.push_str("\n");
 
             dtrace_param_blocks.push(format!("{}{}", dtrace_rec, "\n"));
-            i += 1;
         }
 
         // Return param-dependent dtrace calls.
         dtrace_param_blocks
     }
 
-    /// MDE: Should "walk" be "visit" throughout, because you are using the
-    /// visitor pattern?  If not, how is walking different than visiting?
-    // Walk a single block, used for recursing through nested
+    // Visit a single block, used for recursing through nested
     // blocks like if stmts and loops.
     // ppt_name: program point name.
     // body: the block to walk.
@@ -1921,12 +1715,17 @@ impl<'a> DaikonDtraceVisitor<'a> {
 // The main visitor routines and entry-points for function and struct
 // instrumentation.
 impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
-    /// MDE: Which run-time values?  The arguments and return value?
-    // Process the function signature to generate calls to log run-time values.
-    /// MDE: What function inserts calls at entry points?  Cross-reference it
-    /// from here.
-    // Walk the function body and insert calls at exit points.
-    fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
+    // Process the function signature to generate calls to log arguments and
+    // return value.
+    // Visit the function body and insert calls at exit points via
+    // DaikonDtraceVisitor::insert_into_block.
+    fn visit_fn(
+        &mut self,
+        mut fk: FnKind<'_>,
+        _attrs: &rustc_ast::AttrVec,
+        _span: rustc_span::Span,
+        _id: rustc_ast::NodeId,
+    ) {
         match &mut fk {
             FnKind::Fn(_, _, f) => {
                 let ppt_name = String::from(f.ident.as_str());
@@ -1962,18 +1761,13 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
     // TODO: look up struct names in a /tmp file to determine
     //       whether to continue or not.
     fn visit_item(&mut self, item: &mut Item) {
-        let get_struct = pprust::item_to_string(&item);
         match &mut item.kind {
-            ItemKind::Enum(_ident, generics, _enum_def) => {
-                // TODO: remove this.
-                self.gen_impl_noop(&get_struct, &generics);
-            }
+            ItemKind::Enum(_ident, _generics, _enum_def) => {}
             ItemKind::Struct(ident, generics, variant_data) => match variant_data {
                 VariantData::Struct { fields, recovered: _recovered } => {
                     let mut the_path = Path::from_ident(ident.clone());
                     let mut the_args: ThinVec<AngleBracketedArg> = ThinVec::new();
-                    let mut i = 0;
-                    while i < generics.params.len() {
+                    for i in 0..generics.params.len() {
                         match &generics.params[i].kind {
                             GenericParamKind::Lifetime => {
                                 the_args.push(AngleBracketedArg::Arg(GenericArg::Lifetime(
@@ -1990,10 +1784,6 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                                 panic!("Enum has const generic arg.")
                             }
                         }
-                        /// MDE: Please explain how this comment relates to the
-                        /// increment statement that it is attached to.
-                        // Return param-dependent dtrace calls.
-                        i += 1;
                     }
                     let angle_bracketed_args =
                         AngleBracketedArgs { span: item.span.clone(), args: the_args };
@@ -2010,10 +1800,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                 VariantData::Tuple(_, _) => {}
                 _ => {}
             },
-            ItemKind::Union(_ident, generics, _variant_data) => {
-                // TODO: remove.
-                self.gen_impl_noop(&get_struct, &generics);
-            }
+            ItemKind::Union(_ident, _generics, _variant_data) => {}
             _ => {}
         }
 
@@ -2090,12 +1877,13 @@ impl<'a> Parser<'a> {
         let (source_file, _b, _c, _d, _e) = source_map.span_to_location_info(self.token.span);
         *DO_VISITOR.lock().unwrap() = match &source_file {
             Some(sf) => match &sf.name {
-                rustc_span::FileName::Real(file_name) => match &file_name {
-                    rustc_span::RealFileName::LocalPath(path) => match &path.to_str() {
-                        Some(str) => !str.starts_with("library") && !str.contains(".cargo"),
+                // RealFileName is no longer an enum
+                rustc_span::FileName::Real(file_name) => match &file_name.local_path() {
+                    Some(buf) => match &buf.to_str() {
+                        Some(s) => !s.starts_with("library") && !s.contains(".cargo"),
                         None => false,
                     },
-                    _ => false,
+                    None => false,
                 },
                 _ => false,
             },
@@ -2161,24 +1949,22 @@ impl<'a> Parser<'a> {
             mut_visit::visit_items(&mut impl_inserter, &mut items);
 
             // push impl blocks.
-            let mut i = 0;
-            while i < items_to_append.len() {
+            for i in 0..items_to_append.len() {
                 items.push(items_to_append[i].clone());
-                i += 1;
             }
 
             // pretty print the instrumented code (without library/imports) for testing.
-            let pp_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".pp");
+            let pp_path = format!("{}{}", *OUTPUT_PREFIX.lock().unwrap(), ".pp");
             let pp_as_path = std::path::Path::new(&pp_path);
             std::fs::File::create(&pp_as_path).unwrap();
             let mut pp =
                 std::fs::File::options().write(true).append(true).open(&pp_as_path).unwrap();
-            i = 0;
-            while i < items.len() - 1 {
+
+            for i in 0..items.len()-1 {
                 writeln!(&mut pp, "{}\n", pprust::item_to_string(&items[i])).ok();
-                i += 1;
             }
-            writeln!(&mut pp, "{}", pprust::item_to_string(&items[i])).ok();
+
+            writeln!(&mut pp, "{}", pprust::item_to_string(&items[items.len()-1])).ok(); // no newline
 
             // add imports.
             // TODO: you should check if these imports are already included.
@@ -2208,10 +1994,19 @@ impl<'a> Parser<'a> {
     }
 }
 
+//
+// End of c-rosae additions.
+//
+
+enum ReuseKind {
+    Path,
+    Impl,
+}
+
 impl<'a> Parser<'a> {
     pub fn parse_item(&mut self, force_collect: ForceCollect) -> PResult<'a, Option<Box<Item>>> {
         let fn_parse_mode =
-            FnParseMode { req_name: |_| true, context: FnContext::Free, req_body: true };
+            FnParseMode { req_name: |_, _| true, context: FnContext::Free, req_body: true };
         self.parse_item_(fn_parse_mode, force_collect).map(|i| i.map(Box::new))
     }
 
@@ -2318,9 +2113,10 @@ impl<'a> Parser<'a> {
                 contract,
                 body,
                 define_opaque: None,
+                eii_impls: ThinVec::new(),
             }))
-        } else if self.eat_keyword(exp!(Extern)) {
-            if self.eat_keyword(exp!(Crate)) {
+        } else if self.eat_keyword_case(exp!(Extern), case) {
+            if self.eat_keyword_case(exp!(Crate), case) {
                 // EXTERN CRATE
                 self.parse_item_extern_crate()?
             } else {
@@ -2332,52 +2128,43 @@ impl<'a> Parser<'a> {
             let safety = self.parse_safety(Case::Sensitive);
             self.expect_keyword(exp!(Extern))?;
             self.parse_item_foreign_mod(attrs, safety)?
-        } else if self.is_static_global() {
-            let safety = self.parse_safety(Case::Sensitive);
+        } else if let Some(safety) = self.parse_global_static_front_matter(case) {
             // STATIC ITEM
-            self.bump(); // `static`
             let mutability = self.parse_mutability();
             self.parse_static_item(safety, mutability)?
-        } else if self.check_keyword(exp!(Trait)) || self.check_trait_front_matter() {
+        } else if self.check_keyword_case(exp!(Trait), case) || self.check_trait_front_matter() {
             // TRAIT ITEM
             self.parse_item_trait(attrs, lo)?
-        } else if let Const::Yes(const_span) = self.parse_constness(Case::Sensitive) {
-            // CONST ITEM
-            if self.token.is_keyword(kw::Impl) {
-                // recover from `const impl`, suggest `impl const`
-                self.recover_const_impl(const_span, attrs, def_())?
-            } else {
-                self.recover_const_mut(const_span);
-                self.recover_missing_kw_before_item()?;
-                let (ident, generics, ty, expr) = self.parse_const_item()?;
-                ItemKind::Const(Box::new(ConstItem {
-                    defaultness: def_(),
-                    ident,
-                    generics,
-                    ty,
-                    expr,
-                    define_opaque: None,
-                }))
-            }
-        } else if self.check_keyword(exp!(Impl))
-            || self.check_keyword(exp!(Unsafe)) && self.is_keyword_ahead(1, &[kw::Impl])
-        {
+        } else if self.check_impl_frontmatter(0) {
             // IMPL ITEM
-            self.parse_item_impl(attrs, def_())?
-        } else if self.is_reuse_path_item() {
-            self.parse_item_delegation()?
-        } else if self.check_keyword(exp!(Mod))
-            || self.check_keyword(exp!(Unsafe)) && self.is_keyword_ahead(1, &[kw::Mod])
+            self.parse_item_impl(attrs, def_(), false)?
+        } else if let Const::Yes(const_span) = self.parse_constness(case) {
+            // CONST ITEM
+            self.recover_const_mut(const_span);
+            self.recover_missing_kw_before_item()?;
+            let (ident, generics, ty, rhs) = self.parse_const_item(attrs)?;
+            ItemKind::Const(Box::new(ConstItem {
+                defaultness: def_(),
+                ident,
+                generics,
+                ty,
+                rhs,
+                define_opaque: None,
+            }))
+        } else if let Some(kind) = self.is_reuse_item() {
+            self.parse_item_delegation(attrs, def_(), kind)?
+        } else if self.check_keyword_case(exp!(Mod), case)
+            || self.check_keyword_case(exp!(Unsafe), case) && self.is_keyword_ahead(1, &[kw::Mod])
         {
             // MODULE ITEM
             self.parse_item_mod(attrs)?
-        } else if self.eat_keyword(exp!(Type)) {
+        } else if self.eat_keyword_case(exp!(Type), case) {
             // TYPE ITEM
             self.parse_type_alias(def_())?
-        } else if self.eat_keyword(exp!(Enum)) {
+        } else if self.eat_keyword_case(exp!(Enum), case) {
             // ENUM ITEM
             self.parse_item_enum()?
-        } else if self.eat_keyword(exp!(Struct)) {
+        } else if self.eat_keyword_case(exp!(Struct), case) {
             // STRUCT ITEM
             self.parse_item_struct()?
         } else if self.is_kw_followed_by_ident(kw::Union) {
@@ -2387,7 +2174,7 @@ impl<'a> Parser<'a> {
         } else if self.is_builtin() {
             // BUILTIN# ITEM
             return self.parse_item_builtin();
-        } else if self.eat_keyword(exp!(Macro)) {
+        } else if self.eat_keyword_case(exp!(Macro), case) {
             // MACROS 2.0 ITEM
             self.parse_item_decl_macro(lo)?
         } else if let IsMacroRulesItem::Yes { has_bang } = self.is_macro_rules_item() {
@@ -2466,16 +2253,25 @@ impl<'a> Parser<'a> {
     /// When parsing a statement, would the start of a path be an item?
     pub(super) fn is_path_start_item(&mut self) -> bool {
         self.is_kw_followed_by_ident(kw::Union) // no: `union::b`, yes: `union U { .. }`
-        || self.is_reuse_path_item()
+        || self.is_reuse_item().is_some() // yes: `reuse impl Trait for Struct { self.0 }`, yes: `reuse some_path::foo;`
         || self.check_trait_front_matter() // no: `auto::b`, yes: `auto trait X { .. }`
         || self.is_async_fn() // no(2015): `async::b`, yes: `async fn`
         || matches!(self.is_macro_rules_item(), IsMacroRulesItem::Yes{..}) // no: `macro_rules::b`, yes: `macro_rules! mac`
     }
 
-    fn is_reuse_path_item(&mut self) -> bool {
+    fn is_reuse_item(&mut self) -> Option<ReuseKind> {
+        if !self.token.is_keyword(kw::Reuse) {
+            return None;
+        }
+
         // no: `reuse ::path` for compatibility reasons with macro invocations
-        self.token.is_keyword(kw::Reuse)
-            && self.look_ahead(1, |t| t.is_path_start() && *t != token::PathSep)
+        if self.look_ahead(1, |t| t.is_path_start() && *t != token::PathSep) {
+            Some(ReuseKind::Path)
+        } else if self.check_impl_frontmatter(1) {
+            Some(ReuseKind::Impl)
+        } else {
+            None
+        }
     }
 
     /// Are we sure this could not possibly be a macro invocation?
@@ -2659,7 +2455,9 @@ impl<'a> Parser<'a> {
         &mut self,
         attrs: &mut AttrVec,
         defaultness: Defaultness,
+        is_reuse: bool,
     ) -> PResult<'a, ItemKind> {
+        let mut constness = self.parse_constness(Case::Sensitive);
         let safety = self.parse_safety(Case::Sensitive);
         self.expect_keyword(exp!(Impl))?;
 
@@ -2674,7 +2472,11 @@ impl<'a> Parser<'a> {
             generics
         };
 
-        let constness = self.parse_constness(Case::Sensitive);
+        if let Const::No = constness {
+            // FIXME(const_trait_impl): disallow `impl const Trait`
+            constness = self.parse_constness(Case::Sensitive);
+        }
+
         if let Const::Yes(span) = constness {
             self.psess.gated_spans.gate(sym::const_trait_impl, span);
         }
@@ -2722,7 +2524,11 @@ impl<'a> Parser<'a> {
 
         generics.where_clause = self.parse_where_clause()?;
 
-        let impl_items = self.parse_item_list(attrs, |p| p.parse_impl_item(ForceCollect::No))?;
+        let impl_items = if is_reuse {
+            Default::default()
+        } else {
+            self.parse_item_list(attrs, |p| p.parse_impl_item(ForceCollect::No))?
+        };
 
         let (of_trait, self_ty) = match ty_second {
             Some(ty_second) => {
@@ -2758,13 +2564,8 @@ impl<'a> Parser<'a> {
                 };
                 let trait_ref = TraitRef { path, ref_id: ty_first.id };
 
-                let of_trait = Some(Box::new(TraitImplHeader {
-                    defaultness,
-                    safety,
-                    constness,
-                    polarity,
-                    trait_ref,
-                }));
+                let of_trait =
+                    Some(Box::new(TraitImplHeader { defaultness, safety, polarity, trait_ref }));
                 (of_trait, ty_second)
             }
             None => {
@@ -2789,19 +2590,85 @@ impl<'a> Parser<'a> {
                     error("default", "default", def_span).emit();
                 }
                 if let Const::Yes(span) = constness {
-                    error("const", "const", span).emit();
+                    self.psess.gated_spans.gate(sym::const_trait_impl, span);
                 }
                 (None, self_ty)
             }
         };
 
-        Ok(ItemKind::Impl(Impl { generics, of_trait, self_ty, items: impl_items }))
+        Ok(ItemKind::Impl(Impl { generics, of_trait, self_ty, items: impl_items, constness }))
     }
 
-    fn parse_item_delegation(&mut self) -> PResult<'a, ItemKind> {
+    fn parse_item_delegation(
+        &mut self,
+        attrs: &mut AttrVec,
+        defaultness: Defaultness,
+        kind: ReuseKind,
+    ) -> PResult<'a, ItemKind> {
         let span = self.token.span;
         self.expect_keyword(exp!(Reuse))?;
 
+        let item_kind = match kind {
+            ReuseKind::Path => self.parse_path_like_delegation(),
+            ReuseKind::Impl => self.parse_impl_delegation(span, attrs, defaultness),
+        }?;
+
+        self.psess.gated_spans.gate(sym::fn_delegation, span.to(self.prev_token.span));
+
+        Ok(item_kind)
+    }
+
+    fn parse_delegation_body(&mut self) -> PResult<'a, Option<Box<Block>>> {
+        Ok(if self.check(exp!(OpenBrace)) {
+            Some(self.parse_block()?)
+        } else {
+            self.expect(exp!(Semi))?;
+            None
+        })
+    }
+
+    fn parse_impl_delegation(
+        &mut self,
+        span: Span,
+        attrs: &mut AttrVec,
+        defaultness: Defaultness,
+    ) -> PResult<'a, ItemKind> {
+        let mut impl_item = self.parse_item_impl(attrs, defaultness, true)?;
+        let ItemKind::Impl(Impl { items, of_trait, .. }) = &mut impl_item else { unreachable!() };
+
+        let until_expr_span = span.to(self.prev_token.span);
+
+        let Some(of_trait) = of_trait else {
+            return Err(self
+                .dcx()
+                .create_err(errors::ImplReuseInherentImpl { span: until_expr_span }));
+        };
+
+        let body = self.parse_delegation_body()?;
+        let whole_reuse_span = span.to(self.prev_token.span);
+
+        items.push(Box::new(AssocItem {
+            id: DUMMY_NODE_ID,
+            attrs: Default::default(),
+            span: whole_reuse_span,
+            tokens: None,
+            vis: Visibility {
+                kind: VisibilityKind::Inherited,
+                span: whole_reuse_span,
+                tokens: None,
+            },
+            kind: AssocItemKind::DelegationMac(Box::new(DelegationMac {
+                qself: None,
+                prefix: of_trait.trait_ref.path.clone(),
+                suffixes: None,
+                body,
+            })),
+        }));
+
+        Ok(impl_item)
+    }
+
+    fn parse_path_like_delegation(&mut self) -> PResult<'a, ItemKind> {
         let (qself, path) = if self.eat_lt() {
             let (qself, path) = self.parse_qpath(PathStyle::Expr)?;
             (Some(qself), path)
@@ -2812,43 +2679,35 @@ impl<'a> Parser<'a> {
         let rename = |this: &mut Self| {
             Ok(if this.eat_keyword(exp!(As)) { Some(this.parse_ident()?) } else { None })
         };
-        let body = |this: &mut Self| {
-            Ok(if this.check(exp!(OpenBrace)) {
-                Some(this.parse_block()?)
-            } else {
-                this.expect(exp!(Semi))?;
-                None
-            })
-        };
 
-        let item_kind = if self.eat_path_sep() {
+        Ok(if self.eat_path_sep() {
             let suffixes = if self.eat(exp!(Star)) {
                 None
             } else {
                 let parse_suffix = |p: &mut Self| Ok((p.parse_path_segment_ident()?, rename(p)?));
                 Some(self.parse_delim_comma_seq(exp!(OpenBrace), exp!(CloseBrace), parse_suffix)?.0)
             };
-            let deleg = DelegationMac { qself, prefix: path, suffixes, body: body(self)? };
-            ItemKind::DelegationMac(Box::new(deleg))
+
+            ItemKind::DelegationMac(Box::new(DelegationMac {
+                qself,
+                prefix: path,
+                suffixes,
+                body: self.parse_delegation_body()?,
+            }))
         } else {
             let rename = rename(self)?;
             let ident = rename.unwrap_or_else(|| path.segments.last().unwrap().ident);
-            let deleg = Delegation {
+
+            ItemKind::Delegation(Box::new(Delegation {
                 id: DUMMY_NODE_ID,
                 qself,
                 path,
                 ident,
                 rename,
-                body: body(self)?,
+                body: self.parse_delegation_body()?,
                 from_glob: false,
-            };
-            ItemKind::Delegation(Box::new(deleg))
-        };
-
-        let span = span.to(self.prev_token.span);
-        self.psess.gated_spans.gate(sym::fn_delegation, span);
-
-        Ok(item_kind)
+            }))
+        })
     }
 
     fn parse_item_list<T>(
@@ -3068,7 +2927,7 @@ impl<'a> Parser<'a> {
         force_collect: ForceCollect,
     ) -> PResult<'a, Option<Option<Box<AssocItem>>>> {
         let fn_parse_mode =
-            FnParseMode { req_name: |_| true, context: FnContext::Impl, req_body: true };
+            FnParseMode { req_name: |_, _| true, context: FnContext::Impl, req_body: true };
         self.parse_assoc_item(fn_parse_mode, force_collect)
     }
 
@@ -3077,7 +2936,7 @@ impl<'a> Parser<'a> {
         force_collect: ForceCollect,
     ) -> PResult<'a, Option<Option<Box<AssocItem>>>> {
         let fn_parse_mode = FnParseMode {
-            req_name: |edition| edition >= Edition::Edition2018,
+            req_name: |edition, _| edition >= Edition::Edition2018,
             context: FnContext::Trait,
             req_body: false,
         };
@@ -3104,12 +2963,13 @@ impl<'a> Parser<'a> {
                             define_opaque,
                         }) => {
                             self.dcx().emit_err(errors::AssociatedStaticItemNotAllowed { span });
+                            let rhs = expr.map(ConstItemRhs::Body);
                             AssocItemKind::Const(Box::new(ConstItem {
                                 defaultness: Defaultness::Final,
                                 ident,
                                 generics: Generics::default(),
                                 ty,
-                                expr,
+                                rhs,
                                 define_opaque,
                             }))
                         }
@@ -3336,14 +3196,17 @@ impl<'a> Parser<'a> {
         &mut self,
         force_collect: ForceCollect,
     ) -> PResult<'a, Option<Option<Box<ForeignItem>>>> {
-        let fn_parse_mode =
-            FnParseMode { req_name: |_| true, context: FnContext::Free, req_body: false };
+        let fn_parse_mode = FnParseMode {
+            req_name: |_, is_dot_dot_dot| is_dot_dot_dot == IsDotDotDot::No,
+            context: FnContext::Free,
+            req_body: false,
+        };
         Ok(self.parse_item_(fn_parse_mode, force_collect)?.map(
             |Item { attrs, id, span, vis, kind, tokens }| {
                 let kind = match ForeignItemKind::try_from(kind) {
                     Ok(kind) => kind,
                     Err(kind) => match kind {
-                        ItemKind::Const(box ConstItem { ident, ty, expr, .. }) => {
+                        ItemKind::Const(box ConstItem { ident, ty, rhs, .. }) => {
                             let const_span = Some(span.with_hi(ident.span.lo()))
                                 .filter(|span| span.can_be_used_for_suggestions());
                             self.dcx().emit_err(errors::ExternItemCannotBeConst {
@@ -3354,7 +3217,10 @@ impl<'a> Parser<'a> {
                                 ident,
                                 ty,
                                 mutability: Mutability::Not,
-                                expr,
+                                expr: rhs.map(|b| match b {
+                                    ConstItemRhs::TypeConst(anon_const) => anon_const.value,
+                                    ConstItemRhs::Body(expr) => expr,
+                                }),
                                 safety: Safety::Default,
                                 define_opaque: None,
                             }))
@@ -3415,19 +3281,28 @@ impl<'a> Parser<'a> {
             == Some(true)
     }
 
-    fn is_static_global(&mut self) -> bool {
-        if self.check_keyword(exp!(Static)) {
+    fn parse_global_static_front_matter(&mut self, case: Case) -> Option<Safety> {
+        let is_global_static = if self.check_keyword_case(exp!(Static), case) {
             // Check if this could be a closure.
             !self.look_ahead(1, |token| {
-                if token.is_keyword(kw::Move) || token.is_keyword(kw::Use) {
+                if token.is_keyword_case(kw::Move, case) || token.is_keyword_case(kw::Use, case) {
                     return true;
                 }
                 matches!(token.kind, token::Or | token::OrOr)
             })
         } else {
             // `$qual static`
-            (self.check_keyword(exp!(Unsafe)) || self.check_keyword(exp!(Safe)))
-                && self.look_ahead(1, |t| t.is_keyword(kw::Static))
+            (self.check_keyword_case(exp!(Unsafe), case)
+                || self.check_keyword_case(exp!(Safe), case))
+                && self.look_ahead(1, |t| t.is_keyword_case(kw::Static, case))
+        };
+
+        if is_global_static {
+            let safety = self.parse_safety(case);
+            let _ = self.eat_keyword_case(exp!(Static), case);
+            Some(safety)
+        } else {
+            None
         }
     }
 
@@ -3441,46 +3316,6 @@ impl<'a> Parser<'a> {
             let span = self.prev_token.span;
             self.dcx().emit_err(errors::ConstLetMutuallyExclusive { span: const_span.to(span) });
         }
-    }
-
-    /// Recover on `const impl` with `const` already eaten.
-    fn recover_const_impl(
-        &mut self,
-        const_span: Span,
-        attrs: &mut AttrVec,
-        defaultness: Defaultness,
-    ) -> PResult<'a, ItemKind> {
-        let impl_span = self.token.span;
-        let err = self.expected_ident_found_err();
-
-        // Only try to recover if this is implementing a trait for a type
-        let mut item_kind = match self.parse_item_impl(attrs, defaultness) {
-            Ok(item_kind) => item_kind,
-            Err(recovery_error) => {
-                // Recovery failed, raise the "expected identifier" error
-                recovery_error.cancel();
-                return Err(err);
-            }
-        };
-
-        match &mut item_kind {
-            ItemKind::Impl(Impl { of_trait: Some(of_trait), .. }) => {
-                of_trait.constness = Const::Yes(const_span);
-
-                let before_trait = of_trait.trait_ref.path.span.shrink_to_lo();
-                let const_up_to_impl = const_span.with_hi(impl_span.lo());
-                err.with_multipart_suggestion(
-                    "you might have meant to write a const trait impl",
-                    vec![(const_up_to_impl, "".to_owned()), (before_trait, "const ".to_owned())],
-                    Applicability::MaybeIncorrect,
-                )
-                .emit();
-            }
-            ItemKind::Impl { .. } => return Err(err),
-            _ => unreachable!(),
-        }
-
-        Ok(item_kind)
     }
 
     /// Parse a static item with the prefix `"static" "mut"?` already parsed and stored in
@@ -3525,7 +3360,8 @@ impl<'a> Parser<'a> {
     /// ```
     fn parse_const_item(
         &mut self,
-    ) -> PResult<'a, (Ident, Generics, Box<Ty>, Option<Box<ast::Expr>>)> {
+        attrs: &[Attribute],
+    ) -> PResult<'a, (Ident, Generics, Box<Ty>, Option<ast::ConstItemRhs>)> {
         let ident = self.parse_ident_or_underscore()?;
 
         let mut generics = self.parse_generics()?;
@@ -3552,7 +3388,15 @@ impl<'a> Parser<'a> {
         let before_where_clause =
             if self.may_recover() { self.parse_where_clause()? } else { WhereClause::default() };
 
-        let expr = if self.eat(exp!(Eq)) { Some(self.parse_expr()?) } else { None };
+        let rhs = if self.eat(exp!(Eq)) {
+            if attr::contains_name(attrs, sym::type_const) {
+                Some(ConstItemRhs::TypeConst(self.parse_const_arg()?))
+            } else {
+                Some(ConstItemRhs::Body(self.parse_expr()?))
+            }
+        } else {
+            None
+        };
 
         let after_where_clause = self.parse_where_clause()?;
 
@@ -3560,18 +3404,18 @@ impl<'a> Parser<'a> {
         // Users may be tempted to write such code if they are still used to the deprecated
         // where-clause location on type aliases and associated types. See also #89122.
         if before_where_clause.has_where_token
-            && let Some(expr) = &expr
+            && let Some(rhs) = &rhs
         {
             self.dcx().emit_err(errors::WhereClauseBeforeConstBody {
                 span: before_where_clause.span,
                 name: ident.span,
-                body: expr.span,
+                body: rhs.span(),
                 sugg: if !after_where_clause.has_where_token {
-                    self.psess.source_map().span_to_snippet(expr.span).ok().map(|body| {
+                    self.psess.source_map().span_to_snippet(rhs.span()).ok().map(|body_s| {
                         errors::WhereClauseBeforeConstBodySugg {
                             left: before_where_clause.span.shrink_to_lo(),
-                            snippet: body,
-                            right: before_where_clause.span.shrink_to_hi().to(expr.span),
+                            snippet: body_s,
+                            right: before_where_clause.span.shrink_to_hi().to(rhs.span()),
                         }
                     })
                 } else {
@@ -3609,7 +3453,7 @@ impl<'a> Parser<'a> {
 
         self.expect_semi()?;
 
-        Ok((ident, generics, ty, expr))
+        Ok((ident, generics, ty, rhs))
     }
 
     /// We were supposed to parse `":" $ty` but the `:` or the type was missing.
@@ -3765,8 +3609,11 @@ impl<'a> Parser<'a> {
                 VariantData::Unit(DUMMY_NODE_ID)
             };
 
-            let disr_expr =
-                if this.eat(exp!(Eq)) { Some(this.parse_expr_anon_const()?) } else { None };
+            let disr_expr = if this.eat(exp!(Eq)) {
+                Some(this.parse_expr_anon_const(|_, _| MgcaDisambiguation::AnonConst)?)
+            } else {
+                None
+            };
 
             let vr = ast::Variant {
                 ident,
@@ -3979,7 +3826,7 @@ impl<'a> Parser<'a> {
                 if p.token == token::Eq {
                     let mut snapshot = p.create_snapshot_for_diagnostic();
                     snapshot.bump();
-                    match snapshot.parse_expr_anon_const() {
+                    match snapshot.parse_expr_anon_const(|_, _| MgcaDisambiguation::AnonConst) {
                         Ok(const_expr) => {
                             let sp = ty.span.shrink_to_hi().to(const_expr.value.span);
                             p.psess.gated_spans.gate(sym::default_field_values, sp);
@@ -4181,7 +4028,7 @@ impl<'a> Parser<'a> {
         }
         let default = if self.token == token::Eq {
             self.bump();
-            let const_expr = self.parse_expr_anon_const()?;
+            let const_expr = self.parse_expr_anon_const(|_, _| MgcaDisambiguation::AnonConst)?;
             let sp = ty.span.shrink_to_hi().to(const_expr.value.span);
             self.psess.gated_spans.gate(sym::default_field_values, sp);
             Some(const_expr)
@@ -4212,7 +4059,7 @@ impl<'a> Parser<'a> {
                     Visibility { span: DUMMY_SP, kind: VisibilityKind::Inherited, tokens: None };
                 // We use `parse_fn` to get a span for the function
                 let fn_parse_mode =
-                    FnParseMode { req_name: |_| true, context: FnContext::Free, req_body: true };
+                    FnParseMode { req_name: |_, _| true, context: FnContext::Free, req_body: true };
                 match self.parse_fn(
                     &mut AttrVec::new(),
                     fn_parse_mode,
@@ -4315,7 +4162,10 @@ impl<'a> Parser<'a> {
         };
 
         self.psess.gated_spans.gate(sym::decl_macro, lo.to(self.prev_token.span));
-        Ok(ItemKind::MacroDef(ident, ast::MacroDef { body, macro_rules: false }))
+        Ok(ItemKind::MacroDef(
+            ident,
+            ast::MacroDef { body, macro_rules: false, eii_extern_target: None },
+        ))
     }
 
     /// Is this a possibly malformed start of a `macro_rules! foo` item definition?
@@ -4362,7 +4212,10 @@ impl<'a> Parser<'a> {
         self.eat_semi_for_macro_if_needed(&body);
         self.complain_if_pub_macro(vis, true);
 
-        Ok(ItemKind::MacroDef(ident, ast::MacroDef { body, macro_rules: true }))
+        Ok(ItemKind::MacroDef(
+            ident,
+            ast::MacroDef { body, macro_rules: true, eii_extern_target: None },
+        ))
     }
 
     /// Item macro invocations or `macro_rules!` definitions need inherited visibility.
@@ -4445,8 +4298,16 @@ impl<'a> Parser<'a> {
 /// The function decides if, per-parameter `p`, `p` must have a pattern or just a type.
 ///
 /// This function pointer accepts an edition, because in edition 2015, trait declarations
-/// were allowed to omit parameter names. In 2018, they became required.
-type ReqName = fn(Edition) -> bool;
+/// were allowed to omit parameter names. In 2018, they became required. It also accepts an
+/// `IsDotDotDot` parameter, as `extern` function declarations and function pointer types are
+/// allowed to omit the name of the `...` but regular function items are not.
+type ReqName = fn(Edition, IsDotDotDot) -> bool;
+
+#[derive(Copy, Clone, PartialEq)]
+pub(crate) enum IsDotDotDot {
+    Yes,
+    No,
+}
 
 /// Parsing configuration for functions.
 ///
@@ -4479,6 +4340,9 @@ pub(crate) struct FnParseMode {
     ///     to true.
     ///   * The span is from Edition 2015. In particular, you can get a
     ///     2015 span inside a 2021 crate using macros.
+    ///
+    /// Or if `IsDotDotDot::Yes`, this function will also return `false` if the item being parsed
+    /// is inside an `extern` block.
     pub(super) req_name: ReqName,
     /// The context in which this function is parsed, used for diagnostics.
     /// This indicates the fn is a free function or method and so on.
@@ -4686,6 +4550,34 @@ impl<'a> Parser<'a> {
         };
         attrs.extend(inner_attrs);
         Ok(body)
+    }
+
+    fn check_impl_frontmatter(&mut self, look_ahead: usize) -> bool {
+        const ALL_QUALS: &[Symbol] = &[kw::Const, kw::Unsafe];
+        // In contrast to the loop below, this call inserts `impl` into the
+        // list of expected tokens shown in diagnostics.
+        if self.check_keyword(exp!(Impl)) {
+            return true;
+        }
+        let mut i = 0;
+        while i < ALL_QUALS.len() {
+            let action = self.look_ahead(i + look_ahead, |token| {
+                if token.is_keyword(kw::Impl) {
+                    return Some(true);
+                }
+                if ALL_QUALS.iter().any(|&qual| token.is_keyword(qual)) {
+                    // Ok, we found a legal keyword, keep looking for `impl`
+                    return None;
+                }
+                Some(false)
+            });
+            if let Some(ret) = action {
+                return ret;
+            }
+            i += 1;
+        }
+
+        self.is_keyword_ahead(i, &[kw::Impl])
     }
 
     /// Is the current token the start of an `FnHeader` / not a valid parse?
@@ -5128,11 +5020,25 @@ impl<'a> Parser<'a> {
                 return Ok((res?, Trailing::No, UsePreAttrPos::No));
             }
 
-            let is_name_required = match this.token.kind {
-                token::DotDotDot => false,
-                _ => (fn_parse_mode.req_name)(
-                    this.token.span.with_neighbor(this.prev_token.span).edition(),
-                ),
+            let is_dot_dot_dot = if this.token.kind == token::DotDotDot {
+                IsDotDotDot::Yes
+            } else {
+                IsDotDotDot::No
+            };
+            let is_name_required = (fn_parse_mode.req_name)(
+                this.token.span.with_neighbor(this.prev_token.span).edition(),
+                is_dot_dot_dot,
+            );
+            let is_name_required = if is_name_required && is_dot_dot_dot == IsDotDotDot::Yes {
+                this.psess.buffer_lint(
+                    VARARGS_WITHOUT_PATTERN,
+                    this.token.span,
+                    ast::CRATE_NODE_ID,
+                    errors::VarargsWithoutPattern { span: this.token.span },
+                );
+                false
+            } else {
+                is_name_required
             };
             let (pat, ty) = if is_name_required || this.is_named_param() {
                 debug!("parse_param_general parse_pat (is_name_required:{})", is_name_required);

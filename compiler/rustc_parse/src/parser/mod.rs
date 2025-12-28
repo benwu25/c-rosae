@@ -37,9 +37,9 @@ use rustc_ast::tokenstream::{
 };
 use rustc_ast::util::case::Case;
 use rustc_ast::{
-    self as ast, AnonConst, AttrArgs, AttrId, ByRef, Const, CoroutineKind, DUMMY_NODE_ID,
-    DelimArgs, Expr, ExprKind, Extern, HasAttrs, HasTokens, Mutability, Pinnedness, Recovered,
-    Safety, StrLit, Visibility, VisibilityKind,
+    self as ast, AnonConst, AttrArgs, AttrId, BlockCheckMode, ByRef, Const, CoroutineKind,
+    DUMMY_NODE_ID, DelimArgs, Expr, ExprKind, Extern, HasAttrs, HasTokens, MgcaDisambiguation,
+    Mutability, Recovered, Safety, StrLit, Visibility, VisibilityKind,
 };
 use rustc_ast_pretty::pprust;
 use rustc_data_structures::fx::FxHashMap;
@@ -468,7 +468,7 @@ impl<'a> Parser<'a> {
 
     // Public for rustfmt usage.
     pub fn parse_ident(&mut self) -> PResult<'a, Ident> {
-        self.parse_ident_common(true)
+        self.parse_ident_common(self.may_recover())
     }
 
     fn parse_ident_common(&mut self, recover: bool) -> PResult<'a, Ident> {
@@ -608,7 +608,20 @@ impl<'a> Parser<'a> {
             // Do an ASCII case-insensitive match, because all keywords are ASCII.
             && ident.as_str().eq_ignore_ascii_case(exp.kw.as_str())
         {
-            self.dcx().emit_err(errors::KwBadCase { span: ident.span, kw: exp.kw.as_str() });
+            let kw = exp.kw.as_str();
+            let is_upper = kw.chars().all(char::is_uppercase);
+            let is_lower = kw.chars().all(char::is_lowercase);
+
+            let case = match (is_upper, is_lower) {
+                (true, true) => {
+                    unreachable!("keyword that is both fully upper- and fully lowercase")
+                }
+                (true, false) => errors::Case::Upper,
+                (false, true) => errors::Case::Lower,
+                (false, false) => errors::Case::Mixed,
+            };
+
+            self.dcx().emit_err(errors::KwBadCase { span: ident.span, kw, case });
             self.bump();
             true
         } else {
@@ -716,7 +729,10 @@ impl<'a> Parser<'a> {
     }
 
     fn check_const_arg(&mut self) -> bool {
-        self.check_or_expected(self.token.can_begin_const_arg(), TokenType::Const)
+        let is_mcg_arg = self.check_or_expected(self.token.can_begin_const_arg(), TokenType::Const);
+        let is_mgca_arg = self.is_keyword_ahead(0, &[kw::Const])
+            && self.look_ahead(1, |t| *t == token::OpenBrace);
+        is_mcg_arg || is_mgca_arg
     }
 
     fn check_const_closure(&self) -> bool {
@@ -1288,6 +1304,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_mgca_const_block(&mut self, gate_syntax: bool) -> PResult<'a, AnonConst> {
+        self.expect_keyword(exp!(Const))?;
+        let kw_span = self.token.span;
+        let value = self.parse_expr_block(None, self.token.span, BlockCheckMode::Default)?;
+        if gate_syntax {
+            self.psess.gated_spans.gate(sym::min_generic_const_args, kw_span.to(value.span));
+        }
+        Ok(AnonConst {
+            id: ast::DUMMY_NODE_ID,
+            value,
+            mgca_disambiguation: MgcaDisambiguation::AnonConst,
+        })
+    }
+
     /// Parses inline const expressions.
     fn parse_const_block(&mut self, span: Span, pat: bool) -> PResult<'a, Box<Expr>> {
         self.expect_keyword(exp!(Const))?;
@@ -1295,6 +1325,7 @@ impl<'a> Parser<'a> {
         let anon_const = AnonConst {
             id: DUMMY_NODE_ID,
             value: self.mk_expr(blk.span, ExprKind::Block(blk, None)),
+            mgca_disambiguation: MgcaDisambiguation::AnonConst,
         };
         let blk_span = anon_const.value.span;
         let kind = if pat {
@@ -1317,11 +1348,11 @@ impl<'a> Parser<'a> {
         if self.eat_keyword(exp!(Mut)) { Mutability::Mut } else { Mutability::Not }
     }
 
-    /// Parses reference binding mode (`ref`, `ref mut`, or nothing).
+    /// Parses reference binding mode (`ref`, `ref mut`, `ref pin const`, `ref pin mut`, or nothing).
     fn parse_byref(&mut self) -> ByRef {
         if self.eat_keyword(exp!(Ref)) {
-            // FIXME(pin_ergonomics): support `ref pin const|mut` bindings
-            ByRef::Yes(Pinnedness::Not, self.parse_mutability())
+            let (pinnedness, mutability) = self.parse_pin_and_mut();
+            ByRef::Yes(pinnedness, mutability)
         } else {
             ByRef::No
         }

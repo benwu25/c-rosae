@@ -4,7 +4,7 @@ use std::fmt;
 
 use rustc_abi::ExternAbi;
 use rustc_ast::attr::AttributeExt;
-use rustc_ast::token::CommentKind;
+use rustc_ast::token::DocFragmentKind;
 use rustc_ast::util::parser::ExprPrecedence;
 use rustc_ast::{
     self as ast, FloatTy, InlineAsmOptions, InlineAsmTemplatePiece, IntTy, Label, LitIntType,
@@ -403,6 +403,28 @@ impl<'hir> PathSegment<'hir> {
     }
 }
 
+#[derive(Clone, Copy, Debug, HashStable_Generic)]
+pub enum ConstItemRhs<'hir> {
+    Body(BodyId),
+    TypeConst(&'hir ConstArg<'hir>),
+}
+
+impl<'hir> ConstItemRhs<'hir> {
+    pub fn hir_id(&self) -> HirId {
+        match self {
+            ConstItemRhs::Body(body_id) => body_id.hir_id,
+            ConstItemRhs::TypeConst(ct_arg) => ct_arg.hir_id,
+        }
+    }
+
+    pub fn span<'tcx>(&self, tcx: impl crate::intravisit::HirTyCtxt<'tcx>) -> Span {
+        match self {
+            ConstItemRhs::Body(body_id) => tcx.hir_body(*body_id).value.span,
+            ConstItemRhs::TypeConst(ct_arg) => ct_arg.span(),
+        }
+    }
+}
+
 /// A constant that enters the type system, used for arguments to const generics (e.g. array lengths).
 ///
 /// These are distinct from [`AnonConst`] as anon consts in the type system are not allowed
@@ -474,6 +496,7 @@ impl<'hir, Unambig> ConstArg<'hir, Unambig> {
         match self.kind {
             ConstArgKind::Path(path) => path.span(),
             ConstArgKind::Anon(anon) => anon.span,
+            ConstArgKind::Error(span, _) => span,
             ConstArgKind::Infer(span, _) => span,
         }
     }
@@ -490,6 +513,8 @@ pub enum ConstArgKind<'hir, Unambig = ()> {
     /// However, in the future, we'll be using it for all of those.
     Path(QPath<'hir>),
     Anon(&'hir AnonConst),
+    /// Error const
+    Error(Span, ErrorGuaranteed),
     /// This variant is not always used to represent inference consts, sometimes
     /// [`GenericArg::Infer`] is used instead.
     Infer(Span, Unambig),
@@ -1168,10 +1193,15 @@ impl IntoDiagArg for AttrPath {
 }
 
 impl AttrPath {
-    pub fn from_ast(path: &ast::Path) -> Self {
+    pub fn from_ast(path: &ast::Path, lower_span: impl Copy + Fn(Span) -> Span) -> Self {
         AttrPath {
-            segments: path.segments.iter().map(|i| i.ident).collect::<Vec<_>>().into_boxed_slice(),
-            span: path.span,
+            segments: path
+                .segments
+                .iter()
+                .map(|i| Ident { name: i.ident.name, span: lower_span(i.ident.span) })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            span: lower_span(path.span),
         }
     }
 }
@@ -1346,7 +1376,6 @@ impl AttributeExt for Attribute {
     fn doc_str(&self) -> Option<Symbol> {
         match &self {
             Attribute::Parsed(AttributeKind::DocComment { comment, .. }) => Some(*comment),
-            Attribute::Unparsed(_) if self.has_name(sym::doc) => self.value_str(),
             _ => None,
         }
     }
@@ -1356,13 +1385,10 @@ impl AttributeExt for Attribute {
     }
 
     #[inline]
-    fn doc_str_and_comment_kind(&self) -> Option<(Symbol, CommentKind)> {
+    fn doc_str_and_fragment_kind(&self) -> Option<(Symbol, DocFragmentKind)> {
         match &self {
             Attribute::Parsed(AttributeKind::DocComment { kind, comment, .. }) => {
                 Some((*comment, *kind))
-            }
-            Attribute::Unparsed(_) if self.has_name(sym::doc) => {
-                self.value_str().map(|s| (s, CommentKind::Line))
             }
             _ => None,
         }
@@ -1387,6 +1413,14 @@ impl AttributeExt for Attribute {
                     | AttributeKind::ProcMacroDerive { .. }
             )
         )
+    }
+
+    fn is_doc_hidden(&self) -> bool {
+        matches!(self, Attribute::Parsed(AttributeKind::Doc(d)) if d.hidden.is_some())
+    }
+
+    fn is_doc_keyword_or_attribute(&self) -> bool {
+        matches!(self, Attribute::Parsed(AttributeKind::Doc(d)) if d.attribute.is_some() || d.keyword.is_some())
     }
 }
 
@@ -1473,8 +1507,8 @@ impl Attribute {
     }
 
     #[inline]
-    pub fn doc_str_and_comment_kind(&self) -> Option<(Symbol, CommentKind)> {
-        AttributeExt::doc_str_and_comment_kind(self)
+    pub fn doc_str_and_fragment_kind(&self) -> Option<(Symbol, DocFragmentKind)> {
+        AttributeExt::doc_str_and_fragment_kind(self)
     }
 }
 
@@ -1697,7 +1731,9 @@ impl<'hir> Pat<'hir> {
         match self.kind {
             Missing => unreachable!(),
             Wild | Never | Expr(_) | Range(..) | Binding(.., None) | Err(_) => true,
-            Box(s) | Deref(s) | Ref(s, _) | Binding(.., Some(s)) | Guard(s, _) => s.walk_short_(it),
+            Box(s) | Deref(s) | Ref(s, _, _) | Binding(.., Some(s)) | Guard(s, _) => {
+                s.walk_short_(it)
+            }
             Struct(_, fields, _) => fields.iter().all(|field| field.pat.walk_short_(it)),
             TupleStruct(_, s, _) | Tuple(s, _) | Or(s) => s.iter().all(|p| p.walk_short_(it)),
             Slice(before, slice, after) => {
@@ -1724,7 +1760,7 @@ impl<'hir> Pat<'hir> {
         use PatKind::*;
         match self.kind {
             Missing | Wild | Never | Expr(_) | Range(..) | Binding(.., None) | Err(_) => {}
-            Box(s) | Deref(s) | Ref(s, _) | Binding(.., Some(s)) | Guard(s, _) => s.walk_(it),
+            Box(s) | Deref(s) | Ref(s, _, _) | Binding(.., Some(s)) | Guard(s, _) => s.walk_(it),
             Struct(_, fields, _) => fields.iter().for_each(|field| field.pat.walk_(it)),
             TupleStruct(_, s, _) | Tuple(s, _) | Or(s) => s.iter().for_each(|p| p.walk_(it)),
             Slice(before, slice, after) => {
@@ -1765,6 +1801,55 @@ impl<'hir> Pat<'hir> {
             _ => true,
         });
         is_never_pattern
+    }
+
+    /// Whether this pattern constitutes a read of value of the scrutinee that
+    /// it is matching against. This is used to determine whether we should
+    /// perform `NeverToAny` coercions.
+    ///
+    /// See [`expr_guaranteed_to_constitute_read_for_never`][m] for the nuances of
+    /// what happens when this returns true.
+    ///
+    /// [m]: ../../rustc_middle/ty/struct.TyCtxt.html#method.expr_guaranteed_to_constitute_read_for_never
+    pub fn is_guaranteed_to_constitute_read_for_never(&self) -> bool {
+        match self.kind {
+            // Does not constitute a read.
+            PatKind::Wild => false,
+
+            // The guard cannot affect if we make a read or not (it runs after the inner pattern
+            // has matched), therefore it's irrelevant.
+            PatKind::Guard(pat, _) => pat.is_guaranteed_to_constitute_read_for_never(),
+
+            // This is unnecessarily restrictive when the pattern that doesn't
+            // constitute a read is unreachable.
+            //
+            // For example `match *never_ptr { value => {}, _ => {} }` or
+            // `match *never_ptr { _ if false => {}, value => {} }`.
+            //
+            // It is however fine to be restrictive here; only returning `true`
+            // can lead to unsoundness.
+            PatKind::Or(subpats) => {
+                subpats.iter().all(|pat| pat.is_guaranteed_to_constitute_read_for_never())
+            }
+
+            // Does constitute a read, since it is equivalent to a discriminant read.
+            PatKind::Never => true,
+
+            // All of these constitute a read, or match on something that isn't `!`,
+            // which would require a `NeverToAny` coercion.
+            PatKind::Missing
+            | PatKind::Binding(_, _, _, _)
+            | PatKind::Struct(_, _, _)
+            | PatKind::TupleStruct(_, _, _)
+            | PatKind::Tuple(_, _)
+            | PatKind::Box(_)
+            | PatKind::Ref(_, _, _)
+            | PatKind::Deref(_)
+            | PatKind::Expr(_)
+            | PatKind::Range(_, _, _)
+            | PatKind::Slice(_, _, _)
+            | PatKind::Err(_) => true,
+        }
     }
 }
 
@@ -1913,7 +1998,7 @@ pub enum PatKind<'hir> {
     Deref(&'hir Pat<'hir>),
 
     /// A reference pattern (e.g., `&mut (a, b)`).
-    Ref(&'hir Pat<'hir>, Mutability),
+    Ref(&'hir Pat<'hir>, Pinnedness, Mutability),
 
     /// A literal, const block or path.
     Expr(&'hir PatExpr<'hir>),
@@ -3040,7 +3125,7 @@ macro_rules! expect_methods_self_kind {
         $(
             #[track_caller]
             pub fn $name(&self) -> $ret_ty {
-                let $pat = &self.kind else { expect_failed(stringify!($ident), self) };
+                let $pat = &self.kind else { expect_failed(stringify!($name), self) };
                 $ret_val
             }
         )*
@@ -3052,7 +3137,7 @@ macro_rules! expect_methods_self {
         $(
             #[track_caller]
             pub fn $name(&self) -> $ret_ty {
-                let $pat = self else { expect_failed(stringify!($ident), self) };
+                let $pat = self else { expect_failed(stringify!($name), self) };
                 $ret_val
             }
         )*
@@ -3076,8 +3161,8 @@ impl<'hir> TraitItem<'hir> {
     }
 
     expect_methods_self_kind! {
-        expect_const, (&'hir Ty<'hir>, Option<BodyId>),
-            TraitItemKind::Const(ty, body), (ty, *body);
+        expect_const, (&'hir Ty<'hir>, Option<ConstItemRhs<'hir>>),
+            TraitItemKind::Const(ty, rhs), (ty, *rhs);
 
         expect_fn, (&FnSig<'hir>, &TraitFn<'hir>),
             TraitItemKind::Fn(ty, trfn), (ty, trfn);
@@ -3101,7 +3186,7 @@ pub enum TraitFn<'hir> {
 #[derive(Debug, Clone, Copy, HashStable_Generic)]
 pub enum TraitItemKind<'hir> {
     /// An associated constant with an optional value (otherwise `impl`s must contain a value).
-    Const(&'hir Ty<'hir>, Option<BodyId>),
+    Const(&'hir Ty<'hir>, Option<ConstItemRhs<'hir>>),
     /// An associated function with an optional body.
     Fn(FnSig<'hir>, TraitFn<'hir>),
     /// An associated type with (possibly empty) bounds and optional concrete
@@ -3170,9 +3255,9 @@ impl<'hir> ImplItem<'hir> {
     }
 
     expect_methods_self_kind! {
-        expect_const, (&'hir Ty<'hir>, BodyId), ImplItemKind::Const(ty, body), (ty, *body);
-        expect_fn,    (&FnSig<'hir>, BodyId),   ImplItemKind::Fn(ty, body),    (ty, *body);
-        expect_type,  &'hir Ty<'hir>,           ImplItemKind::Type(ty),        ty;
+        expect_const, (&'hir Ty<'hir>, ConstItemRhs<'hir>), ImplItemKind::Const(ty, rhs), (ty, *rhs);
+        expect_fn,    (&FnSig<'hir>, BodyId),               ImplItemKind::Fn(ty, body),   (ty, *body);
+        expect_type,  &'hir Ty<'hir>,                       ImplItemKind::Type(ty),       ty;
     }
 }
 
@@ -3181,7 +3266,7 @@ impl<'hir> ImplItem<'hir> {
 pub enum ImplItemKind<'hir> {
     /// An associated constant of the given type, set to the constant result
     /// of the expression.
-    Const(&'hir Ty<'hir>, BodyId),
+    Const(&'hir Ty<'hir>, ConstItemRhs<'hir>),
     /// An associated function implementation with the given signature and body.
     Fn(FnSig<'hir>, BodyId),
     /// An associated type.
@@ -3653,8 +3738,6 @@ pub enum TyKind<'hir, Unambig = ()> {
     /// We use pointer tagging to represent a `&'hir Lifetime` and `TraitObjectSyntax` pair
     /// as otherwise this type being `repr(C)` would result in `TyKind` increasing in size.
     TraitObject(&'hir [PolyTraitRef<'hir>], TaggedRef<'hir, Lifetime, TraitObjectSyntax>),
-    /// Unused for now.
-    Typeof(&'hir AnonConst),
     /// Placeholder for a type that has failed to be defined.
     Err(rustc_span::ErrorGuaranteed),
     /// Pattern types (`pattern_type!(u32 is 1..)`)
@@ -3814,8 +3897,12 @@ impl IsAsync {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Encodable, Decodable, HashStable_Generic)]
+#[derive(Default)]
 pub enum Defaultness {
-    Default { has_value: bool },
+    Default {
+        has_value: bool,
+    },
+    #[default]
     Final,
 }
 
@@ -4077,6 +4164,9 @@ pub struct Item<'hir> {
     pub span: Span,
     pub vis_span: Span,
     pub has_delayed_lints: bool,
+    /// hint to speed up collection: true if the item is a static or function and has
+    /// either an `EiiImpls` or `EiiExternTarget` attribute
+    pub eii: bool,
 }
 
 impl<'hir> Item<'hir> {
@@ -4110,8 +4200,8 @@ impl<'hir> Item<'hir> {
         expect_static, (Mutability, Ident, &'hir Ty<'hir>, BodyId),
             ItemKind::Static(mutbl, ident, ty, body), (*mutbl, *ident, ty, *body);
 
-        expect_const, (Ident, &'hir Generics<'hir>, &'hir Ty<'hir>, BodyId),
-            ItemKind::Const(ident, generics, ty, body), (*ident, generics, ty, *body);
+        expect_const, (Ident, &'hir Generics<'hir>, &'hir Ty<'hir>, ConstItemRhs<'hir>),
+            ItemKind::Const(ident, generics, ty, rhs), (*ident, generics, ty, *rhs);
 
         expect_fn, (Ident, &FnSig<'hir>, &'hir Generics<'hir>, BodyId),
             ItemKind::Fn { ident, sig, generics, body, .. }, (*ident, sig, generics, *body);
@@ -4159,8 +4249,13 @@ impl<'hir> Item<'hir> {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-#[derive(Encodable, Decodable, HashStable_Generic)]
+#[derive(Encodable, Decodable, HashStable_Generic, Default)]
 pub enum Safety {
+    /// This is the default variant, because the compiler messing up
+    /// metadata encoding and failing to encode a `Safe` flag, means
+    /// downstream crates think a thing is `Unsafe` instead of silently
+    /// treating an unsafe thing as safe.
+    #[default]
     Unsafe,
     Safe,
 }
@@ -4197,7 +4292,9 @@ impl fmt::Display for Safety {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Encodable, Decodable, HashStable_Generic)]
+#[derive(Default)]
 pub enum Constness {
+    #[default]
     Const,
     NotConst,
 }
@@ -4282,7 +4379,7 @@ pub enum ItemKind<'hir> {
     /// A `static` item.
     Static(Mutability, Ident, &'hir Ty<'hir>, BodyId),
     /// A `const` item.
-    Const(Ident, &'hir Generics<'hir>, &'hir Ty<'hir>, BodyId),
+    Const(Ident, &'hir Generics<'hir>, &'hir Ty<'hir>, ConstItemRhs<'hir>),
     /// A function declaration.
     Fn {
         sig: FnSig<'hir>,
@@ -4345,11 +4442,11 @@ pub struct Impl<'hir> {
     pub of_trait: Option<&'hir TraitImplHeader<'hir>>,
     pub self_ty: &'hir Ty<'hir>,
     pub items: &'hir [ImplItemId],
+    pub constness: Constness,
 }
 
 #[derive(Debug, Clone, Copy, HashStable_Generic)]
 pub struct TraitImplHeader<'hir> {
-    pub constness: Constness,
     pub safety: Safety,
     pub polarity: ImplPolarity,
     pub defaultness: Defaultness,
@@ -4520,17 +4617,18 @@ impl<'hir> OwnerNode<'hir> {
             OwnerNode::Item(Item {
                 kind:
                     ItemKind::Static(_, _, _, body)
-                    | ItemKind::Const(_, _, _, body)
+                    | ItemKind::Const(.., ConstItemRhs::Body(body))
                     | ItemKind::Fn { body, .. },
                 ..
             })
             | OwnerNode::TraitItem(TraitItem {
                 kind:
-                    TraitItemKind::Fn(_, TraitFn::Provided(body)) | TraitItemKind::Const(_, Some(body)),
+                    TraitItemKind::Fn(_, TraitFn::Provided(body))
+                    | TraitItemKind::Const(_, Some(ConstItemRhs::Body(body))),
                 ..
             })
             | OwnerNode::ImplItem(ImplItem {
-                kind: ImplItemKind::Fn(_, body) | ImplItemKind::Const(_, body),
+                kind: ImplItemKind::Fn(_, body) | ImplItemKind::Const(_, ConstItemRhs::Body(body)),
                 ..
             }) => Some(*body),
             _ => None,
@@ -4764,6 +4862,11 @@ impl<'hir> Node<'hir> {
                 ForeignItemKind::Static(ty, ..) => Some(ty),
                 _ => None,
             },
+            Node::GenericParam(param) => match param.kind {
+                GenericParamKind::Lifetime { .. } => None,
+                GenericParamKind::Type { default, .. } => default,
+                GenericParamKind::Const { ty, .. } => Some(ty),
+            },
             _ => None,
         }
     }
@@ -4781,7 +4884,7 @@ impl<'hir> Node<'hir> {
             Node::Item(Item {
                 owner_id,
                 kind:
-                    ItemKind::Const(_, _, _, body)
+                    ItemKind::Const(.., ConstItemRhs::Body(body))
                     | ItemKind::Static(.., body)
                     | ItemKind::Fn { body, .. },
                 ..
@@ -4789,12 +4892,13 @@ impl<'hir> Node<'hir> {
             | Node::TraitItem(TraitItem {
                 owner_id,
                 kind:
-                    TraitItemKind::Const(_, Some(body)) | TraitItemKind::Fn(_, TraitFn::Provided(body)),
+                    TraitItemKind::Const(.., Some(ConstItemRhs::Body(body)))
+                    | TraitItemKind::Fn(_, TraitFn::Provided(body)),
                 ..
             })
             | Node::ImplItem(ImplItem {
                 owner_id,
-                kind: ImplItemKind::Const(_, body) | ImplItemKind::Fn(_, body),
+                kind: ImplItemKind::Const(.., ConstItemRhs::Body(body)) | ImplItemKind::Fn(_, body),
                 ..
             }) => Some((owner_id.def_id, *body)),
 
@@ -4914,7 +5018,7 @@ mod size_asserts {
     static_assert_size!(GenericArg<'_>, 16);
     static_assert_size!(GenericBound<'_>, 64);
     static_assert_size!(Generics<'_>, 56);
-    static_assert_size!(Impl<'_>, 40);
+    static_assert_size!(Impl<'_>, 48);
     static_assert_size!(ImplItem<'_>, 88);
     static_assert_size!(ImplItemKind<'_>, 40);
     static_assert_size!(Item<'_>, 88);

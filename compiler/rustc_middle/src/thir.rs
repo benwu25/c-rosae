@@ -14,7 +14,7 @@ use std::ops::Index;
 use std::sync::Arc;
 
 use rustc_abi::{FieldIdx, Integer, Size, VariantIdx};
-use rustc_ast::{AsmMacro, InlineAsmOptions, InlineAsmTemplatePiece};
+use rustc_ast::{AsmMacro, InlineAsmOptions, InlineAsmTemplatePiece, Mutability};
 use rustc_hir as hir;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{BindingMode, ByRef, HirId, MatchSource, RangeEnd};
@@ -32,7 +32,7 @@ use crate::thir::visit::for_each_immediate_subpat;
 use crate::ty::adjustment::PointerCoercion;
 use crate::ty::layout::IntegerExt;
 use crate::ty::{
-    self, AdtDef, CanonicalUserType, CanonicalUserTypeAnnotation, FnSig, GenericArgsRef, List, Ty,
+    self, AdtDef, CanonicalUserType, CanonicalUserTypeAnnotation, FnSig, GenericArgsRef, Ty,
     TyCtxt, UpvarArgs,
 };
 
@@ -256,23 +256,13 @@ pub struct Expr<'tcx> {
     /// The type of this expression
     pub ty: Ty<'tcx>,
 
-    /// The lifetime of this expression if it should be spilled into a
-    /// temporary
-    pub temp_lifetime: TempLifetime,
+    /// The id of the HIR expression whose [temporary scope] should be used for this expression.
+    ///
+    /// [temporary scope]: https://doc.rust-lang.org/reference/destructors.html#temporary-scopes
+    pub temp_scope_id: hir::ItemLocalId,
 
     /// span of the expression in the source
     pub span: Span,
-}
-
-/// Temporary lifetime information for THIR expressions
-#[derive(Clone, Copy, Debug, HashStable)]
-pub struct TempLifetime {
-    /// Lifetime for temporaries as expected.
-    /// This should be `None` in a constant context.
-    pub temp_lifetime: Option<region::Scope>,
-    /// If `Some(lt)`, indicates that the lifetime of this temporary will change to `lt` in a future edition.
-    /// If `None`, then no changes are expected, or lints are disabled.
-    pub backwards_incompatible: Option<region::Scope>,
 }
 
 #[derive(Clone, Debug, HashStable)]
@@ -560,11 +550,6 @@ pub enum ExprKind<'tcx> {
     },
     /// Inline assembly, i.e. `asm!()`.
     InlineAsm(Box<InlineAsmExpr<'tcx>>),
-    /// Field offset (`offset_of!`)
-    OffsetOf {
-        container: Ty<'tcx>,
-        fields: &'tcx List<(VariantIdx, FieldIdx)>,
-    },
     /// An expression taking a reference to a thread local.
     ThreadLocalRef(DefId),
     /// A `yield` expression.
@@ -826,11 +811,11 @@ pub enum PatKind<'tcx> {
     DerefPattern {
         subpattern: Box<Pat<'tcx>>,
         /// Whether the pattern scrutinee needs to be borrowed in order to call `Deref::deref` or
-        /// `DerefMut::deref_mut`, and if so, which. This is `ByRef::No` for deref patterns on
+        /// `DerefMut::deref_mut`, and if so, which. This is `DerefPatBorrowMode::Box` for deref patterns on
         /// boxes; they are lowered using a built-in deref rather than a method call, thus they
         /// don't borrow the scrutinee.
         #[type_visitable(ignore)]
-        borrow: ByRef,
+        borrow: DerefPatBorrowMode,
     },
 
     /// One of the following:
@@ -892,6 +877,12 @@ pub enum PatKind<'tcx> {
     /// An error has been encountered during lowering. We probably shouldn't report more lints
     /// related to this pattern.
     Error(ErrorGuaranteed),
+}
+
+#[derive(Copy, Clone, Debug, HashStable)]
+pub enum DerefPatBorrowMode {
+    Borrow(Mutability),
+    Box,
 }
 
 /// A range pattern.
@@ -1127,7 +1118,7 @@ mod size_asserts {
     use super::*;
     // tidy-alphabetical-start
     static_assert_size!(Block, 48);
-    static_assert_size!(Expr<'_>, 72);
+    static_assert_size!(Expr<'_>, 64);
     static_assert_size!(ExprKind<'_>, 40);
     static_assert_size!(Pat<'_>, 64);
     static_assert_size!(PatKind<'_>, 48);

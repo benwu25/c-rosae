@@ -16,11 +16,11 @@ fn check_with_config(
     expect: Expect,
 ) {
     let (db, position) = crate::tests::position(ra_fixture);
-    let (ctx, analysis) =
-        crate::context::CompletionContext::new(&db, position, &config, None).unwrap();
+    hir::attach_db(&db, || {
+        let (ctx, analysis) =
+            crate::context::CompletionContext::new(&db, position, &config, None).unwrap();
 
-    let mut acc = crate::completions::Completions::default();
-    hir::attach_db(ctx.db, || {
+        let mut acc = crate::completions::Completions::default();
         if let CompletionAnalysis::Name(NameContext { kind: NameKind::IdentPat(pat_ctx), .. }) =
             &analysis
         {
@@ -42,9 +42,9 @@ fn check_with_config(
                 _ => (),
             }
         }
-    });
 
-    expect.assert_eq(&super::render_completion_list(Vec::from(acc)));
+        expect.assert_eq(&super::render_completion_list(Vec::from(acc)));
+    });
 }
 
 #[test]
@@ -780,8 +780,8 @@ fn main() {
 }
 "#,
         expect![[r#"
-            ct SPECIAL_CONST (use dep::test_mod::TestTrait)           u8 DEPRECATED
             fn weird_function() (use dep::test_mod::TestTrait)      fn() DEPRECATED
+            ct SPECIAL_CONST (use dep::test_mod::TestTrait)           u8 DEPRECATED
             me random_method(…) (use dep::test_mod::TestTrait) fn(&self) DEPRECATED
         "#]],
     );
@@ -1951,5 +1951,27 @@ fn foo() {
 }
         "#,
         expect![""],
+    );
+}
+
+#[test]
+fn multiple_matches_with_qualifier() {
+    check(
+        r#"
+//- /foo.rs crate:foo
+pub mod env {
+    pub fn var() {}
+    pub fn _var() {}
+}
+
+//- /bar.rs crate:bar deps:foo
+fn main() {
+    env::var$0
+}
+    "#,
+        expect![[r#"
+            fn _var() (use foo::env) fn()
+            fn var() (use foo::env)  fn()
+        "#]],
     );
 }

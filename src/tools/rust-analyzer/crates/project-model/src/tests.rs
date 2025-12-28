@@ -199,6 +199,15 @@ fn rust_project_cfg_groups() {
 }
 
 #[test]
+fn rust_project_crate_attrs() {
+    let (crate_graph, _proc_macros) = load_rust_project("crate-attrs.json");
+    check_crate_graph(
+        crate_graph,
+        expect_file!["../test_data/output/rust_project_crate_attrs.txt"],
+    );
+}
+
+#[test]
 fn crate_graph_dedup_identical() {
     let (mut crate_graph, proc_macros) = load_cargo("regex-metadata.json");
 
@@ -238,12 +247,8 @@ fn smoke_test_real_sysroot_cargo() {
     );
     let cwd = AbsPathBuf::assert_utf8(temp_dir().join("smoke_test_real_sysroot_cargo"));
     std::fs::create_dir_all(&cwd).unwrap();
-    let loaded_sysroot = sysroot.load_workspace(
-        &RustSourceWorkspaceConfig::default_cargo(),
-        false,
-        &Utf8PathBuf::default(),
-        &|_| (),
-    );
+    let loaded_sysroot =
+        sysroot.load_workspace(&RustSourceWorkspaceConfig::default_cargo(), false, &|_| ());
     if let Some(loaded_sysroot) = loaded_sysroot {
         sysroot.set_workspace(loaded_sysroot);
     }

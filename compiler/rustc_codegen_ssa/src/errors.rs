@@ -750,12 +750,6 @@ pub(crate) struct MultipleMainFunctions {
 }
 
 #[derive(Diagnostic)]
-#[diag(codegen_ssa_invalid_windows_subsystem)]
-pub(crate) struct InvalidWindowsSubsystem {
-    pub subsystem: Symbol,
-}
-
-#[derive(Diagnostic)]
 #[diag(codegen_ssa_shuffle_indices_evaluation)]
 pub(crate) struct ShuffleIndicesEvaluation {
     #[primary_span]
@@ -1099,6 +1093,14 @@ pub enum InvalidMonomorphization<'tcx> {
         name: Symbol,
         expected_element: Ty<'tcx>,
         vector_type: Ty<'tcx>,
+    },
+
+    #[diag(codegen_ssa_invalid_monomorphization_non_scalable_type, code = E0511)]
+    NonScalableType {
+        #[primary_span]
+        span: Span,
+        name: Symbol,
+        ty: Ty<'tcx>,
     },
 }
 

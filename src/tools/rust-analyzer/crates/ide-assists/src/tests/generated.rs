@@ -70,6 +70,27 @@ enum TheEnum {
 }
 
 #[test]
+fn doctest_add_explicit_method_call_deref() {
+    check_doc_test(
+        "add_explicit_method_call_deref",
+        r#####"
+struct Foo;
+impl Foo { fn foo(&self) {} }
+fn test() {
+    Foo$0.$0foo();
+}
+"#####,
+        r#####"
+struct Foo;
+impl Foo { fn foo(&self) {} }
+fn test() {
+    (&Foo).foo();
+}
+"#####,
+    )
+}
+
+#[test]
 fn doctest_add_explicit_type() {
     check_doc_test(
         "add_explicit_type",
@@ -183,9 +204,9 @@ fn main() {
 "#####,
         r#####"
 fn main() {
-    'l: loop {
-        break 'l;
-        continue 'l;
+    ${1:'l}: loop {
+        break ${2:'l};
+        continue ${0:'l};
     }
 }
 "#####,
@@ -420,6 +441,19 @@ fn main() {
         println!("foo");
     }
 }
+"#####,
+    )
+}
+
+#[test]
+fn doctest_convert_char_literal() {
+    check_doc_test(
+        "convert_char_literal",
+        r#####"
+const _: char = 'a'$0;
+"#####,
+        r#####"
+const _: char = '\x61';
 "#####,
     )
 }
@@ -732,6 +766,29 @@ fn main() {
 }
 
 #[test]
+fn doctest_convert_range_for_to_while() {
+    check_doc_test(
+        "convert_range_for_to_while",
+        r#####"
+fn foo() {
+    $0for i in 3..7 {
+        foo(i);
+    }
+}
+"#####,
+        r#####"
+fn foo() {
+    let mut i = 3;
+    while i < 7 {
+        foo(i);
+        i += 1;
+    }
+}
+"#####,
+    )
+}
+
+#[test]
 fn doctest_convert_to_guarded_return() {
     check_doc_test(
         "convert_to_guarded_return",
@@ -750,6 +807,26 @@ fn main() {
     }
     foo();
     bar();
+}
+"#####,
+    )
+}
+
+#[test]
+fn doctest_convert_to_guarded_return_1() {
+    check_doc_test(
+        "convert_to_guarded_return",
+        r#####"
+//- minicore: option
+fn foo() -> Option<i32> { None }
+fn main() {
+    $0let x = foo();
+}
+"#####,
+        r#####"
+fn foo() -> Option<i32> { None }
+fn main() {
+    let Some(x) = foo() else { return };
 }
 "#####,
     )

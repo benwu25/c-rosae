@@ -1,6 +1,6 @@
 // TODO: add one test for each String.
 
-use crate::parser::item::OUTPUT_NAME;
+use crate::parser::item::OUTPUT_PREFIX;
 
 // Proper primitive types
 // i8, i16, i32, i64, i128 and isize
@@ -787,7 +787,7 @@ pub(crate) fn build_print_xfield_for_vec(field_name: String, basic_type: String)
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[1]);
     res.push_str(&basic_type);
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[2]);
-    res.push_str(&*OUTPUT_NAME.lock().unwrap());
+    res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[3]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[4]);
@@ -877,7 +877,7 @@ pub(crate) fn build_print_xfield(field_name: String, basic_type: String) -> Stri
     res.push_str(DTRACE_PRINT_XFIELDS[1]);
     res.push_str(&basic_type);
     res.push_str(DTRACE_PRINT_XFIELDS[2]);
-    res.push_str(&*OUTPUT_NAME.lock().unwrap());
+    res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
     res.push_str(DTRACE_PRINT_XFIELDS[3]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS[4]);
@@ -914,7 +914,7 @@ pub(crate) fn build_print_xfield_string(field_name: String, basic_type: String) 
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[1]);
     res.push_str(&basic_type);
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[2]);
-    res.push_str(&*OUTPUT_NAME.lock().unwrap());
+    res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[3]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[4]);
@@ -938,21 +938,6 @@ pub(crate) fn build_pointer_arr(var_name: String) -> String {
 pub(crate) static BUILD_POINTER_ARR_RET: &str = "dtrace_print_pointer(__daikon_ret as *const _ as *const () as usize, String::from(\"return\"));";
 pub(crate) fn build_pointer_arr_ret() -> String {
     String::from(BUILD_POINTER_ARR_RET)
-}
-
-pub(crate) static DTRACE_PRINT_FIELDS_NOOP: &str =
-    "pub fn dtrace_print_fields(&self, _depth: i32, _prefix: String) {}";
-pub(crate) fn build_dtrace_print_fields_noop() -> String {
-    String::from(DTRACE_PRINT_FIELDS_NOOP)
-}
-
-pub(crate) static DTRACE_PRINT_FIELDS_VEC_NOOP: [&str; 2] =
-    ["pub fn dtrace_print_fields_vec(_v: &Vec<&", ">, _depth: i32, _prefix: String) {}"];
-pub(crate) fn build_dtrace_print_fields_vec_noop(basic_struct: String) -> String {
-    let mut res = String::from(DTRACE_PRINT_FIELDS_VEC_NOOP[0]);
-    res.push_str(&basic_struct);
-    res.push_str(DTRACE_PRINT_FIELDS_VEC_NOOP[1]);
-    res
 }
 
 // only end fn __skip because we will smash a tmp vec loop on the front.
@@ -983,16 +968,6 @@ pub(crate) fn build_print_string_vec(tmp_name: String, var_name: String) -> Stri
 pub(crate) static BUILD_A_IMPL_BLOCK: &str = "impl __skip {}";
 pub(crate) fn base_impl() -> String {
     String::from(BUILD_A_IMPL_BLOCK)
-}
-
-pub(crate) static FABRICATE_TYPE_FOR_IMPL: [&str; 3] = ["fn __skip() -> ", " {}\nstruct ", "{}"];
-pub(crate) fn build_phony_ret(struct_name: String) -> String {
-    let mut res = String::from(FABRICATE_TYPE_FOR_IMPL[0]);
-    res.push_str(&struct_name);
-    res.push_str(FABRICATE_TYPE_FOR_IMPL[1]);
-    res.push_str(&struct_name);
-    res.push_str(FABRICATE_TYPE_FOR_IMPL[2]);
-    res
 }
 
 pub(crate) static VOID_RETURN: &str = "fn __skip() { return; }";
@@ -1217,7 +1192,7 @@ fn dtrace_newline() {
 pub(crate) fn daikon_lib() -> String {
     let mut res = String::from(DAIKON_LIB[0]);
     for i in 1..DAIKON_LIB.len() {
-        res.push_str(&*OUTPUT_NAME.lock().unwrap());
+        res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
         res.push_str(DAIKON_LIB[i]);
     }
     res

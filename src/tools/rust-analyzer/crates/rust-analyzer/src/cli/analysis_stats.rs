@@ -11,7 +11,7 @@ use std::{
 use cfg::{CfgAtom, CfgDiff};
 use hir::{
     Adt, AssocItem, Crate, DefWithBody, FindPathConfig, HasCrate, HasSource, HirDisplay, ModuleDef,
-    Name,
+    Name, crate_lang_items,
     db::{DefDatabase, ExpandDatabase, HirDatabase},
     next_solver::{DbInterner, GenericArgs},
 };
@@ -20,6 +20,7 @@ use hir_def::{
     expr_store::BodySourceMap,
     hir::{ExprId, PatId},
 };
+use hir_ty::InferenceResult;
 use ide::{
     Analysis, AnalysisHost, AnnotationConfig, DiagnosticsConfig, Edition, InlayFieldsToResolve,
     InlayHintsConfig, LineCol, RootDatabase,
@@ -145,7 +146,9 @@ impl flags::AnalysisStats {
                     if !source_root.is_library || self.with_deps {
                         let length = db.file_text(file_id).text(db).lines().count();
                         let item_stats = db
-                            .file_item_tree(EditionedFileId::current_edition(db, file_id).into())
+                            .file_item_tree(
+                                EditionedFileId::current_edition_guess_origin(db, file_id).into(),
+                            )
                             .item_tree_stats()
                             .into();
 
@@ -155,7 +158,9 @@ impl flags::AnalysisStats {
                     } else {
                         let length = db.file_text(file_id).text(db).lines().count();
                         let item_stats = db
-                            .file_item_tree(EditionedFileId::current_edition(db, file_id).into())
+                            .file_item_tree(
+                                EditionedFileId::current_edition_guess_origin(db, file_id).into(),
+                            )
                             .item_tree_stats()
                             .into();
 
@@ -200,8 +205,8 @@ impl flags::AnalysisStats {
         let mut num_crates = 0;
         let mut visited_modules = FxHashSet::default();
         let mut visit_queue = Vec::new();
-        for krate in krates {
-            let module = krate.root_module();
+        for &krate in &krates {
+            let module = krate.root_module(db);
             let file_id = module.definition_source_file_id(db);
             let file_id = file_id.original_file(db);
 
@@ -313,6 +318,10 @@ impl flags::AnalysisStats {
         }
 
         hir::attach_db(db, || {
+            if !self.skip_lang_items {
+                self.run_lang_items(db, &krates, verbosity);
+            }
+
             if !self.skip_lowering {
                 self.run_body_lowering(db, &vfs, &bodies, verbosity);
             }
@@ -346,6 +355,7 @@ impl flags::AnalysisStats {
         }
 
         hir::clear_tls_solver_cache();
+        unsafe { hir::collect_ty_garbage() };
 
         let db = host.raw_database_mut();
         db.trigger_lru_eviction();
@@ -370,7 +380,7 @@ impl flags::AnalysisStats {
         let mut all = 0;
         let mut fail = 0;
         for &a in adts {
-            let interner = DbInterner::new_with(db, Some(a.krate(db).base()), None);
+            let interner = DbInterner::new_no_crate(db);
             let generic_params = db.generic_params(a.into());
             if generic_params.iter_type_or_consts().next().is_some()
                 || generic_params.iter_lt().next().is_some()
@@ -381,8 +391,12 @@ impl flags::AnalysisStats {
             all += 1;
             let Err(e) = db.layout_of_adt(
                 hir_def::AdtId::from(a),
-                GenericArgs::new_from_iter(interner, []),
-                db.trait_environment(a.into()),
+                GenericArgs::empty(interner).store(),
+                hir_ty::ParamEnvAndCrate {
+                    param_env: db.trait_environment(a.into()),
+                    krate: a.krate(db).into(),
+                }
+                .store(),
             ) else {
                 continue;
             };
@@ -737,7 +751,7 @@ impl flags::AnalysisStats {
                 .par_iter()
                 .map_with(db.clone(), |snap, &body| {
                     snap.body(body.into());
-                    snap.infer(body.into());
+                    InferenceResult::for_body(snap, body.into());
                 })
                 .count();
             eprintln!("{:<20} {}", "Parallel Inference:", inference_sw.elapsed());
@@ -757,7 +771,7 @@ impl flags::AnalysisStats {
         for &body_id in bodies {
             let name = body_id.name(db).unwrap_or_else(Name::missing);
             let module = body_id.module(db);
-            let display_target = module.krate().to_display_target(db);
+            let display_target = module.krate(db).to_display_target(db);
             if let Some(only_name) = self.only.as_deref()
                 && name.display(db, Edition::LATEST).to_string() != only_name
                 && full_name(db, body_id, module) != only_name
@@ -794,7 +808,8 @@ impl flags::AnalysisStats {
             }
             bar.set_message(msg);
             let body = db.body(body_id.into());
-            let inference_result = catch_unwind(AssertUnwindSafe(|| db.infer(body_id.into())));
+            let inference_result =
+                catch_unwind(AssertUnwindSafe(|| InferenceResult::for_body(db, body_id.into())));
             let inference_result = match inference_result {
                 Ok(inference_result) => inference_result,
                 Err(p) => {
@@ -817,7 +832,7 @@ impl flags::AnalysisStats {
             let (previous_exprs, previous_unknown, previous_partially_unknown) =
                 (num_exprs, num_exprs_unknown, num_exprs_partially_unknown);
             for (expr_id, _) in body.exprs() {
-                let ty = &inference_result[expr_id];
+                let ty = inference_result.expr_ty(expr_id);
                 num_exprs += 1;
                 let unknown_or_partial = if ty.is_ty_error() {
                     num_exprs_unknown += 1;
@@ -884,15 +899,15 @@ impl flags::AnalysisStats {
                                 start.col,
                                 end.line + 1,
                                 end.col,
-                                mismatch.expected.display(db, display_target),
-                                mismatch.actual.display(db, display_target)
+                                mismatch.expected.as_ref().display(db, display_target),
+                                mismatch.actual.as_ref().display(db, display_target)
                             ));
                         } else {
                             bar.println(format!(
                                 "{}: Expected {}, got {}",
                                 name.display(db, Edition::LATEST),
-                                mismatch.expected.display(db, display_target),
-                                mismatch.actual.display(db, display_target)
+                                mismatch.expected.as_ref().display(db, display_target),
+                                mismatch.actual.as_ref().display(db, display_target)
                             ));
                         }
                     }
@@ -900,8 +915,8 @@ impl flags::AnalysisStats {
                         println!(
                             r#"{},mismatch,"{}","{}""#,
                             location_csv_expr(db, vfs, &sm(), expr_id),
-                            mismatch.expected.display(db, display_target),
-                            mismatch.actual.display(db, display_target)
+                            mismatch.expected.as_ref().display(db, display_target),
+                            mismatch.actual.as_ref().display(db, display_target)
                         );
                     }
                 }
@@ -921,7 +936,7 @@ impl flags::AnalysisStats {
             let (previous_pats, previous_unknown, previous_partially_unknown) =
                 (num_pats, num_pats_unknown, num_pats_partially_unknown);
             for (pat_id, _) in body.pats() {
-                let ty = &inference_result[pat_id];
+                let ty = inference_result.pat_ty(pat_id);
                 num_pats += 1;
                 let unknown_or_partial = if ty.is_ty_error() {
                     num_pats_unknown += 1;
@@ -986,15 +1001,15 @@ impl flags::AnalysisStats {
                                 start.col,
                                 end.line + 1,
                                 end.col,
-                                mismatch.expected.display(db, display_target),
-                                mismatch.actual.display(db, display_target)
+                                mismatch.expected.as_ref().display(db, display_target),
+                                mismatch.actual.as_ref().display(db, display_target)
                             ));
                         } else {
                             bar.println(format!(
                                 "{}: Expected {}, got {}",
                                 name.display(db, Edition::LATEST),
-                                mismatch.expected.display(db, display_target),
-                                mismatch.actual.display(db, display_target)
+                                mismatch.expected.as_ref().display(db, display_target),
+                                mismatch.actual.as_ref().display(db, display_target)
                             ));
                         }
                     }
@@ -1002,8 +1017,8 @@ impl flags::AnalysisStats {
                         println!(
                             r#"{},mismatch,"{}","{}""#,
                             location_csv_pat(db, vfs, &sm(), pat_id),
-                            mismatch.expected.display(db, display_target),
-                            mismatch.actual.display(db, display_target)
+                            mismatch.expected.as_ref().display(db, display_target),
+                            mismatch.actual.as_ref().display(db, display_target)
                         );
                     }
                 }
@@ -1109,6 +1124,26 @@ impl flags::AnalysisStats {
         report_metric("body lowering time", body_lowering_time.time.as_millis() as u64, "ms");
     }
 
+    fn run_lang_items(&self, db: &RootDatabase, crates: &[Crate], verbosity: Verbosity) {
+        let mut bar = match verbosity {
+            Verbosity::Quiet | Verbosity::Spammy => ProgressReport::hidden(),
+            _ if self.output.is_some() => ProgressReport::hidden(),
+            _ => ProgressReport::new(crates.len()),
+        };
+
+        let mut sw = self.stop_watch();
+        bar.tick();
+        for &krate in crates {
+            crate_lang_items(db, krate.into());
+            bar.inc(1);
+        }
+
+        bar.finish_and_clear();
+        let time = sw.elapsed();
+        eprintln!("{:<20} {}", "Crate lang items:", time);
+        report_metric("crate lang items time", time.time.as_millis() as u64, "ms");
+    }
+
     /// Invariant: `file_ids` must be sorted and deduped before passing into here
     fn run_ide_things(
         &self,
@@ -1172,6 +1207,7 @@ impl flags::AnalysisStats {
                     sized_bound: false,
                     discriminant_hints: ide::DiscriminantHints::Always,
                     parameter_hints: true,
+                    parameter_hints_for_missing_arguments: false,
                     generic_parameter_hints: ide::GenericParameterHints {
                         type_hints: true,
                         lifetime_hints: true,
@@ -1186,8 +1222,10 @@ impl flags::AnalysisStats {
                     closure_capture_hints: true,
                     binding_mode_hints: true,
                     implicit_drop_hints: true,
+                    implied_dyn_trait_hints: true,
                     lifetime_elision_hints: ide::LifetimeElisionHints::Always,
                     param_names_for_lifetime_elision_hints: true,
+                    hide_inferred_type_hints: false,
                     hide_named_constructor_hints: false,
                     hide_closure_initialization_hints: false,
                     hide_closure_parameter_hints: false,
@@ -1214,6 +1252,7 @@ impl flags::AnalysisStats {
             annotate_method_references: false,
             annotate_enum_variant_references: false,
             location: ide::AnnotationLocation::AboveName,
+            filter_adjacent_derive_implementations: false,
             minicore: MiniCore::default(),
         };
         for &file_id in file_ids {
@@ -1254,7 +1293,7 @@ impl flags::AnalysisStats {
 
 fn full_name(db: &RootDatabase, body_id: DefWithBody, module: hir::Module) -> String {
     module
-        .krate()
+        .krate(db)
         .display_name(db)
         .map(|it| it.canonical_name().as_str().to_owned())
         .into_iter()

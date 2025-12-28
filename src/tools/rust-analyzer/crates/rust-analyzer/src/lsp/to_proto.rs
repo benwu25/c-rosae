@@ -26,7 +26,7 @@ use serde_json::to_value;
 use vfs::AbsPath;
 
 use crate::{
-    config::{CallInfoConfig, Config},
+    config::{CallInfoConfig, ClientCommandsConfig, Config},
     global_state::GlobalStateSnapshot,
     line_index::{LineEndings, LineIndex, PositionEncoding},
     lsp::{
@@ -119,7 +119,7 @@ pub(crate) fn diagnostic_severity(severity: Severity) -> lsp_types::DiagnosticSe
     }
 }
 
-pub(crate) fn documentation(documentation: Documentation) -> lsp_types::Documentation {
+pub(crate) fn documentation(documentation: Documentation<'_>) -> lsp_types::Documentation {
     let value = format_docs(&documentation);
     let markup_content = lsp_types::MarkupContent { kind: lsp_types::MarkupKind::Markdown, value };
     lsp_types::Documentation::MarkupContent(markup_content)
@@ -258,10 +258,12 @@ pub(crate) fn completion_items(
 
     let max_relevance = items.iter().map(|it| it.relevance.score()).max().unwrap_or_default();
     let mut res = Vec::with_capacity(items.len());
+    let client_commands = config.client_commands();
     for item in items {
         completion_item(
             &mut res,
             config,
+            &client_commands,
             fields_to_resolve,
             line_index,
             version,
@@ -283,6 +285,7 @@ pub(crate) fn completion_items(
 fn completion_item(
     acc: &mut Vec<lsp_types::CompletionItem>,
     config: &Config,
+    client_commands: &ClientCommandsConfig,
     fields_to_resolve: &CompletionFieldsToResolve,
     line_index: &LineIndex,
     version: Option<i32>,
@@ -342,7 +345,7 @@ fn completion_item(
     } else {
         item.deprecated.then(|| vec![lsp_types::CompletionItemTag::DEPRECATED])
     };
-    let command = if item.trigger_call_info && config.client_commands().trigger_parameter_hints {
+    let command = if item.trigger_call_info && client_commands.trigger_parameter_hints {
         if fields_to_resolve.resolve_command {
             something_to_resolve |= true;
             None
@@ -879,6 +882,7 @@ fn semantic_token_type_and_modifiers(
             HlMod::ControlFlow => mods::CONTROL_FLOW,
             HlMod::CrateRoot => mods::CRATE_ROOT,
             HlMod::DefaultLibrary => mods::DEFAULT_LIBRARY,
+            HlMod::Deprecated => mods::DEPRECATED,
             HlMod::Definition => mods::DECLARATION,
             HlMod::Documentation => mods::DOCUMENTATION,
             HlMod::Injected => mods::INJECTED,
@@ -1500,6 +1504,7 @@ pub(crate) fn code_action_kind(kind: AssistKind) -> lsp_types::CodeActionKind {
 
 pub(crate) fn code_action(
     snap: &GlobalStateSnapshot,
+    commands: &ClientCommandsConfig,
     assist: Assist,
     resolve_data: Option<(usize, lsp_types::CodeActionParams, Option<i32>)>,
 ) -> Cancellable<lsp_ext::CodeAction> {
@@ -1513,7 +1518,6 @@ pub(crate) fn code_action(
         command: None,
     };
 
-    let commands = snap.config.client_commands();
     res.command = match assist.command {
         Some(assists::Command::TriggerParameterHints) if commands.trigger_parameter_hints => {
             Some(command::trigger_parameter_hints())
@@ -1971,7 +1975,7 @@ pub(crate) fn markup_content(
         ide::HoverDocFormat::Markdown => lsp_types::MarkupKind::Markdown,
         ide::HoverDocFormat::PlainText => lsp_types::MarkupKind::PlainText,
     };
-    let value = format_docs(&Documentation::new(markup.into()));
+    let value = format_docs(&Documentation::new_owned(markup.into()));
     lsp_types::MarkupContent { kind, value }
 }
 

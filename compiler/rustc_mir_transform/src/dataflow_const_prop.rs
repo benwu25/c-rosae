@@ -211,6 +211,7 @@ impl<'a, 'tcx> ConstAnalysis<'a, 'tcx> {
         state: &mut State<FlatSet<Scalar>>,
     ) -> ValueOrPlace<FlatSet<Scalar>> {
         match operand {
+            Operand::RuntimeChecks(_) => ValueOrPlace::TOP,
             Operand::Constant(box constant) => {
                 ValueOrPlace::Value(self.handle_constant(constant, state))
             }
@@ -463,21 +464,6 @@ impl<'a, 'tcx> ConstAnalysis<'a, 'tcx> {
                     FlatSet::Top => FlatSet::Top,
                 }
             }
-            Rvalue::NullaryOp(null_op, ty) => {
-                let Ok(layout) = self.tcx.layout_of(self.typing_env.as_query_input(*ty)) else {
-                    return ValueOrPlace::Value(FlatSet::Top);
-                };
-                let val = match null_op {
-                    NullOp::OffsetOf(fields) => self
-                        .ecx
-                        .borrow()
-                        .tcx
-                        .offset_of_subfield(self.typing_env, layout, fields.iter())
-                        .bytes(),
-                    _ => return ValueOrPlace::Value(FlatSet::Top),
-                };
-                FlatSet::Elem(Scalar::from_target_usize(val, &self.tcx))
-            }
             Rvalue::Discriminant(place) => state.get_discr(place.as_ref(), &self.map),
             Rvalue::Use(operand) => return self.handle_operand(operand, state),
             Rvalue::CopyForDeref(_) => bug!("`CopyForDeref` in runtime MIR"),
@@ -545,6 +531,7 @@ impl<'a, 'tcx> ConstAnalysis<'a, 'tcx> {
         operand: &Operand<'tcx>,
     ) {
         match operand {
+            Operand::RuntimeChecks(_) => {}
             Operand::Copy(rhs) | Operand::Move(rhs) => {
                 if let Some(rhs) = self.map.find(rhs.as_ref()) {
                     state.insert_place_idx(place, rhs, &self.map);
@@ -1051,7 +1038,7 @@ impl<'tcx> MutVisitor<'tcx> for Patch<'tcx> {
                     self.super_operand(operand, location)
                 }
             }
-            Operand::Constant(_) => {}
+            Operand::Constant(_) | Operand::RuntimeChecks(_) => {}
         }
     }
 

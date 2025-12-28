@@ -10,9 +10,9 @@ use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_errors::{ColorConfig, LanguageIdentifier, TerminalUrl};
 use rustc_feature::UnstableFeatures;
 use rustc_hashes::Hash64;
-use rustc_macros::{Decodable, Encodable};
+use rustc_macros::{BlobDecodable, Encodable};
 use rustc_span::edition::Edition;
-use rustc_span::{RealFileName, SourceFileHashAlgorithm};
+use rustc_span::{RealFileName, RemapPathScopeComponents, SourceFileHashAlgorithm};
 use rustc_target::spec::{
     CodeModel, FramePointer, LinkerFlavorCli, MergeFunctions, OnBrokenPipe, PanicStrategy,
     RelocModel, RelroLevel, SanitizerSet, SplitDebuginfo, StackProtector, SymbolVisibility,
@@ -22,7 +22,7 @@ use rustc_target::spec::{
 use crate::config::*;
 use crate::search_paths::SearchPath;
 use crate::utils::NativeLib;
-use crate::{EarlyDiagCtxt, lint};
+use crate::{EarlyDiagCtxt, Session, lint};
 
 macro_rules! insert {
     ($opt_name:ident, $opt_expr:expr, $sub_hashes:expr) => {
@@ -75,7 +75,7 @@ pub struct ExtendedTargetModifierInfo {
 
 /// A recorded -Zopt_name=opt_value (or -Copt_name=opt_value)
 /// which alter the ABI or effectiveness of exploit mitigations.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Encodable, Decodable)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Encodable, BlobDecodable)]
 pub struct TargetModifier {
     /// Option enum value
     pub opt: OptionsTargetModifiers,
@@ -111,12 +111,12 @@ mod target_modifier_consistency_check {
         lparsed & tmod_sanitizers == rparsed & tmod_sanitizers
     }
     pub(super) fn sanitizer_cfi_normalize_integers(
-        opts: &Options,
+        sess: &Session,
         l: &TargetModifier,
         r: Option<&TargetModifier>,
     ) -> bool {
         // For kCFI, the helper flag -Zsanitizer-cfi-normalize-integers should also be a target modifier
-        if opts.unstable_opts.sanitizer.contains(SanitizerSet::KCFI) {
+        if sess.sanitizers().contains(SanitizerSet::KCFI) {
             if let Some(r) = r {
                 return l.extend().tech_value == r.extend().tech_value;
             } else {
@@ -133,7 +133,7 @@ impl TargetModifier {
     }
     // Custom consistency check for target modifiers (or default `l.tech_value == r.tech_value`)
     // When other is None, consistency with default value is checked
-    pub fn consistent(&self, opts: &Options, other: Option<&TargetModifier>) -> bool {
+    pub fn consistent(&self, sess: &Session, other: Option<&TargetModifier>) -> bool {
         assert!(other.is_none() || self.opt == other.unwrap().opt);
         match self.opt {
             OptionsTargetModifiers::UnstableOptions(unstable) => match unstable {
@@ -142,7 +142,7 @@ impl TargetModifier {
                 }
                 UnstableOptionsTargetModifiers::sanitizer_cfi_normalize_integers => {
                     return target_modifier_consistency_check::sanitizer_cfi_normalize_integers(
-                        opts, self, other,
+                        sess, self, other,
                     );
                 }
                 _ => {}
@@ -248,7 +248,7 @@ macro_rules! top_level_tmod_enum {
         ($user_value:ident){$($pout:tt)*};
     ) => {
         #[allow(non_camel_case_types)]
-        #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone, Encodable, Decodable)]
+        #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone, Encodable, BlobDecodable)]
         pub enum OptionsTargetModifiers {
             $($variant($substruct_enum)),*
         }
@@ -492,7 +492,9 @@ top_level_options!(
         pretty: Option<PpMode> [UNTRACKED],
 
         /// The (potentially remapped) working directory
+        #[rustc_lint_opt_deny_field_access("use `SourceMap::working_dir` instead of this field")]
         working_dir: RealFileName [TRACKED],
+
         color: ColorConfig [UNTRACKED],
 
         verbose: bool [TRACKED_NO_CRATE_HASH],
@@ -520,7 +522,7 @@ macro_rules! tmod_enum {
         ($user_value:ident){$($pout:tt)*};
     ) => {
         #[allow(non_camel_case_types)]
-        #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone, Encodable, Decodable)]
+        #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone, Encodable, BlobDecodable)]
         pub enum $tmod_enum_name {
             $($eout),*
         }
@@ -806,9 +808,8 @@ mod desc {
     pub(crate) const parse_on_broken_pipe: &str = "either `kill`, `error`, or `inherit`";
     pub(crate) const parse_patchable_function_entry: &str = "either two comma separated integers (total_nops,prefix_nops), with prefix_nops <= total_nops, or one integer (total_nops)";
     pub(crate) const parse_opt_panic_strategy: &str = parse_panic_strategy;
-    pub(crate) const parse_oom_strategy: &str = "either `panic` or `abort`";
     pub(crate) const parse_relro_level: &str = "one of: `full`, `partial`, or `off`";
-    pub(crate) const parse_sanitizers: &str = "comma separated list of sanitizers: `address`, `cfi`, `dataflow`, `hwaddress`, `kcfi`, `kernel-address`, `leak`, `memory`, `memtag`, `safestack`, `shadow-call-stack`, or `thread`";
+    pub(crate) const parse_sanitizers: &str = "comma separated list of sanitizers: `address`, `cfi`, `dataflow`, `hwaddress`, `kcfi`, `kernel-address`, `leak`, `memory`, `memtag`, `safestack`, `shadow-call-stack`, `thread`, or 'realtime'";
     pub(crate) const parse_sanitizer_memory_track_origins: &str = "0, 1, or 2";
     pub(crate) const parse_cfguard: &str =
         "either a boolean (`yes`, `no`, `on`, `off`, etc), `checks`, or `nochecks`";
@@ -864,6 +865,8 @@ mod desc {
     pub(crate) const parse_linker_features: &str =
         "a list of enabled (`+` prefix) and disabled (`-` prefix) features: `lld`";
     pub(crate) const parse_polonius: &str = "either no value or `legacy` (the default), or `next`";
+    pub(crate) const parse_annotate_moves: &str =
+        "either a boolean (`yes`, `no`, `on`, `off`, etc.), or a size limit in bytes";
     pub(crate) const parse_stack_protector: &str =
         "one of (`none` (default), `basic`, `strong`, or `all`)";
     pub(crate) const parse_branch_protection: &str = "a `,` separated combination of `bti`, `gcs`, `pac-ret`, (optionally with `pc`, `b-key`, `leaf` if `pac-ret` is set)";
@@ -947,6 +950,29 @@ pub mod parse {
             }
             _ => false,
         }
+    }
+
+    pub(crate) fn parse_annotate_moves(slot: &mut AnnotateMoves, v: Option<&str>) -> bool {
+        let mut bslot = false;
+        let mut nslot = 0u64;
+
+        *slot = match v {
+            // No value provided: -Z annotate-moves (enable with default limit)
+            None => AnnotateMoves::Enabled(None),
+            // Explicit boolean value provided: -Z annotate-moves=yes/no
+            s @ Some(_) if parse_bool(&mut bslot, s) => {
+                if bslot {
+                    AnnotateMoves::Enabled(None)
+                } else {
+                    AnnotateMoves::Disabled
+                }
+            }
+            // With numeric limit provided: -Z annotate-moves=1234
+            s @ Some(_) if parse_number(&mut nslot, s) => AnnotateMoves::Enabled(Some(nslot)),
+            _ => return false,
+        };
+
+        true
     }
 
     /// Use this for any string option that has a static default.
@@ -1217,15 +1243,6 @@ pub mod parse {
         false
     }
 
-    pub(crate) fn parse_oom_strategy(slot: &mut OomStrategy, v: Option<&str>) -> bool {
-        match v {
-            Some("panic") => *slot = OomStrategy::Panic,
-            Some("abort") => *slot = OomStrategy::Abort,
-            _ => return false,
-        }
-        true
-    }
-
     pub(crate) fn parse_relro_level(slot: &mut Option<RelroLevel>, v: Option<&str>) -> bool {
         match v {
             Some(s) => match s.parse::<RelroLevel>() {
@@ -1253,6 +1270,7 @@ pub mod parse {
                     "thread" => SanitizerSet::THREAD,
                     "hwaddress" => SanitizerSet::HWADDRESS,
                     "safestack" => SanitizerSet::SAFESTACK,
+                    "realtime" => SanitizerSet::REALTIME,
                     _ => return false,
                 }
             }
@@ -1433,8 +1451,27 @@ pub mod parse {
         let mut v: Vec<&str> = v.split(",").collect();
         v.sort_unstable();
         for &val in v.iter() {
-            let variant = match val {
-                "Enable" => Offload::Enable,
+            // Split each entry on '=' if it has an argument
+            let (key, arg) = match val.split_once('=') {
+                Some((k, a)) => (k, Some(a)),
+                None => (val, None),
+            };
+
+            let variant = match key {
+                "Host" => {
+                    if let Some(p) = arg {
+                        Offload::Host(p.to_string())
+                    } else {
+                        return false;
+                    }
+                }
+                "Device" => {
+                    if let Some(_) = arg {
+                        // Device does not accept a value
+                        return false;
+                    }
+                    Offload::Device
+                }
                 _ => {
                     // FIXME(ZuseZ4): print an error saying which value is not recognized
                     return false;
@@ -2198,6 +2235,9 @@ options! {
         "only allow the listed language features to be enabled in code (comma separated)"),
     always_encode_mir: bool = (false, parse_bool, [TRACKED],
         "encode MIR of all functions into the crate metadata (default: no)"),
+    annotate_moves: AnnotateMoves = (AnnotateMoves::Disabled, parse_annotate_moves, [TRACKED],
+        "emit debug info for compiler-generated move and copy operations \
+        to make them visible in profilers. Can be a boolean or a size limit in bytes (default: disabled)"),
     assert_incr_state: Option<String> = (None, parse_opt_string, [UNTRACKED],
         "assert that the incremental cache is in given state: \
          either `loaded` or `not-loaded`."),
@@ -2309,7 +2349,7 @@ options! {
         "emit a section containing stack size metadata (default: no)"),
     emit_thin_lto: bool = (true, parse_bool, [TRACKED],
         "emit the bc module with thin LTO info (default: yes)"),
-    emscripten_wasm_eh: bool = (false, parse_bool, [TRACKED],
+    emscripten_wasm_eh: bool = (true, parse_bool, [TRACKED],
         "Use WebAssembly error handling for wasm32-unknown-emscripten"),
     enforce_type_length_limit: bool = (false, parse_bool, [TRACKED],
         "enforce the type length limit when monomorphizing instances in codegen"),
@@ -2500,8 +2540,6 @@ options! {
         Currently the only option available"),
     on_broken_pipe: OnBrokenPipe = (OnBrokenPipe::Default, parse_on_broken_pipe, [TRACKED],
         "behavior of std::io::ErrorKind::BrokenPipe (SIGPIPE)"),
-    oom: OomStrategy = (OomStrategy::Abort, parse_oom_strategy, [TRACKED],
-        "panic strategy for out-of-memory handling"),
     osx_rpath_install_name: bool = (false, parse_bool, [TRACKED],
         "pass `-install_name @rpath/...` to the macOS linker (default: no)"),
     packed_bundled_libs: bool = (false, parse_bool, [TRACKED],
@@ -2575,6 +2613,7 @@ written to standard error output)"),
     retpoline_external_thunk: bool = (false, parse_bool, [TRACKED TARGET_MODIFIER],
         "enables retpoline-external-thunk, retpoline-indirect-branches and retpoline-indirect-calls \
         target features (default: no)"),
+    #[rustc_lint_opt_deny_field_access("use `Session::sanitizers()` instead of this field")]
     sanitizer: SanitizerSet = (SanitizerSet::empty(), parse_sanitizers, [TRACKED TARGET_MODIFIER],
         "use a sanitizer"),
     sanitizer_cfi_canonical_jump_tables: Option<bool> = (Some(true), parse_opt_bool, [TRACKED],

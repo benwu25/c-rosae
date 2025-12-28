@@ -7,20 +7,29 @@ mod transcriber;
 
 use intern::Symbol;
 use rustc_hash::FxHashMap;
-use span::{Edition, Span};
+use span::Span;
 
-use crate::{ExpandError, ExpandErrorKind, ExpandResult, MatchedArmIndex, parser::MetaVarKind};
+use crate::{
+    ExpandError, ExpandErrorKind, ExpandResult, MacroCallStyle, MatchedArmIndex,
+    parser::MetaVarKind,
+};
 
 pub(crate) fn expand_rules(
+    db: &dyn salsa::Database,
     rules: &[crate::Rule],
     input: &tt::TopSubtree<Span>,
     marker: impl Fn(&mut Span) + Copy,
+    call_style: MacroCallStyle,
     call_site: Span,
-    def_site_edition: Edition,
 ) -> ExpandResult<(tt::TopSubtree<Span>, MatchedArmIndex)> {
     let mut match_: Option<(matcher::Match<'_>, &crate::Rule, usize)> = None;
     for (idx, rule) in rules.iter().enumerate() {
-        let new_match = matcher::match_(&rule.lhs, input, def_site_edition);
+        // Skip any rules that aren't relevant to the call style (fn-like/attr/derive).
+        if call_style != rule.style {
+            continue;
+        }
+
+        let new_match = matcher::match_(db, &rule.lhs, input);
 
         if new_match.err.is_none() {
             // If we find a rule that applies without errors, we're done.
@@ -119,7 +128,10 @@ enum Fragment<'a> {
     #[default]
     Empty,
     /// token fragments are just copy-pasted into the output
-    Tokens(tt::TokenTreesView<'a, Span>),
+    Tokens {
+        tree: tt::TokenTreesView<'a, Span>,
+        origin: TokensOrigin,
+    },
     /// Expr ast fragments are surrounded with `()` on transcription to preserve precedence.
     /// Note that this impl is different from the one currently in `rustc` --
     /// `rustc` doesn't translate fragments into token trees at all.
@@ -147,10 +159,16 @@ impl Fragment<'_> {
     fn is_empty(&self) -> bool {
         match self {
             Fragment::Empty => true,
-            Fragment::Tokens(it) => it.len() == 0,
+            Fragment::Tokens { tree, .. } => tree.len() == 0,
             Fragment::Expr(it) => it.len() == 0,
             Fragment::Path(it) => it.len() == 0,
             Fragment::TokensOwned(it) => it.0.is_empty(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TokensOrigin {
+    Raw,
+    Ast,
 }

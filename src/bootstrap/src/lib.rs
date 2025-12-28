@@ -846,6 +846,10 @@ impl Build {
             features.insert("compiler-builtins-mem");
         }
 
+        if self.config.llvm_enzyme {
+            features.insert("llvm_enzyme");
+        }
+
         features.into_iter().collect::<Vec<_>>().join(" ")
     }
 
@@ -868,6 +872,9 @@ impl Build {
         }
         if self.config.llvm_enzyme {
             features.push("llvm_enzyme");
+        }
+        if self.config.llvm_offload {
+            features.push("llvm_offload");
         }
         // keep in sync with `bootstrap/compile.rs:rustc_cargo_env`
         if self.config.rust_randomize_layout && check("rustc_randomized_layouts") {
@@ -966,10 +973,6 @@ impl Build {
 
     fn enzyme_out(&self, target: TargetSelection) -> PathBuf {
         self.out.join(&*target.triple).join("enzyme")
-    }
-
-    fn gcc_out(&self, target: TargetSelection) -> PathBuf {
-        self.out.join(&*target.triple).join("gcc")
     }
 
     fn lld_out(&self, target: TargetSelection) -> PathBuf {
@@ -1520,21 +1523,6 @@ impl Build {
     /// emulated with QEMU and binaries will need to be shipped to the emulator.
     fn qemu_rootfs(&self, target: TargetSelection) -> Option<&Path> {
         self.config.target_config.get(&target).and_then(|t| t.qemu_rootfs.as_ref()).map(|p| &**p)
-    }
-
-    /// Path to the python interpreter to use
-    fn python(&self) -> &Path {
-        if self.config.host_target.ends_with("apple-darwin") {
-            // Force /usr/bin/python3 on macOS for LLDB tests because we're loading the
-            // LLDB plugin's compiled module which only works with the system python
-            // (namely not Homebrew-installed python)
-            Path::new("/usr/bin/python3")
-        } else {
-            self.config
-                .python
-                .as_ref()
-                .expect("python is required for running LLDB or rustdoc tests")
-        }
     }
 
     /// Temporary directory that extended error information is emitted to.
