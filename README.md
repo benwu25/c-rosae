@@ -7,10 +7,10 @@
 To view the changes from the upstream Rust compiler to this fork, see [https://github.com/benwu25/c-rosae/pull/1](https://github.com/benwu25/c-rosae/pull/1).
 
  * Build the compiler.
-     * `./x setup`
-     * `./x build library/std`
+     * `./x setup`  (Select the option to develop the compiler. See https://rustc-dev-guide.rust-lang.org/building/quickstart.html for more information)
+     * `./x build library/std` or `./x build std`
  * Set up daikon as a toolchain with the stage 1 build.
-     * `rustup toolchain link daikon build/<platform>/stage1`
+     * `rustup toolchain link daikon build/<platform>/stage1` (Substitute your host architecture for \<platform\>, for example `x86_64-unknown-linux-gnu`. Check your `build` directory to find your detected host architecture)
  * Run end-to-end tests:
      * `cd daikon_tests && cargo run`
  * Produce dtrace and decls files in one command via `cargo +daikon run`,
