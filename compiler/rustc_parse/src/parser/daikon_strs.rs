@@ -296,12 +296,6 @@ pub(crate) static DTRACE_PRINT_FIELDS_FOR_FIELD: &str =
 pub(crate) static DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE: &str =
     "
 pub fn dtrace_print_${field_name}(&self, depth: i32, prefix: String) {";
-pub(crate) fn build_dtrace_print_xfield_prologue(field_name: String) -> String {
-    let mut res = String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE[0]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE[1]);
-    res
-}
 
 pub(crate) static DTRACE_PRINT_XFIELD_FOR_FIELD_MID: &str = "
     if depth == 0 {
@@ -502,36 +496,19 @@ pub(crate) static DTRACE_PRINT_STRING_VEC: &str =
     dtrace_print_string_vec(&${tmp_name},
                             String::from(\"${var_name}\"));
 }";
-pub(crate) fn build_print_string_vec(tmp_name: String, var_name: String) -> String {
-    let mut res = String::from(DTRACE_PRINT_STRING_VEC[0]);
-    res.push_str(&tmp_name);
-    res.push_str(DTRACE_PRINT_STRING_VEC[1]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_PRINT_STRING_VEC[2]);
-    res
-}
 
 pub(crate) static BUILD_A_IMPL_BLOCK: &str = "
 impl __skip {}";
-pub(crate) fn base_impl() -> String {
-    String::from(BUILD_A_IMPL_BLOCK)
-}
 
 pub(crate) static VOID_RETURN: &str = "
 fn __skip() {
     return;
 }";
-pub(crate) fn build_void_return() -> String {
-    String::from(VOID_RETURN)
-}
 
 pub(crate) static DTRACE_NEWLINE: &str = "
 fn __skip() {
     dtrace_newline();
 }";
-pub(crate) fn dtrace_newline() -> String {
-    String::from(DTRACE_NEWLINE)
-}
 
 // this NONCE_COUNTER per-file is broken for multi-file non-concurrent programs. It has to be a single counter shared between all the files.
 // Difficult in Rust as there is no easy extern escape like in C. Maybe unsafe.
@@ -540,9 +517,6 @@ use std::io::prelude::*;
 use std::sync::{LazyLock, Mutex};
 use std::str::FromStr;
 static NONCE_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));";
-pub(crate) fn build_imports() -> String {
-    String::from(IMPORTS)
-}
 
 pub(crate) static DAIKON_LIB: &str = 
     "pub fn dtrace_print_pointer_arr<T>(v: &[&T], var_name: String) {
