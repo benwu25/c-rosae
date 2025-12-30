@@ -10,7 +10,7 @@ To view the changes from the upstream Rust compiler to this fork, see [https://g
      * `./x setup`
        * Select the option to develop the compiler. See https://rustc-dev-guide.rust-lang.org/building/quickstart.html for more information.
      * `./x build library/std` or `./x build std`
- * Set up daikon as a toolchain with the stage 1 build.
+ * Set up Daikon as a toolchain with the stage 1 build.
      * `rustup toolchain link daikon build/<platform>/stage1`
 
    `<platform>` is, for example, `x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`;
