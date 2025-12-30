@@ -46,31 +46,44 @@ drop(__unwrap_nonce);
 // Build dtrace entry call for each ppt-enter.
 // $1: ppt-name (e.g. MAIN, FOO)
 pub(crate) static DTRACE_ENTRY: &str =
-    "fn main() { dtrace_entry(\"${ppt_name}:::ENTER\", __daikon_nonce); }";
+    "
+fn main() {
+    dtrace_entry(\"${ppt_name}:::ENTER\", __daikon_nonce);
+}";
 
 // Build dtrace exit call for each ppt-exit.
 // $1: ppt-name.
 // $2: number corresponding to this exit ppt, unique for each within the function.
 pub(crate) static DTRACE_EXIT: &str =
-   "fn main() { dtrace_exit(\"${ppt_name}:::EXIT${exit_num}\", __daikon_nonce); }";
+   "
+fn main() {
+    dtrace_exit(\"${ppt_name}:::EXIT${exit_num}\", __daikon_nonce);
+}";
 
 // Build a call to log a primitive value.
 // $1: Primitive type of the variable.
 // $2: var identifier.
 pub(crate) static DTRACE_PRIM: &str =
-    "fn main() { dtrace_print_prim::<${type}>(${var_name}, String::from(\"${name}\")); }";
+    "
+fn main() {
+    dtrace_print_prim::<${type}>(${var_name}, String::from(\"${name}\"));
+}";
 
 // Build a log statement for a primitive return value.
 // $1: Primitive type of the return value.
 pub(crate) static DTRACE_PRIM_RET: &str =
-    "fn main() { dtrace_print_prim::<${type}>(__daikon_ret, String::from(\"return\")); }";
+    "
+fn main() {
+    dtrace_print_prim::<${type}>(__daikon_ret, String::from(\"return\"));
+}";
 
 // Build log statement for a variable with primitive reference type.
 // $1: Primitive type of the variable.
 // $2: Identifier of the variable.
 // $3: Identifier of the variable (but different).
 pub(crate) static DTRACE_PRIM_REF: &str =
-    "fn main() {
+    "
+fn main() {
     dtrace_print_prim::<${type}>(${type}::from_str(&${var_name}.to_string()).expect(\"Ok\"),
                                  String::from(\"${var_name_2}\"));
 }";
@@ -79,7 +92,10 @@ pub(crate) static DTRACE_PRIM_REF: &str =
 // $1: Identifier for variable.
 // $2: Identifier for variable (but different).
 pub(crate) static DTRACE_PRIM_TOSTRING: &str =
-    "fn main() { dtrace_print_string(${var_name}.to_string(), String::from(\"${var_name_2}\")); }";
+    "
+fn main() {
+    dtrace_print_string(${var_name}.to_string(), String::from(\"${var_name_2}\"));
+}";
 
 // Build log stmt for a String field.
 // $1: Field name.
@@ -119,14 +135,18 @@ pub(crate) static DTRACE_USERDEF_AMPERSAND: &str =
 }";
 
 pub(crate) static DTRACE_USERDEF_RET: &str =
-    "fn __skip() {
+    "
+fn __skip() {
     dtrace_print_pointer(__daikon_ret as *const _ as usize, String::from(\"return\"));
-    __daikon_ret.dtrace_print_fields(${depth}, String::from(\"return\")); }";
+    __daikon_ret.dtrace_print_fields(${depth}, String::from(\"return\"));
+}";
 
 pub(crate) static DTRACE_USERDEF_RET_AMPERSAND: &str =
-    "fn __skip() {
+    "
+fn __skip() {
     dtrace_print_pointer(&__daikon_ret as *const _ as usize, String::from(\"return\"));
-    __daikon_ret.dtrace_print_fields(${depth}, String::from(\"return\")); }";
+    __daikon_ret.dtrace_print_fields(${depth}, String::from(\"return\"));
+}";
 
 pub(crate) static DTRACE_USERDEF_STRUCT: &str =
     "dtrace_print_pointer(self.${field_name} as *const _ as usize, format!(\"{}{}\", prefix, \".${field_name}\"));
@@ -162,9 +182,11 @@ pub(crate) static DTRACE_PRINT_POINTER_VEC: &str =
 
 pub(crate) static DTRACE_VEC_FIELDS: &str =
     // we always mash with a tmp loop, so just close __skip.
-    "${plain_struct}::dtrace_print_fields_vec(&${tmp_vec_name},
+    "
+    ${plain_struct}::dtrace_print_fields_vec(&${tmp_vec_name},
     3,
-    format!(\"{}{}\", String::from(\"${var_name}\"), \"[..]\")); }"; // TODO: That close curly brace looks wrong.
+    format!(\"{}{}\", String::from(\"${var_name}\"), \"[..]\"));
+}";
 
 pub(crate) static DAIKON_TMP_VEC_USERDEF: &str =
     "let mut __daikon_tmp${first_tmp}: Vec<&${type}> = Vec::new();
@@ -208,20 +230,46 @@ fn __skip() {
 
 // TODO: use this for params/returns where you have Vec<Type>.
 pub(crate) static DAIKON_TMP_VEC_AMPERSAND: &str =
-    "fn __skip() { let mut __daikon_tmp${first_tmp}: Vec<&${type}> = Vec::new(); let mut __daikon_tmp${first_tmp} = 0; while __daikon_tmp${next_tmp} < ${var_name}.len() { __daikon_tmp${first_tmp}.push(&${var_name}[__daikon_tmp${next_tmp}]); __daikon_tmp${next_tmp} += 1; }";
+    "
+fn __skip() {
+    let mut __daikon_tmp${first_tmp}: Vec<&${type}> = Vec::new();
+    let mut __daikon_tmp${first_tmp} = 0;
+    while __daikon_tmp${next_tmp} < ${var_name}.len() {
+        __daikon_tmp${first_tmp}.push(&${var_name}[__daikon_tmp${next_tmp}]);
+        __daikon_tmp${next_tmp} += 1;
+    }";
 
 
 pub(crate) static DAIKON_TMP_VEC_PRIM: &str =
-    "fn __skip() { let mut __daikon_tmp${first_tmp}: Vec${type} = Vec::new(); let mut __daikon_tmp${next_tmp} = 0; while __daikon_tmp${next_tmp} < ${var_name}.len() {__daikon_tmp${first_tmp}.push(${first_tmp}::from_str(&${var_name}[__daikon_tmp${next_tmp}].to_string()).expect(\"Ok\")); __daikon_tmp${next_tmp} += 1; }"; // don't close __skip() because we will mash
+    "
+fn __skip() {
+    let mut __daikon_tmp${first_tmp}: Vec${type} = Vec::new();
+    let mut __daikon_tmp${next_tmp} = 0;
+    while __daikon_tmp${next_tmp} < ${var_name}.len() {
+        __daikon_tmp${first_tmp}.push(${first_tmp}::from_str(&${var_name}[__daikon_tmp${next_tmp}].to_string()).expect(\"Ok\"));
+        __daikon_tmp${next_tmp} += 1;
+    }"; // don't close __skip() because we will mash
 
 
 pub(crate) static DTRACE_TMP_VEC_FOR_FIELD: &str =
-    "let mut __daikon_tmp${first_tmp}: Vec<&${type}> = Vec::new(); let mut __daikon_tmp${next_tmp} = 0; while __daikon_tmp${next_tmp} < self.${field_name}.len() { __daikon_tmp${first_tmp}.push(self.${field_name}[__daikon_tmp${next_tmp}]); __daikon_tmp${next_tmp} += 1 }";
+    "
+    let mut __daikon_tmp${first_tmp}: Vec<&${type}> = Vec::new();
+    let mut __daikon_tmp${next_tmp} = 0;
+    while __daikon_tmp${next_tmp} < self.${field_name}.len() {
+        __daikon_tmp${first_tmp}.push(self.${field_name}[__daikon_tmp${next_tmp}]);
+        __daikon_tmp${next_tmp} += 1
+    }";
 
 
 // TODO: use this for fields which are f: Vec<Type> or f: &Vec<Type>, need to use &.
 pub(crate) static DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND: &str =
-    "let mut __daikon_tmp${first_tmp}: Vec<&${type}> = Vec::new(); let mut __daikon_tmp${next_tmp} = 0; while __daikon_tmp${next_tmp} < self.${field_name}.len() { __daikon_tmp${first_tmp}.push(&self.${field_name}[__daikon_tmp${next_tmp}]); __daikon_tmp${next_tmp} += 1 }";
+    "
+    let mut __daikon_tmp${first_tmp}: Vec<&${type}> = Vec::new();
+    let mut __daikon_tmp${next_tmp} = 0;
+    while __daikon_tmp${next_tmp} < self.${field_name}.len() {
+        __daikon_tmp${first_tmp}.push(&self.${field_name}[__daikon_tmp${next_tmp}]);
+        __daikon_tmp${next_tmp} += 1
+}";
 
 
 pub(crate) static DTRACE_POINTER_VEC_USERDEF: &str =
@@ -236,7 +284,9 @@ pub(crate) fn build_pointer_vec_userdef(field_name: String) -> String {
 }
 
 pub(crate) static DTRACE_POINTER_ARR_USERDEF: &str =
-    "dtrace_print_pointer(self.${field_name} as *const _ as *const () as usize, format!(\"{}{}\", prefix, \".${field_name}\"));";
+    "
+    dtrace_print_pointer(self.${field_name} as *const _ as *const () as usize,
+                         format!(\"{}{}\", prefix, \".${field_name}\"));";
 pub(crate) fn build_pointer_arr_userdef(field_name: String) -> String {
     let mut res = String::from(DTRACE_POINTER_ARR_USERDEF[0]);
     res.push_str(&field_name);
@@ -247,7 +297,9 @@ pub(crate) fn build_pointer_arr_userdef(field_name: String) -> String {
 }
 
 pub(crate) static DTRACE_POINTERS_VEC_USERDEF: &str =
-    "dtrace_print_pointer_vec::<${type}>(&${tmp_name}, format!(\"{}{}[..]\", prefix, \".${field_name}\"));";
+    "
+dtrace_print_pointer_vec::<${type}>(&${tmp_name},
+                                    format!(\"{}{}[..]\", prefix, \".${field_name}\"));";
 pub(crate) fn build_pointers_vec_userdef(
     basic_type: String,
     tmp_name: String,
@@ -264,7 +316,10 @@ pub(crate) fn build_pointers_vec_userdef(
 }
 
 pub(crate) static DTRACE_PRINT_FIELDS_FOR_FIELD: &str =
-    "::dtrace_print_fields_vec(&${tmp_name}, depth - 1, format!(\"{}{}[..]\", prefix, \".${field_name}\"));";
+    "
+    ${type}::dtrace_print_fields_vec(&${tmp_name},
+                                     depth - 1,
+                                     format!(\"{}{}[..]\", prefix, \".${field_name}\"));";
 pub(crate) fn build_print_vec_fields_for_field(
     basic_type: String,
     tmp_name: String,
@@ -280,7 +335,8 @@ pub(crate) fn build_print_vec_fields_for_field(
 }
 
 pub(crate) static DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE: &str =
-    "pub fn dtrace_print_${field_name}(&self, depth: i32, prefix: String) {";
+    "
+pub fn dtrace_print_${field_name}(&self, depth: i32, prefix: String) {";
 pub(crate) fn build_dtrace_print_xfield_prologue(field_name: String) -> String {
     let mut res = String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE[0]);
     res.push_str(&field_name);
@@ -288,7 +344,10 @@ pub(crate) fn build_dtrace_print_xfield_prologue(field_name: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_PRINT_XFIELD_FOR_FIELD_MID: &str = "if depth == 0 { return; }";
+pub(crate) static DTRACE_PRINT_XFIELD_FOR_FIELD_MID: &str = "
+    if depth == 0 {
+        return;
+    }";
 pub(crate) fn build_dtrace_print_xfield_middle() -> String {
     String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_MID)
 }
@@ -299,7 +358,13 @@ pub(crate) fn build_dtrace_print_xfield_epilogue() -> String {
 }
 
 pub(crate) static DTRACE_TMP_PRIM_VEC_FOR_FIELD: &str =
-    "let mut __daikon_tmp${first_tmp}: Vec${type} = Vec::new(); let mut __daikon_tmp${next_tmp} = 0; while __daikon_tmp${next_tmp} < self.${field_name}.len() { __daikon_tmp${first_tmp}.push(${type}::from_str(&self.${field_name}[__daikon_tmp${next_tmp}].to_string()).expect(\"Ok\")); __daikon_tmp${next_tmp} += 1; }";
+    "
+    let mut __daikon_tmp${first_tmp}: Vec${type} = Vec::new();
+    let mut __daikon_tmp${next_tmp} = 0;
+    while __daikon_tmp${next_tmp} < self.${field_name}.len() {
+        __daikon_tmp${first_tmp}.push(${type}::from_str(&self.${field_name}[__daikon_tmp${next_tmp}].to_string()).expect(\"Ok\"));
+        __daikon_tmp${next_tmp} += 1;
+    }";
 pub(crate) fn build_tmp_prim_vec_for_field(
     first_tmp: String,
     p_type: String,
@@ -368,33 +433,30 @@ pub(crate) fn build_call_print_field(field_name: String) -> String {
 }
 
 #[allow(dead_code)]
-pub(crate) static DTRACE_PRINT_XFIELDS_VEC: &str = "pub fn dtrace_print_",
-                                                     "_vec(v: &Vec<&",
-                                                        ">, var_name: String) {
-                                                        let mut traces = match File::options().append(true).open(\"",
-                                                        ".dtrace\") {
-                                                            Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
-                                                            Ok(traces) => traces,
-                                                        };
-                                                        writeln!(&mut traces, \"{}\", var_name).ok();
-                                                        let mut arr = String::from(\"[\");
-                                                        let mut i = 0;
-                                                        while i+1 < v.len() {
-                                                    arr.push_str(&format!(\"0x{:x} \", v[i].",
-                                                        ".as_ptr() as usize));
-                                                        i += 1;
-                                                        }
-                                                        if v.len() > 0 {
-                                                    arr.push_str(&format!(\"0x{:x}\", v[i].",
-                                                        ".as_ptr() as usize)); }
-                                                        arr.push_str(\"]\");
-                                                        writeln!(&mut traces, \"{}\", arr).ok();
-                                                        writeln!(traces, \"0\").ok(); }"];
+pub(crate) static DTRACE_PRINT_XFIELDS_VEC: &str = "
+pub fn dtrace_print_${field_name}_vec(v: &Vec<&${type}>, var_name: String) {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(&mut traces, \"{}\", var_name).ok();
+    let mut arr = String::from(\"[\");
+    let mut i = 0;
+    while i+1 < v.len() {
+        arr.push_str(&format!(\"0x{:x} \", v[i].${field_name}.as_ptr() as usize));
+        i += 1;
+    }
+    if v.len() > 0 {
+        arr.push_str(&format!(\"0x{:x}\", v[i].${field_name}.as_ptr() as usize));
+    }
+    arr.push_str(\"]\");
+    writeln!(&mut traces, \"{}\", arr).ok();
+    writeln!(traces, \"0\").ok(); }";
 pub(crate) fn build_print_xfield_for_vec(field_name: String, basic_type: String) -> String {
     let mut res = String::from(DTRACE_PRINT_XFIELDS_VEC[0]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[1]);
-    res.push_str(&basic_type);
+    // res.push_str(&basic_type);
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[2]);
     res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[3]);
@@ -405,7 +467,10 @@ pub(crate) fn build_print_xfield_for_vec(field_name: String, basic_type: String)
     res
 }
 
-pub(crate) static LET_RET: &str ="fn __skip() { let __daikon_ret: ${ret_ty} = ${expr}; }"];
+pub(crate) static LET_RET: &str = "
+fn __skip() {
+    let __daikon_ret: ${ret_ty} = ${expr};
+}";
 pub(crate) fn build_let_ret(ret_ty: String, expr: String) -> String {
     let mut res = String::from(LET_RET[0]);
     res.push_str(&ret_ty);
@@ -415,25 +480,41 @@ pub(crate) fn build_let_ret(ret_ty: String, expr: String) -> String {
     res
 }
 
-pub(crate) static RET: &str ="fn __skip() { return __daikon_ret; }"];
+pub(crate) static RET: &str = "
+fn __skip() {
+    return __daikon_ret;
+}";
 pub(crate) fn build_ret() -> String {
     String::from(RET[0])
 }
 
 // you have to delete this?
 // make this an array with DTRACE_PRINT_FIELDS_EPILOGUE...
-pub(crate) static DTRACE_PRINT_FIELDS_PROLOGUE: &str = "impl __skip { pub fn dtrace_print_fields(&self, depth: i32, prefix: String) { if depth == 0 { return; } ";
+pub(crate) static DTRACE_PRINT_FIELDS_PROLOGUE: &str = "
+impl __skip {
+    pub fn dtrace_print_fields(&self, depth: i32, prefix: String) {
+        if depth == 0 {
+            return;
+        } ";
 pub(crate) fn dtrace_print_fields_prologue() -> String {
     String::from(DTRACE_PRINT_FIELDS_PROLOGUE)
 }
 
-pub(crate) static DTRACE_PRINT_FIELDS_EPILOGUE: &str = "} } struct __skip{}"; // maybe can avoid deleting it, but still bad
+pub(crate) static DTRACE_PRINT_FIELDS_EPILOGUE: &str = "
+    }
+}
+struct __skip{}"; // maybe can avoid deleting it, but still bad
 pub(crate) fn dtrace_print_fields_epilogue() -> String {
     String::from(DTRACE_PRINT_FIELDS_EPILOGUE)
 }
 
 pub(crate) static DTRACE_PRINT_FIELDS_VEC_PROLOGUE: &str =
-    "impl __skip { pub fn dtrace_print_fields_vec(v: &Vec<&${spliced_struct}>, depth: i32, prefix: String) { if depth == 0 { return; } ";
+    "
+impl __skip {
+    pub fn dtrace_print_fields_vec(v: &Vec<&${spliced_struct}>, depth: i32, prefix: String) {
+        if depth == 0 {
+            return;
+        }";
 pub(crate) fn dtrace_print_fields_vec_prologue(spliced_struct: String) -> String {
     let mut res = String::from(DTRACE_PRINT_FIELDS_VEC_PROLOGUE[0]);
     res.push_str(&spliced_struct);
@@ -456,28 +537,24 @@ pub(crate) fn dtrace_print_xfields_vec_epilogue() -> String {
     String::from(DTRACE_PRINT_XFIELDS_VEC_EPILOGUE)
 }
 
-pub(crate) static DTRACE_PRINT_XFIELDS: &str = "pub fn dtrace_print_",
-                                                     "_vec(v: &Vec<&",
-                                                        ">, var_name: String) {
-                                                        let mut traces = match File::options().append(true).open(\"",
-                                                        ".dtrace\") {
-                                                            Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
-                                                            Ok(traces) => traces,
-                                                        };
-                                                        writeln!(&mut traces, \"{}\", var_name).ok();
-                                                        let mut arr = String::from(\"[\");
-                                                        let mut i = 0;
-                                                        while i+1 < v.len() {
-                                                    arr.push_str(&format!(\"{} \", v[i].",
-                                                        "));
-                                                        i += 1;
-                                                        }
-                                                        if v.len() > 0 {
-                                                    arr.push_str(&format!(\"{}\", v[i].",
-                                                        ")); }
-                                                        arr.push_str(\"]\");
-                                                        writeln!(&mut traces, \"{}\", arr).ok();
-                                                        writeln!(traces, \"0\").ok(); }"];
+pub(crate) static DTRACE_PRINT_XFIELDS: &str = "
+pub fn dtrace_print_${field_name}_vec(v: &Vec<&${type}>, var_name: String) {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
+            Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+            Ok(traces) => traces,
+        };
+        writeln!(&mut traces, \"{}\", var_name).ok();
+        let mut arr = String::from(\"[\");
+        let mut i = 0;
+        while i+1 < v.len() {
+    arr.push_str(&format!(\"{} \", v[i].${field_name}));
+        i += 1;
+        }
+        if v.len() > 0 {
+    arr.push_str(&format!(\"{}\", v[i].${field_name})); }
+        arr.push_str(\"]\");
+        writeln!(&mut traces, \"{}\", arr).ok();
+        writeln!(traces, \"0\").ok(); }"];
 pub(crate) fn build_print_xfield(field_name: String, basic_type: String) -> String {
     let mut res = String::from(DTRACE_PRINT_XFIELDS[0]);
     res.push_str(&field_name);
@@ -493,28 +570,26 @@ pub(crate) fn build_print_xfield(field_name: String, basic_type: String) -> Stri
     res
 }
 
-pub(crate) static DTRACE_PRINT_XFIELDS_STRING: &str = "pub fn dtrace_print_",
-                                                     "_vec(v: &Vec<&",
-                                                        ">, var_name: String) {
-                                                        let mut traces = match File::options().append(true).open(\"",
-                                                        ".dtrace\") {
-                                                            Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
-                                                            Ok(traces) => traces,
-                                                        };
-                                                        writeln!(&mut traces, \"{}\", var_name).ok();
-                                                        let mut arr = String::from(\"[\");
-                                                        let mut i = 0;
-                                                        while i+1 < v.len() {
-                                                    arr.push_str(&format!(\"\\\"{}\\\" \", v[i].",
-                                                        "));
-                                                        i += 1;
-                                                        }
-                                                        if v.len() > 0 {
-                                                    arr.push_str(&format!(\"\\\"{}\\\"\", v[i].",
-                                                        ")); }
-                                                        arr.push_str(\"]\");
-                                                        writeln!(&mut traces, \"{}\", arr).ok();
-                                                        writeln!(traces, \"0\").ok(); }"];
+pub(crate) static DTRACE_PRINT_XFIELDS_STRING: &str = "
+pub fn dtrace_print_${field_name}_vec(v: &Vec<&${type}>, var_name: String) {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(&mut traces, \"{}\", var_name).ok();
+    let mut arr = String::from(\"[\");
+    let mut i = 0;
+    while i+1 < v.len() {
+        arr.push_str(&format!(\"\\\"{}\\\" \", v[i].${field_name}));
+        i += 1;
+    }
+    if v.len() > 0 {
+        arr.push_str(&format!(\"\\\"{}\\\"\", v[i].${field_name}));
+    }
+    arr.push_str(\"]\");
+    writeln!(&mut traces, \"{}\", arr).ok();
+    writeln!(traces, \"0\").ok();
+}";
 pub(crate) fn build_print_xfield_string(field_name: String, basic_type: String) -> String {
     let mut res = String::from(DTRACE_PRINT_XFIELDS_STRING[0]);
     res.push_str(&field_name);
@@ -531,7 +606,9 @@ pub(crate) fn build_print_xfield_string(field_name: String, basic_type: String) 
 }
 
 pub(crate) static BUILD_POINTER_ARR: &str =
-    "dtrace_print_pointer(${var_name} as *const _ as *const () as usize, String::from(\"${var_name}\"));";
+    "
+    dtrace_print_pointer(${var_name} as *const _ as *const () as usize,
+                         String::from(\"${var_name}\"));";
 pub(crate) fn build_pointer_arr(var_name: String) -> String {
     let mut res = String::from(BUILD_POINTER_ARR[0]);
     res.push_str(&var_name);
@@ -542,14 +619,19 @@ pub(crate) fn build_pointer_arr(var_name: String) -> String {
 }
 
 // does this work for references?
-pub(crate) static BUILD_POINTER_ARR_RET: &str = "dtrace_print_pointer(__daikon_ret as *const _ as *const () as usize, String::from(\"return\"));";
+pub(crate) static BUILD_POINTER_ARR_RET: &str = "
+    dtrace_print_pointer(__daikon_ret as *const _ as *const () as usize,
+                         String::from(\"return\"));";
 pub(crate) fn build_pointer_arr_ret() -> String {
     String::from(BUILD_POINTER_ARR_RET)
 }
 
 // only end fn __skip because we will smash a tmp vec loop on the front.
 pub(crate) static DTRACE_PRINT_PRIM_VEC: &str =
-    "dtrace_print_prim_vec::<${type}>(&${tmp_name}, String::from(\"${var_name}\")); }";
+    "
+    dtrace_print_prim_vec::<${type}>(&${tmp_name},
+                                     String::from(\"${var_name}\"));
+}";
 pub(crate) fn build_print_prim_vec(p_type: String, tmp_name: String, var_name: String) -> String {
     let mut res = String::from(DTRACE_PRINT_PRIM_VEC[0]);
     res.push_str(&p_type);
@@ -562,7 +644,10 @@ pub(crate) fn build_print_prim_vec(p_type: String, tmp_name: String, var_name: S
 }
 
 pub(crate) static DTRACE_PRINT_STRING_VEC: &str =
-    "dtrace_print_string_vec(&${tmp_name}, String::from(\"${var_name}\")); }";
+    "
+    dtrace_print_string_vec(&${tmp_name},
+                            String::from(\"${var_name}\"));
+}";
 pub(crate) fn build_print_string_vec(tmp_name: String, var_name: String) -> String {
     let mut res = String::from(DTRACE_PRINT_STRING_VEC[0]);
     res.push_str(&tmp_name);
@@ -572,17 +657,24 @@ pub(crate) fn build_print_string_vec(tmp_name: String, var_name: String) -> Stri
     res
 }
 
-pub(crate) static BUILD_A_IMPL_BLOCK: &str = "impl __skip {}";
+pub(crate) static BUILD_A_IMPL_BLOCK: &str = "
+impl __skip {}";
 pub(crate) fn base_impl() -> String {
     String::from(BUILD_A_IMPL_BLOCK)
 }
 
-pub(crate) static VOID_RETURN: &str = "fn __skip() { return; }";
+pub(crate) static VOID_RETURN: &str = "
+fn __skip() {
+    return;
+}";
 pub(crate) fn build_void_return() -> String {
     String::from(VOID_RETURN)
 }
 
-pub(crate) static DTRACE_NEWLINE: &str = "fn __skip() { dtrace_newline(); }";
+pub(crate) static DTRACE_NEWLINE: &str = "
+fn __skip() {
+    dtrace_newline();
+}";
 pub(crate) fn dtrace_newline() -> String {
     String::from(DTRACE_NEWLINE)
 }
@@ -600,8 +692,7 @@ pub(crate) fn build_imports() -> String {
 
 pub(crate) static DAIKON_LIB: &str = 
     "pub fn dtrace_print_pointer_arr<T>(v: &[&T], var_name: String) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -629,8 +720,7 @@ pub(crate) fn daikon_lib() -> String {
 }
 
 pub fn dtrace_print_pointer_vec<T>(v: &Vec<&T>, var_name: String) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -651,8 +741,7 @@ pub fn dtrace_print_pointer_vec<T>(v: &Vec<&T>, var_name: String) {
 
 // T must implement Display trait
 fn dtrace_print_prim_arr<T: std::fmt::Display>(v: &[T], prefix: String) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -672,8 +761,7 @@ fn dtrace_print_prim_arr<T: std::fmt::Display>(v: &[T], prefix: String) {
 }
 
 fn dtrace_print_prim_vec<T: std::fmt::Display>(v: &Vec<T>, prefix: String) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -693,8 +781,7 @@ fn dtrace_print_prim_vec<T: std::fmt::Display>(v: &Vec<T>, prefix: String) {
 }
 
 fn dtrace_print_str(v: &str, var_name: String) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -705,8 +792,7 @@ fn dtrace_print_str(v: &str, var_name: String) {
 
 // T must implement Display trait
 fn dtrace_print_prim<T: std::fmt::Display>(v: T, var_name: String) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -716,8 +802,7 @@ fn dtrace_print_prim<T: std::fmt::Display>(v: T, var_name: String) {
 }
 
 fn dtrace_print_string(v: String, var_name: String) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -727,8 +812,7 @@ fn dtrace_print_string(v: String, var_name: String) {
 }
 
 fn dtrace_print_string_vec(v: &Vec<String>, prefix: String) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -748,8 +832,7 @@ fn dtrace_print_string_vec(v: &Vec<String>, prefix: String) {
 }
 
 fn dtrace_print_pointer(v: usize, var_name: String) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -759,8 +842,7 @@ fn dtrace_print_pointer(v: usize, var_name: String) {
 }
 
 fn dtrace_entry_no_nonce(ppt_name: &str) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -768,8 +850,7 @@ fn dtrace_entry_no_nonce(ppt_name: &str) {
 }
 
 fn dtrace_exit_no_nonce(ppt_name: &str) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -777,8 +858,7 @@ fn dtrace_exit_no_nonce(ppt_name: &str) {
 }
 
 fn dtrace_entry(ppt_name: &str, nonce: u32) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -788,8 +868,7 @@ fn dtrace_entry(ppt_name: &str, nonce: u32) {
 }
 
 fn dtrace_exit(ppt_name: &str, nonce: u32) {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -799,11 +878,9 @@ fn dtrace_exit(ppt_name: &str, nonce: u32) {
 }
 
 fn dtrace_newline() {
-    let mut traces = match File::options().append(true).open(\"",
-    ".dtrace\") {
+    let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
     writeln!(traces, \"\").ok();
 }";
-
