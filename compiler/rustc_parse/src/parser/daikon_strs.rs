@@ -307,14 +307,9 @@ pub(crate) static DTRACE_PRINT_XFIELD_FOR_FIELD_MID: &str = "
     if depth == 0 {
         return;
     }";
-pub(crate) fn build_dtrace_print_xfield_middle() -> String {
-    String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_MID)
-}
 
-pub(crate) static DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE: &str = "}";
-pub(crate) fn build_dtrace_print_xfield_epilogue() -> String {
-    String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE)
-}
+pub(crate) static DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE: &str = "
+}";
 
 pub(crate) static DTRACE_TMP_PRIM_VEC_FOR_FIELD: &str =
     "
@@ -324,72 +319,17 @@ pub(crate) static DTRACE_TMP_PRIM_VEC_FOR_FIELD: &str =
         __daikon_tmp${first_tmp}.push(${type}::from_str(&self.${field_name}[__daikon_tmp${next_tmp}].to_string()).expect(\"Ok\"));
         __daikon_tmp${next_tmp} += 1;
     }";
-pub(crate) fn build_tmp_prim_vec_for_field(
-    first_tmp: String,
-    p_type: String,
-    next_tmp: String,
-    field_name: String,
-) -> String {
-    let mut res = String::from(DTRACE_TMP_PRIM_VEC_FOR_FIELD[0]);
-    res.push_str(&first_tmp);
-    res.push_str(DTRACE_TMP_PRIM_VEC_FOR_FIELD[1]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_TMP_PRIM_VEC_FOR_FIELD[2]);
-    res.push_str(&next_tmp);
-    res.push_str(DTRACE_TMP_PRIM_VEC_FOR_FIELD[3]);
-    res.push_str(&next_tmp);
-    res.push_str(DTRACE_TMP_PRIM_VEC_FOR_FIELD[4]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_TMP_PRIM_VEC_FOR_FIELD[5]);
-    res.push_str(&first_tmp);
-    res.push_str(DTRACE_TMP_PRIM_VEC_FOR_FIELD[6]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_TMP_PRIM_VEC_FOR_FIELD[7]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_TMP_PRIM_VEC_FOR_FIELD[8]);
-    res.push_str(&next_tmp);
-    res.push_str(DTRACE_TMP_PRIM_VEC_FOR_FIELD[9]);
-    res.push_str(&next_tmp);
-    res.push_str(DTRACE_TMP_PRIM_VEC_FOR_FIELD[10]);
-    res
-}
+
 
 pub(crate) static DTRACE_PRINT_PRIM_VEC_FOR_FIELD: &str =
     "dtrace_print_prim_vec::<${type}>(&${tmp_name}, format!(\"{}{}\", prefix, \".${field_name}\"));";
-pub(crate) fn build_print_prim_vec_for_field(
-    p_type: String,
-    tmp_name: String,
-    field_name: String,
-) -> String {
-    let mut res = String::from(DTRACE_PRINT_PRIM_VEC_FOR_FIELD[0]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_PRINT_PRIM_VEC_FOR_FIELD[1]);
-    res.push_str(&tmp_name);
-    res.push_str(DTRACE_PRINT_PRIM_VEC_FOR_FIELD[2]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_PRIM_VEC_FOR_FIELD[3]);
-    res
-}
+
 
 pub(crate) static DTRACE_PRINT_STRING_VEC_FOR_FIELD: &str =
     "dtrace_print_string_vec(&${tmp_name}, format!(\"{}{}\", prefix, \".${field_name}\"));";
-pub(crate) fn build_print_string_vec_for_field(tmp_name: String, field_name: String) -> String {
-    let mut res = String::from(DTRACE_PRINT_STRING_VEC_FOR_FIELD[0]);
-    res.push_str(&tmp_name);
-    res.push_str(DTRACE_PRINT_STRING_VEC_FOR_FIELD[1]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_STRING_VEC_FOR_FIELD[2]);
-    res
-}
 
 pub(crate) static DTRACE_CALL_PRINT_FIELD: &str =
     "self.dtrace_print_${field_name}(depth, prefix.clone());";
-pub(crate) fn build_call_print_field(field_name: String) -> String {
-    let mut res = String::from(DTRACE_CALL_PRINT_FIELD[0]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_CALL_PRINT_FIELD[1]);
-    res
-}
 
 #[allow(dead_code)]
 pub(crate) static DTRACE_PRINT_XFIELDS_VEC: &str = "
@@ -428,24 +368,13 @@ pub(crate) fn build_print_xfield_for_vec(field_name: String, basic_type: String)
 
 pub(crate) static LET_RET: &str = "
 fn __skip() {
-    let __daikon_ret: ${ret_ty} = ${expr};
+    let __daikon_ret: ${type} = ${expr};
 }";
-pub(crate) fn build_let_ret(ret_ty: String, expr: String) -> String {
-    let mut res = String::from(LET_RET[0]);
-    res.push_str(&ret_ty);
-    res.push_str(LET_RET[1]);
-    res.push_str(&expr);
-    res.push_str(LET_RET[2]);
-    res
-}
 
 pub(crate) static RET: &str = "
 fn __skip() {
     return __daikon_ret;
 }";
-pub(crate) fn build_ret() -> String {
-    String::from(RET[0])
-}
 
 // you have to delete this?
 // make this an array with DTRACE_PRINT_FIELDS_EPILOGUE...
@@ -455,17 +384,11 @@ impl __skip {
         if depth == 0 {
             return;
         } ";
-pub(crate) fn dtrace_print_fields_prologue() -> String {
-    String::from(DTRACE_PRINT_FIELDS_PROLOGUE)
-}
 
 pub(crate) static DTRACE_PRINT_FIELDS_EPILOGUE: &str = "
     }
 }
 struct __skip{}"; // maybe can avoid deleting it, but still bad
-pub(crate) fn dtrace_print_fields_epilogue() -> String {
-    String::from(DTRACE_PRINT_FIELDS_EPILOGUE)
-}
 
 pub(crate) static DTRACE_PRINT_FIELDS_VEC_PROLOGUE: &str =
     "
@@ -474,27 +397,12 @@ impl __skip {
         if depth == 0 {
             return;
         }";
-pub(crate) fn dtrace_print_fields_vec_prologue(spliced_struct: String) -> String {
-    let mut res = String::from(DTRACE_PRINT_FIELDS_VEC_PROLOGUE[0]);
-    res.push_str(&spliced_struct);
-    res.push_str(DTRACE_PRINT_FIELDS_VEC_PROLOGUE[1]);
-    res
-}
 
 pub(crate) static DTRACE_PRINT_FIELDS_VEC_EPILOGUE: &str = "} } struct __skip{}";
-pub(crate) fn dtrace_print_fields_vec_epilogue() -> String {
-    String::from(DTRACE_PRINT_FIELDS_VEC_EPILOGUE)
-}
 
 pub(crate) static DTRACE_PRINT_XFIELDS_VEC_PROLOGUE: &str = "impl __skip {";
-pub(crate) fn dtrace_print_xfields_vec_prologue() -> String {
-    String::from(DTRACE_PRINT_XFIELDS_VEC_PROLOGUE)
-}
 
 pub(crate) static DTRACE_PRINT_XFIELDS_VEC_EPILOGUE: &str = " }";
-pub(crate) fn dtrace_print_xfields_vec_epilogue() -> String {
-    String::from(DTRACE_PRINT_XFIELDS_VEC_EPILOGUE)
-}
 
 pub(crate) static DTRACE_PRINT_XFIELDS: &str = "
 pub fn dtrace_print_${field_name}_vec(v: &Vec<&${type}>, var_name: String) {
@@ -581,9 +489,6 @@ pub(crate) fn build_pointer_arr(var_name: String) -> String {
 pub(crate) static BUILD_POINTER_ARR_RET: &str = "
     dtrace_print_pointer(__daikon_ret as *const _ as *const () as usize,
                          String::from(\"return\"));";
-pub(crate) fn build_pointer_arr_ret() -> String {
-    String::from(BUILD_POINTER_ARR_RET)
-}
 
 // only end fn __skip because we will smash a tmp vec loop on the front.
 pub(crate) static DTRACE_PRINT_PRIM_VEC: &str =
@@ -591,16 +496,6 @@ pub(crate) static DTRACE_PRINT_PRIM_VEC: &str =
     dtrace_print_prim_vec::<${type}>(&${tmp_name},
                                      String::from(\"${var_name}\"));
 }";
-pub(crate) fn build_print_prim_vec(p_type: String, tmp_name: String, var_name: String) -> String {
-    let mut res = String::from(DTRACE_PRINT_PRIM_VEC[0]);
-    res.push_str(&p_type);
-    res.push_str(DTRACE_PRINT_PRIM_VEC[1]);
-    res.push_str(&tmp_name);
-    res.push_str(DTRACE_PRINT_PRIM_VEC[2]);
-    res.push_str(&var_name);
-    res.push_str(DTRACE_PRINT_PRIM_VEC[3]);
-    res
-}
 
 pub(crate) static DTRACE_PRINT_STRING_VEC: &str =
     "
