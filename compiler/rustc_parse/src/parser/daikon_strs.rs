@@ -274,65 +274,24 @@ pub(crate) static DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND: &str =
 
 pub(crate) static DTRACE_POINTER_VEC_USERDEF: &str =
     "dtrace_print_pointer(self.${field_name}.as_ptr() as usize, format!(\"{}{}\", prefix, \".${field_name}\"));";
-pub(crate) fn build_pointer_vec_userdef(field_name: String) -> String {
-    let mut res = String::from(DTRACE_POINTER_VEC_USERDEF[0]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_POINTER_VEC_USERDEF[1]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_POINTER_VEC_USERDEF[2]);
-    res
-}
+
 
 pub(crate) static DTRACE_POINTER_ARR_USERDEF: &str =
     "
     dtrace_print_pointer(self.${field_name} as *const _ as *const () as usize,
                          format!(\"{}{}\", prefix, \".${field_name}\"));";
-pub(crate) fn build_pointer_arr_userdef(field_name: String) -> String {
-    let mut res = String::from(DTRACE_POINTER_ARR_USERDEF[0]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_POINTER_ARR_USERDEF[1]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_POINTER_ARR_USERDEF[2]);
-    res
-}
+
 
 pub(crate) static DTRACE_POINTERS_VEC_USERDEF: &str =
     "
 dtrace_print_pointer_vec::<${type}>(&${tmp_name},
                                     format!(\"{}{}[..]\", prefix, \".${field_name}\"));";
-pub(crate) fn build_pointers_vec_userdef(
-    basic_type: String,
-    tmp_name: String,
-    field_name: String,
-) -> String {
-    let mut res = String::from(DTRACE_POINTERS_VEC_USERDEF[0]);
-    res.push_str(&basic_type);
-    res.push_str(DTRACE_POINTERS_VEC_USERDEF[1]);
-    res.push_str(&tmp_name);
-    res.push_str(DTRACE_POINTERS_VEC_USERDEF[2]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_POINTERS_VEC_USERDEF[3]);
-    res
-}
 
 pub(crate) static DTRACE_PRINT_FIELDS_FOR_FIELD: &str =
     "
     ${type}::dtrace_print_fields_vec(&${tmp_name},
                                      depth - 1,
                                      format!(\"{}{}[..]\", prefix, \".${field_name}\"));";
-pub(crate) fn build_print_vec_fields_for_field(
-    basic_type: String,
-    tmp_name: String,
-    field_name: String,
-) -> String {
-    let mut res = basic_type.clone();
-    res.push_str(DTRACE_PRINT_FIELDS_FOR_FIELD[0]);
-    res.push_str(&tmp_name);
-    res.push_str(DTRACE_PRINT_FIELDS_FOR_FIELD[1]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_FIELDS_FOR_FIELD[2]);
-    res
-}
 
 pub(crate) static DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE: &str =
     "

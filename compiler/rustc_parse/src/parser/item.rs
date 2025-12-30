@@ -959,7 +959,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 // mash:
                 //            build_dtrace_print_xfield_prologue(),
                 //            build_tmp_prim_vec_for_field(),
-                //            build_pointer_vec_userdef(),
                 //            build_dtrace_print_xfield_middle(),
                 //            build_print_prim_vec_for_field(),
                 //            build_dtrace_print_xfield_epilogue()
@@ -989,7 +988,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             next_tmp.clone(),
                             field_name.clone()
                         ),
-                        build_pointer_vec_userdef(field_name.clone()),
+                        subst::substitute(DTRACE_POINTER_VEC_USERDEF,
+                            HashMap::from([("field_name", field_name)])),
                         build_dtrace_print_xfield_middle(),
                         print_vec.clone(),
                         build_dtrace_print_xfield_epilogue()
@@ -1002,10 +1002,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 // mash:
                 //            build_dtrace_print_xfield_prologue(),
                 //            build_tmp_vec_for_field(),
-                //            build_pointer_vec_userdef() (for single pointer),
-                //            build_pointers_vec_userdef() (for pointers),
                 //            build_dtrace_print_xfield_middle() (depth check),
-                //            build_print_vec_fields_for_field() (for contents),
                 //            build_dtrace_print_xfield_epilogue() (closing brace)
                 RustType::UserDefVec(basic_struct) => {
                     let first_tmp = daikon_tmp_counter.to_string();
@@ -1030,18 +1027,17 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         "{}\n{}\n{}\n{}\n{}\n{}\n{}",
                         build_dtrace_print_xfield_prologue(field_name.clone()),
                         tmp_vec.clone(),
-                        build_pointer_vec_userdef(field_name.clone()),
-                        build_pointers_vec_userdef(
-                            basic_struct.to_string(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone()
-                        ),
+                        subst::substitute(DTRACE_POINTER_VEC_USERDEF,
+                            HashMap::from([("field_name", field_name)])),
+                        subst::substitute(DTRACE_POINTERS_VEC_USERDEF,
+                            HashMap::from([("type", basic_struct),
+                                ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
+                                ("field_name", field_name)])),
                         build_dtrace_print_xfield_middle(),
-                        build_print_vec_fields_for_field(
-                            basic_struct.to_string(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone()
-                        ),
+                        subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            HashMap::from([("type", basic_struct),
+                                ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
+                                ("field_name", field_name)])),
                         build_dtrace_print_xfield_epilogue()
                     );
                     let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.clone());
@@ -1076,7 +1072,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             next_tmp.clone(),
                             field_name.clone()
                         ),
-                        build_pointer_arr_userdef(field_name.clone()),
+                        subst::substitute(DTRACE_POINTER_ARR_USERDEF,
+                            HashMap::from([("field_name", field_name)])),
                         build_dtrace_print_xfield_middle(),
                         print_vec.clone(),
                         build_dtrace_print_xfield_epilogue()
@@ -1109,18 +1106,17 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         "{}\n{}\n{}\n{}\n{}\n{}\n{}",
                         build_dtrace_print_xfield_prologue(field_name.clone()),
                         tmp_vec.clone(),
-                        build_pointer_arr_userdef(field_name.clone()),
-                        build_pointers_vec_userdef(
-                            basic_struct.to_string(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone()
-                        ),
+                        subst::substitute(DTRACE_POINTER_ARR_USERDEF,
+                            HashMap::from([("field_name", field_name)])),
+                        subst::substitute(DTRACE_POINTERS_VEC_USERDEF,
+                            HashMap::from([("type", basic_struct),
+                                ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
+                                ("field_name", field_name)])),
                         build_dtrace_print_xfield_middle(),
-                        build_print_vec_fields_for_field(
-                            basic_struct.to_string(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone()
-                        ),
+                        subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            HashMap::from([("type", basic_struct),
+                                ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
+                                ("field_name", field_name)])),
                         build_dtrace_print_xfield_epilogue()
                     );
                     let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.clone());
