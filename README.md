@@ -7,8 +7,7 @@
 To view the changes from the upstream Rust compiler to this fork, see [https://github.com/benwu25/c-rosae/pull/1](https://github.com/benwu25/c-rosae/pull/1).
 
  * Build the compiler.
-     * `./x setup`
-     * `./x build library/std`
+     * `./x setup && build library/std`
  * Set up daikon as a toolchain with the stage 1 build.
      * `rustup toolchain link daikon build/<platform>/stage1`
 
