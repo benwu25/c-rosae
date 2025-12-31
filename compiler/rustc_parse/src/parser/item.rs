@@ -952,9 +952,15 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 RustType::Prim(p_type) => {
                     // We have a vec of ourselves, and the field is
                     if p_type == "String" || p_type == "str" {
-                        build_print_xfield_string(field_name.clone(), plain_struct.clone())
+                        subst::substitute(DTRACE_PRINT_XFIELDS_STRING,
+                            HashMap::from([("field_name", field_name),
+                                ("type", plain_struct),
+                                ("output_prefix", &*OUTPUT_PREFIX.lock().unwrap()])))
                     } else {
-                        build_print_xfield(field_name.clone(), plain_struct.clone()) // TODO: change this name to involve vec to be clear.
+                        subst::substitute(DTRACE_PRINT_XFIELDS,
+                            HashMap::from([("field_name", field_name),
+                                ("type", plain_struct),
+                                ("output_prefix", &*OUTPUT_PREFIX.lock().unwrap()]))) // TODO: change this name to involve vec to be clear.
                     }
                 }
                 // TODO: remove this
@@ -991,7 +997,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE
                     );
                     let f2 =
-                        build_print_xfield_for_vec(field_name.clone(), plain_struct.to_string());
+                        subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            HashMap::from([("field_name", field_name),
+                                ("type", plain_struct.to_string())]));
                     format!("{}\n{}", f1, f2)
                 }
                 // TODO: remove this.
@@ -1035,7 +1043,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 ("field_name", field_name)])),
                         DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE
                     );
-                    let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.clone());
+                    let f2 = subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            HashMap::from([("field_name", field_name),
+                                ("type", plain_struct)]));
                     format!("{}\n{}", f1, f2)
                 }
                 // TODO: arrays, mighty similar to vec. Maybe you can cheat and just do the exact same thing... use | in pattern matching.
@@ -1072,7 +1082,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE
                     );
                     let f2 =
-                        build_print_xfield_for_vec(field_name.clone(), plain_struct.to_string());
+                        subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            HashMap::from([("field_name", field_name),
+                                ("type", plain_struct.to_string())]));
                     format!("{}\n{}", f1, f2)
                 }
                 RustType::UserDefArray(basic_struct) => {
@@ -1113,7 +1125,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 ("field_name", field_name)])),
                         DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE
                     );
-                    let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.clone());
+                    let f2 = subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            HashMap::from([("field_name", field_name),
+                                ("type", plain_struct)]));
                     format!("{}\n{}", f1, f2)
                 }
                 _ => String::from(""),
@@ -1498,7 +1512,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                     ("type", p_type),
                                     ("next_tmp", next_tmp),
                                     ("var_name", get_param_ident(&decl.inputs[i].pat))])),
-                            build_pointer_arr(get_param_ident(&decl.inputs[i].pat)),
+                            subst::substitute(BUILD_POINTER_ARR,
+                                HashMap::from([,
+                                    ("var_name", get_param_ident(&decl.inputs[i].pat))])),
                             print_vec.clone()
                         )
                     }
@@ -1527,7 +1543,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let res = format!(
                             "{}\n{}\n{}\n{}",
                             tmp_vec.clone(),
-                            build_pointer_arr(var_name.clone()),
+                            subst::substitute(BUILD_POINTER_ARR,
+                                HashMap::from([,
+                                    ("var_name", var_name)])),
                             subst::substitute(DTRACE_PRINT_POINTER_VEC,
                                 HashMap::from([("type", basic_type),
                                     ("tmp_name", format!("__daikon_tmp{}", first_tmp)),

@@ -345,20 +345,6 @@ pub fn dtrace_print_${field_name}_vec(v: &Vec<&${type}>, var_name: String) {
     arr.push_str(\"]\");
     writeln!(&mut traces, \"{}\", arr).ok();
     writeln!(traces, \"0\").ok(); }";
-pub(crate) fn build_print_xfield_for_vec(field_name: String, basic_type: String) -> String {
-    let mut res = String::from(DTRACE_PRINT_XFIELDS_VEC[0]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS_VEC[1]);
-    // res.push_str(&basic_type);
-    res.push_str(DTRACE_PRINT_XFIELDS_VEC[2]);
-    res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
-    res.push_str(DTRACE_PRINT_XFIELDS_VEC[3]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS_VEC[4]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS_VEC[5]);
-    res
-}
 
 pub(crate) static LET_RET: &str = "
 fn __skip() {
@@ -416,20 +402,6 @@ pub fn dtrace_print_${field_name}_vec(v: &Vec<&${type}>, var_name: String) {
         arr.push_str(\"]\");
         writeln!(&mut traces, \"{}\", arr).ok();
         writeln!(traces, \"0\").ok(); }"];
-pub(crate) fn build_print_xfield(field_name: String, basic_type: String) -> String {
-    let mut res = String::from(DTRACE_PRINT_XFIELDS[0]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS[1]);
-    res.push_str(&basic_type);
-    res.push_str(DTRACE_PRINT_XFIELDS[2]);
-    res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
-    res.push_str(DTRACE_PRINT_XFIELDS[3]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS[4]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS[5]);
-    res
-}
 
 pub(crate) static DTRACE_PRINT_XFIELDS_STRING: &str = "
 pub fn dtrace_print_${field_name}_vec(v: &Vec<&${type}>, var_name: String) {
@@ -451,33 +423,11 @@ pub fn dtrace_print_${field_name}_vec(v: &Vec<&${type}>, var_name: String) {
     writeln!(&mut traces, \"{}\", arr).ok();
     writeln!(traces, \"0\").ok();
 }";
-pub(crate) fn build_print_xfield_string(field_name: String, basic_type: String) -> String {
-    let mut res = String::from(DTRACE_PRINT_XFIELDS_STRING[0]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS_STRING[1]);
-    res.push_str(&basic_type);
-    res.push_str(DTRACE_PRINT_XFIELDS_STRING[2]);
-    res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
-    res.push_str(DTRACE_PRINT_XFIELDS_STRING[3]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS_STRING[4]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS_STRING[5]);
-    res
-}
 
 pub(crate) static BUILD_POINTER_ARR: &str =
     "
     dtrace_print_pointer(${var_name} as *const _ as *const () as usize,
                          String::from(\"${var_name}\"));";
-pub(crate) fn build_pointer_arr(var_name: String) -> String {
-    let mut res = String::from(BUILD_POINTER_ARR[0]);
-    res.push_str(&var_name);
-    res.push_str(BUILD_POINTER_ARR[1]);
-    res.push_str(&var_name);
-    res.push_str(BUILD_POINTER_ARR[2]);
-    res
-}
 
 // does this work for references?
 pub(crate) static BUILD_POINTER_ARR_RET: &str = "
