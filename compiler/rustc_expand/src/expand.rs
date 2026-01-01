@@ -1107,7 +1107,7 @@ impl<'a> TopLevlDecl<'a> {
 }
 
 // Helper to write function entries into the decls file.
-fn write_entry(ppt_name: String) {
+fn write_entry(ppt_name: &str) {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
         Some(decls) => {
@@ -1118,7 +1118,7 @@ fn write_entry(ppt_name: String) {
 }
 
 // Helper to write function exits into the decls file.
-fn write_exit(ppt_name: String, exit_counter: usize) {
+fn write_exit(ppt_name: &str, exit_counter: usize) {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
         Some(decls) => {
@@ -1158,7 +1158,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
         &mut self,
         expr: &Box<Expr>,
         exit_counter: &mut usize,
-        ppt_name: String,
+        ppt_name: &str,
         param_decls: &mut Vec<TopLevlDecl<'_>>,
         param_to_block_idx: &HashMap<String, i32>,
         ret_ty: &FnRetTy,
@@ -1166,7 +1166,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
         match &expr.kind {
             ExprKind::Block(block, _) => {
                 self.grok_block(
-                    ppt_name.clone(),
+                    ppt_name,
                     block,
                     param_decls,
                     &param_to_block_idx,
@@ -1176,7 +1176,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
             }
             ExprKind::If(_, if_block, None) => {
                 self.grok_block(
-                    ppt_name.clone(),
+                    ppt_name,
                     if_block,
                     param_decls,
                     &param_to_block_idx,
@@ -1186,7 +1186,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
             }
             ExprKind::If(_, if_block, Some(another_expr)) => {
                 self.grok_block(
-                    ppt_name.clone(),
+                    ppt_name,
                     if_block,
                     param_decls,
                     &param_to_block_idx,
@@ -1196,7 +1196,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 self.grok_expr_for_if(
                     another_expr,
                     exit_counter,
-                    ppt_name.clone(),
+                    ppt_name,
                     param_decls,
                     &param_to_block_idx,
                     &ret_ty,
@@ -1214,7 +1214,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
         loc: usize,
         body: &Box<Block>,
         exit_counter: &mut usize,
-        ppt_name: String,
+        ppt_name: &str,
         param_decls: &mut Vec<TopLevlDecl<'_>>,
         param_to_block_idx: &HashMap<String, i32>,
         ret_ty: &FnRetTy,
@@ -1234,7 +1234,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 // move to the next stmt (return i+1).
                 ExprKind::Block(block, _) => {
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         block,
                         param_decls,
                         &param_to_block_idx,
@@ -1246,7 +1246,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 ExprKind::If(_, if_block, None) => {
                     // no else.
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         if_block,
                         param_decls,
                         &param_to_block_idx,
@@ -1258,7 +1258,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 ExprKind::If(_, if_block, Some(expr)) => {
                     // yes else.
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         if_block,
                         param_decls,
                         &param_to_block_idx,
@@ -1269,7 +1269,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     self.grok_expr_for_if(
                         expr,
                         exit_counter,
-                        ppt_name.clone(),
+                        ppt_name,
                         param_decls,
                         &param_to_block_idx,
                         &ret_ty,
@@ -1278,7 +1278,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 }
                 ExprKind::While(_, while_block, _) => {
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         while_block,
                         param_decls,
                         &param_to_block_idx,
@@ -1289,7 +1289,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 }
                 ExprKind::ForLoop { pat: _, iter: _, body: for_block, label: _, kind: _ } => {
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         for_block,
                         param_decls,
                         &param_to_block_idx,
@@ -1300,7 +1300,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 }
                 ExprKind::Loop(loop_block, _, _) => {
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         loop_block,
                         param_decls,
                         &param_to_block_idx,
@@ -1315,7 +1315,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
             // be identifiable by an explicit return stmt.
             StmtKind::Semi(semi) => match &semi.kind {
                 ExprKind::Ret(None) => {
-                    write_exit(ppt_name.clone(), *exit_counter);
+                    write_exit(ppt_name, *exit_counter);
                     *exit_counter += 1;
                     for idx in 0..param_decls.len() {
                         param_decls[idx].write();
@@ -1327,7 +1327,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     i += 1;
                 }
                 ExprKind::Ret(Some(_)) => {
-                    write_exit(ppt_name.clone(), *exit_counter);
+                    write_exit(ppt_name, *exit_counter);
                     *exit_counter += 1;
                     for idx in 0..param_decls.len() {
                         param_decls[idx].write();
@@ -1492,7 +1492,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
     #[allow(rustc::default_hash_types)]
     fn grok_block(
         &mut self,
-        ppt_name: String,
+        ppt_name: &str,
         body: &Box<Block>,
         param_decls: &mut Vec<TopLevlDecl<'_>>,
         param_to_block_idx: &HashMap<String, i32>,
@@ -1508,7 +1508,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 i,
                 body,
                 exit_counter,
-                ppt_name.clone(),
+                ppt_name,
                 param_decls,
                 &param_to_block_idx,
                 &ret_ty,
@@ -1529,7 +1529,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
     #[allow(rustc::default_hash_types)]
     fn grok_fn_body(
         &mut self,
-        ppt_name: String,
+        ppt_name: &str,
         body: &Box<Block>,
         param_decls: &mut Vec<TopLevlDecl<'_>>,
         param_to_block_idx: HashMap<String, i32>,
@@ -1545,7 +1545,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 i,
                 body,
                 &mut exit_counter,
-                ppt_name.clone(),
+                ppt_name,
                 param_decls,
                 &param_to_block_idx,
                 &ret_ty,
@@ -1693,8 +1693,8 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
         match &fk {
             FnKind::Fn(_, _, f) => {
                 if !f.ident.as_str().starts_with("dtrace") {
-                    let ppt_name = String::from(f.ident.as_str());
-                    write_entry(ppt_name.clone());
+                    let ppt_name = f.ident.as_str();
+                    write_entry(ppt_name);
                     let param_to_block_idx = map_params(&f.sig.decl);
                     let mut param_decls = grok_fn_sig(&f.sig.decl, self.map, self.depth_limit);
                     for i in 0..param_decls.len() {
@@ -1707,7 +1707,7 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                             // By now, all exit ppts are
                             // explicit Semi(Ret) stmts.
                             self.grok_fn_body(
-                                ppt_name.clone(),
+                                ppt_name,
                                 body,
                                 &mut param_decls,
                                 param_to_block_idx,

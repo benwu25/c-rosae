@@ -2021,7 +2021,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 i,
                 body,
                 &mut exit_counter,
-                &ppt_name,
+                ppt_name,
                 dtrace_param_blocks,
                 &param_to_block_idx,
                 &ret_ty,
