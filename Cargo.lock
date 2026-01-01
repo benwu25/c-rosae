@@ -4406,6 +4406,7 @@ name = "rustc_parse"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "rustc-hash 2.1.1",
  "rustc-literal-escaper",
  "rustc_ast",
  "rustc_ast_pretty",
