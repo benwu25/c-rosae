@@ -343,7 +343,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         &mut self,
         expr: &mut Box<Expr>,
         exit_counter: &mut usize,
-        ppt_name: String,
+        ppt_name: &str,
         dtrace_param_blocks: &mut Vec<String>,
         param_to_block_idx: &HashMap<String, i32>,
         ret_ty: &FnRetTy,
@@ -352,7 +352,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         match &mut expr.kind {
             ExprKind::Block(block, _) => {
                 self.grok_block(
-                    ppt_name.clone(),
+                    ppt_name,
                     block,
                     dtrace_param_blocks,
                     &param_to_block_idx,
@@ -363,7 +363,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             }
             ExprKind::If(_, if_block, None) => {
                 self.grok_block(
-                    ppt_name.clone(),
+                    ppt_name,
                     if_block,
                     dtrace_param_blocks,
                     &param_to_block_idx,
@@ -374,7 +374,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             }
             ExprKind::If(_, if_block, Some(another_expr)) => {
                 self.grok_block(
-                    ppt_name.clone(),
+                    ppt_name,
                     if_block,
                     dtrace_param_blocks,
                     &param_to_block_idx,
@@ -385,7 +385,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 self.grok_expr_for_if(
                     another_expr,
                     exit_counter,
-                    ppt_name.clone(),
+                    ppt_name,
                     dtrace_param_blocks,
                     &param_to_block_idx,
                     &ret_ty,
@@ -418,13 +418,13 @@ impl<'a> DaikonDtraceVisitor<'a> {
         ret_expr: &Expr, // &Box<Expr>?
         body: &mut Box<Block>,
         exit_counter: &mut usize,
-        ppt_name: String,
+        ppt_name: &str,
         dtrace_param_blocks: &mut Vec<String>,
         ret_ty: &FnRetTy,
         daikon_tmp_counter: &mut u32,
     ) {
         let exit = build_instrument_code(
-            vec![ppt_name.clone(), String::from(&*exit_counter.to_string())],
+            vec![String::from(ppt_name), String::from(&*exit_counter.to_string())],
             DTRACE_EXIT,
         );
         *exit_counter += 1;
@@ -632,7 +632,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         loc: usize,
         body: &mut Box<Block>,
         exit_counter: &mut usize,
-        ppt_name: String,
+        ppt_name: &str,
         dtrace_param_blocks: &mut Vec<String>,
         param_to_block_idx: &HashMap<String, i32>,
         ret_ty: &FnRetTy,
@@ -654,7 +654,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 // move to the next stmt (return i+1)
                 ExprKind::Block(block, _) => {
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         block,
                         dtrace_param_blocks,
                         &param_to_block_idx,
@@ -667,7 +667,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 ExprKind::If(_, if_block, None) => {
                     // no else
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         if_block,
                         dtrace_param_blocks,
                         &param_to_block_idx,
@@ -680,7 +680,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 ExprKind::If(_, if_block, Some(expr)) => {
                     // yes else
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         if_block,
                         dtrace_param_blocks,
                         &param_to_block_idx,
@@ -692,7 +692,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     self.grok_expr_for_if(
                         expr,
                         exit_counter,
-                        ppt_name.clone(),
+                        ppt_name,
                         dtrace_param_blocks,
                         &param_to_block_idx,
                         &ret_ty,
@@ -702,7 +702,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 ExprKind::While(_, while_block, _) => {
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         while_block,
                         dtrace_param_blocks,
                         &param_to_block_idx,
@@ -714,7 +714,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 ExprKind::ForLoop { pat: _, iter: _, body: for_block, label: _, kind: _ } => {
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         for_block,
                         dtrace_param_blocks,
                         &param_to_block_idx,
@@ -726,7 +726,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 ExprKind::Loop(loop_block, _, _) => {
                     self.grok_block(
-                        ppt_name.clone(),
+                        ppt_name,
                         loop_block,
                         dtrace_param_blocks,
                         &param_to_block_idx,
@@ -744,7 +744,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             Some(bd) => match &mut bd.kind {
                                 ExprKind::Block(_block, _) => {
                                     // TODO: remove this commented code.
-                                    // self.grok_block(ppt_name.clone(),
+                                    // self.grok_block(ppt_name,
                                     //                 block,
                                     //                 dtrace_param_blocks,
                                     //                 &param_to_block_idx,
@@ -771,7 +771,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             StmtKind::Semi(semi) => match &semi.kind {
                 ExprKind::Ret(None) => {
                     let exit = build_instrument_code(
-                        vec![ppt_name.clone(), String::from(&*exit_counter.to_string())],
+                        vec![String::from(ppt_name), String::from(&*exit_counter.to_string())],
                         DTRACE_EXIT,
                     );
                     *exit_counter += 1;
@@ -795,7 +795,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         &return_expr,
                         body,
                         exit_counter,
-                        ppt_name.clone(),
+                        ppt_name,
                         dtrace_param_blocks,
                         ret_ty,
                         daikon_tmp_counter,
@@ -818,7 +818,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     &no_semi_expr,
                     body,
                     exit_counter,
-                    ppt_name.clone(),
+                    ppt_name,
                     dtrace_param_blocks,
                     ret_ty,
                     daikon_tmp_counter,
@@ -1614,7 +1614,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     #[allow(rustc::default_hash_types)]
     fn grok_block(
         &mut self,
-        ppt_name: String,
+        ppt_name: &str,
         body: &mut Box<Block>,
         dtrace_param_blocks: &mut Vec<String>,
         param_to_block_idx: &HashMap<String, i32>,
@@ -1630,7 +1630,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 i,
                 body,
                 exit_counter,
-                ppt_name.clone(),
+                ppt_name,
                 dtrace_param_blocks,
                 &param_to_block_idx,
                 &ret_ty,
@@ -1644,7 +1644,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     #[allow(rustc::default_hash_types)]
     fn grok_fn_body(
         &mut self,
-        ppt_name: String,
+        ppt_name: &str,
         body: &mut Box<Block>,
         dtrace_param_blocks: &mut Vec<String>,
         param_to_block_idx: HashMap<String, i32>,
@@ -1663,7 +1663,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // Currently there is a nonce counter per file which is not correct.
         i = self.insert_into_block(i, build_instrument_code(vec![], INIT_NONCE), body);
 
-        let entry = build_instrument_code(vec![ppt_name.clone()], DTRACE_ENTRY);
+        let entry = build_instrument_code(vec![String::from(ppt_name)], DTRACE_ENTRY);
         i = self.insert_into_block(i, entry, body);
         for param_block in &mut *dtrace_param_blocks {
             i = self.insert_into_block(i, param_block.clone(), body);
@@ -1693,7 +1693,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 i,
                 body,
                 &mut exit_counter,
-                ppt_name.clone(),
+                ppt_name,
                 dtrace_param_blocks,
                 &param_to_block_idx,
                 &ret_ty,
@@ -1719,7 +1719,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
     ) {
         match &mut fk {
             FnKind::Fn(_, _, f) => {
-                let ppt_name = String::from(f.ident.as_str());
+                let ppt_name = f.ident.as_str();
                 if ppt_name == "execute" {
                     return;
                 }
@@ -1732,7 +1732,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                     None => {}
                     Some(body) => {
                         self.grok_fn_body(
-                            ppt_name.clone(),
+                            ppt_name,
                             body,
                             &mut dtrace_param_blocks,
                             param_to_block_idx,
