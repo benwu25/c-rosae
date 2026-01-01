@@ -220,7 +220,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
             RustType::UserDef(basic_type) => RustType::UserDefArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
         },
-        // TODO: implement logging and handling for Rust pointers.
+        // FIXME: implement logging and handling for Rust pointers.
         TyKind::Ptr(_mut_ty) => RustType::Error,
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
@@ -246,7 +246,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
     }
 }
 
-// TODO: replace this idea with better data structures for the logging code.
+// FIXME: replace this idea with better data structures for the logging code.
 // Unused. This was intended to allow easy invalidation
 // of parameters. E.g., if parameter x was invalidated with
 // drop(x), we need to know which idx it belongs to in our
@@ -269,7 +269,7 @@ fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
 if cond { return; } else { return; }
 */
 // In this case, an extra void return is unreachable.
-// TODO: handle checking for exhaustive control flow with
+// FIXME: handle checking for exhaustive control flow with
 // explicit void returns.
 fn last_stmt_is_void_return(block: &Box<Block>) -> bool {
     if block.stmts.len() == 0 {
@@ -397,7 +397,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
     }
 
-    // TODO: noted elsewhere, but also here: implement data structures
+    // FIXME: noted elsewhere, but also here: implement data structures
     // to store exit ppt information rather than in dtrace_param_blocks
     // as a string. This allows for much greater flexibility, and avoids
     // parse errors deep in the instrumentation pipeline.
@@ -433,7 +433,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         )
         .unwrap();
         *exit_counter += 1;
-        // TODO: create methods specialized for common tasks like
+        // FIXME: create methods specialized for common tasks like
         // creating exit ppts, which both do substitute and
         // also do operations like increment exit_counter.
 
@@ -807,7 +807,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             None => {}
                             Some(bd) => match &mut bd.kind {
                                 ExprKind::Block(_block, _) => {
-                                    // TODO: remove this commented code.
+                                    // FIXME: remove this commented code.
                                     // self.grok_block(ppt_name,
                                     //                 block,
                                     //                 dtrace_param_blocks,
@@ -816,7 +816,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                     //                 exit_counter,
                                     //                 daikon_tmp_counter);
                                 }
-                                _ => {} // TODO: more careful analysis on whether this is supposed to be a return expr or not, e.g. println/panic vs 7.
+                                _ => {} // FIXME: more careful analysis on whether this is supposed to be a return expr or not, e.g. println/panic vs 7.
                             },
                         }
                     }
@@ -927,11 +927,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
             ItemKind::Impl(i) => i,
             _ => panic!("Base impl is not impl"),
         };
-        // TODO: remove this.
+        // FIXME: remove this.
         // let spliced_struct = splice_struct(&pp_struct);
-        // let struct_as_ret = build_phony_ret(spliced_struct.clone()); // TODO: fix splice string to handle pub keyword
+        // let struct_as_ret = build_phony_ret(spliced_struct.clone()); // FIXME: fix splice string to handle pub keyword
         the_impl.self_ty = Box::new(struct_ty.clone());
-        // TODO: remove this.
+        // FIXME: remove this.
         // match &self.parser.parse_items_from_string(struct_as_ret) {
         //     Err(_why) => panic!("Parsing phony arg failed"),
         //     Ok(arg_items) => match &arg_items[0].kind {
@@ -971,7 +971,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             },
         }
 
-        // TODO: remove this.
+        // FIXME: remove this.
         // build dtrace_print_xfield_vec (AND dtrace_print_xfield...) here, then that should be it for generating fns in the impl.
         let dtrace_print_xfields = self.build_dtrace_print_xfield_vec(&plain_struct, struct_fields);
         match &self.parser.parse_items_from_string(dtrace_print_xfields) {
@@ -995,7 +995,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // or mutations will be done to this generated code.
     // Additionally, for any Vec or array fields, adds a function
     // which is responsible for logging the field in pointer format.
-    // TODO: write a small example input/output.
+    // FIXME: write a small example input/output.
     fn build_dtrace_print_xfield_vec(
         &mut self,
         plain_struct: &String,
@@ -1037,7 +1037,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 ("output_prefix", &*OUTPUT_PREFIX.lock().unwrap()),
                             ]),
                         )
-                        .unwrap() // TODO: change this name to involve vec to be clear.
+                        .unwrap() // FIXME: change this name to involve vec to be clear.
                     }
                 }
                 RustType::PrimVec(p_type) => {
@@ -1168,7 +1168,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     .unwrap();
                     format!("{}\n{}", f1, f2)
                 }
-                // TODO: arrays, mighty similar to vec. Maybe you can cheat and just do the exact same thing... use | in pattern matching.
+                // FIXME: arrays, mighty similar to vec. Maybe you can cheat and just do the exact same thing... use | in pattern matching.
                 // Except pointer is diff, as_ptr() as usize vs as *const _ as *const () as usize...
                 RustType::PrimArray(p_type) => {
                     // UNTRUSTED:
@@ -1536,7 +1536,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut dtrace_print_fields: String = DTRACE_PRINT_FIELDS_PROLOGUE.to_string();
 
         for i in 0..fields.len() {
-            // TODO: remove and add tests for private fields.
+            // FIXME: remove and add tests for private fields.
             // Make all fields public for access in dtrace routines.
             fields[i].vis.kind = VisibilityKind::Public;
 
@@ -1589,7 +1589,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         .unwrap()
                     }
                 }
-                // TODO: use the | operator here.
+                // FIXME: use the | operator here.
                 RustType::PrimVec(_) => substitute(
                     DTRACE_CALL_PRINT_FIELD,
                     &FxHashMap::from_iter([("field_name", &field_name)]),
@@ -1627,7 +1627,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         format!("{}{}", dtrace_print_fields, DTRACE_PRINT_FIELDS_EPILOGUE)
     }
 
-    // TODO: dtrace calls should be represented with a better data structures rather than
+    // FIXME: dtrace calls should be represented with a better data structures rather than
     // Strings.
     // Given a function signature, generate a set of dtrace calls for each parameter,
     // such as logging a pointer value and logging contents for structs. These
@@ -1978,7 +1978,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     ) {
         let mut i = 0;
 
-        // TODO: implement a similar fix for this
+        // FIXME: implement a similar fix for this
         // How nonces should be done--
         //   lock a global counter shared by all threads
         //   store its current value
@@ -2075,7 +2075,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
 
     // Visit all structs and generate new impl blocks with dtrace
     // routine definitions.
-    // TODO: look up struct names in a /tmp file to determine
+    // FIXME: look up struct names in a /tmp file to determine
     //       whether to continue or not.
     fn visit_item(&mut self, item: &mut Item) {
         match &mut item.kind {
@@ -2284,7 +2284,7 @@ impl<'a> Parser<'a> {
             writeln!(&mut pp, "{}", pprust::item_to_string(&items[items.len() - 1])).ok(); // no newline
 
             // add imports.
-            // TODO: you should check if these imports are already included.
+            // FIXME: you should check if these imports are already included.
             match &self.parse_items_from_string(IMPORTS.to_string()) {
                 Err(_why) => panic!("Can't parse imports"),
                 Ok(prepend_items) => {

@@ -1,4 +1,4 @@
-// TODO: add one test for each String.
+// FIXME: add one test for each String.
 
 // Proper primitive types
 // i8, i16, i32, i64, i128 and isize
@@ -100,7 +100,7 @@ pub(crate) static DTRACE_PRIM_FIELD_TOSTRING: &str =
 // $2: Field name.
 pub(crate) static DTRACE_PRIM_STRUCT: &str = "dtrace_print_prim::<${type}>(self.${field_name}, format!(\"{}{}\", prefix, \".${field_name}\"));";
 
-// TODO: if you have Vec<&'a &'b i32>, you will probably have to make a new Vec<i32> like this
+// FIXME: if you have Vec<&'a &'b i32>, you will probably have to make a new Vec<i32> like this
 //       to satisfy dtrace_print_prim_vec<T>(v: &Vec<T>).
 
 // Build log stmt for fields with primitive reference type.
@@ -202,7 +202,7 @@ fn __skip() {
         __daikon_tmp${next_tmp} += 1;
     }";
 
-// TODO: use this for params/returns where you have Vec<Type>.
+// FIXME: use this for params/returns where you have Vec<Type>.
 pub(crate) static DAIKON_TMP_VEC_AMPERSAND: &str = "
 fn __skip() {
     let mut __daikon_tmp${first_tmp}: Vec<&${type}> = Vec::new();
@@ -230,7 +230,7 @@ pub(crate) static DTRACE_TMP_VEC_FOR_FIELD: &str = "
         __daikon_tmp${next_tmp} += 1
     }";
 
-// TODO: use this for fields which are f: Vec<Type> or f: &Vec<Type>, need to use &.
+// FIXME: use this for fields which are f: Vec<Type> or f: &Vec<Type>, need to use &.
 pub(crate) static DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND: &str = "
     let mut __daikon_tmp${first_tmp}: Vec<&${type}> = Vec::new();
     let mut __daikon_tmp${next_tmp} = 0;
