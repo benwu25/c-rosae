@@ -48,12 +48,12 @@ pub static OUTPUT_PREFIX: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(
 // True if we are not bootstrapping the standard library.
 pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
 
-// For generating unique names for auxiliary files to parse in parse_items_from_string.
+// For generating unique names for auxiliary files to parse in parse_items_from_source_str{,ing}.
 static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 
 /*
-   Primary visitor pass for dtrace instrumentation.
-*/
+Primary visitor pass for dtrace instrumentation.
+ */
 struct DaikonDtraceVisitor<'a> {
     // For parsing string fragments.
     pub parser: &'a Parser<'a>,
@@ -287,10 +287,10 @@ fn last_stmt_is_void_return(block: &Box<Block>) -> bool {
 }
 
 impl<'a> DaikonDtraceVisitor<'a> {
-    // Given a block of stmts in a String and a block, append parsed stmts
-    // to the end of the block.
-    fn append_to_block(&self, stuff: String, block: &mut Box<Block>) {
-        match &self.parser.parse_items_from_string(stuff.clone()) {
+    // Given a block of stmts in a String and a block, parse the string
+    // and append parsed stmts to the end of the block.
+    fn append_to_block(&self, to_insert: &str, block: &mut Box<Block>) {
+        match &self.parser.parse_items_from_source_str(to_insert) {
             Err(_why) => panic!("Parsing internal String failed"),
             Ok(items) => match &items[0].kind {
                 ItemKind::Fn(wrapper) => match &wrapper.body {
@@ -307,10 +307,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
     }
 
     // Given a block of stmts in a String, a block, and an idx into the block,
-    // insert parsed stmts at the specified index.
-    fn insert_into_block(&self, loc: usize, stuff: String, block: &mut Box<Block>) -> usize {
+    // parse the string and insert parsed stmts at the specified index.
+    fn insert_into_block(&self, loc: usize, to_insert: &str, block: &mut Box<Block>) -> usize {
         let mut i = loc;
-        let items = self.parser.parse_items_from_string(stuff.clone());
+        let items = self.parser.parse_items_from_source_str(to_insert);
         match &items {
             Err(_why) => panic!("Internal String parsing failed"),
             Ok(items) => match &items[0].kind {
@@ -439,10 +439,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // creating exit ppts, which both do substitute and
         // also do operations like increment exit_counter.
 
-        *i = self.insert_into_block(*i, exit, body);
+        *i = self.insert_into_block(*i, &exit, body);
 
         for param_block in &mut *dtrace_param_blocks {
-            *i = self.insert_into_block(*i, param_block.clone(), body);
+            *i = self.insert_into_block(*i, &param_block, body);
         }
 
         let mut ret_is_ref = false;
@@ -461,7 +461,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             &FxHashMap::from_iter([("type", pprust::ty_to_string(&pr_ty)), ("expr", expr)]),
         )
         .unwrap();
-        *i = self.insert_into_block(*i, ret_let, body);
+        *i = self.insert_into_block(*i, &ret_let, body);
         match &r_ty {
             RustType::Prim(p_type) => {
                 let prim_record_ret = if p_type == "String" || p_type == "str" {
@@ -486,7 +486,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 } else {
                     substitute(DTRACE_PRIM_RET, &FxHashMap::from_iter([("type", p_type)])).unwrap()
                 };
-                *i = self.insert_into_block(*i, prim_record_ret, body);
+                *i = self.insert_into_block(*i, &prim_record_ret, body);
             }
             RustType::UserDef(_) => {
                 if ret_is_ref == false {
@@ -495,12 +495,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         &FxHashMap::from_iter([("depth", "3")]),
                     )
                     .unwrap();
-                    *i = self.insert_into_block(*i, userdef_record_ret, body);
+                    *i = self.insert_into_block(*i, &userdef_record_ret, body);
                 } else {
                     let userdef_record_ret =
                         substitute(DTRACE_USERDEF_RET, &FxHashMap::from_iter([("depth", "3")]))
                             .unwrap();
-                    *i = self.insert_into_block(*i, userdef_record_ret, body);
+                    *i = self.insert_into_block(*i, &userdef_record_ret, body);
                 }
             }
             RustType::PrimVec(p_type) => {
@@ -540,7 +540,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     DTRACE_VEC_POINTER_RET,
                     print_vec.clone()
                 );
-                *i = self.insert_into_block(*i, prim_vec_record_ret, body);
+                *i = self.insert_into_block(*i, &prim_vec_record_ret, body);
             }
             RustType::UserDefVec(basic_type) => {
                 let first_tmp = &daikon_tmp_counter.to_string();
@@ -579,7 +579,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     )
                     .unwrap()
                 );
-                *i = self.insert_into_block(*i, userdef_vec_record_ret, body);
+                *i = self.insert_into_block(*i, &userdef_vec_record_ret, body);
             }
             RustType::PrimArray(p_type) => {
                 let first_tmp = &daikon_tmp_counter.to_string();
@@ -621,7 +621,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     BUILD_POINTER_ARR_RET,
                     print_vec.clone()
                 );
-                *i = self.insert_into_block(*i, prim_vec_record_ret, body);
+                *i = self.insert_into_block(*i, &prim_vec_record_ret, body);
             }
             RustType::UserDefArray(basic_type) => {
                 let first_tmp = &daikon_tmp_counter.to_string();
@@ -660,16 +660,16 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     )
                     .unwrap(),
                 );
-                *i = self.insert_into_block(*i, userdef_vec_record_ret, body);
+                *i = self.insert_into_block(*i, &userdef_vec_record_ret, body);
             }
             RustType::NoRet => {}
             RustType::Error => panic!("ret_ty is RustType::Error"),
         }
 
-        *i = self.insert_into_block(*i, DTRACE_NEWLINE.to_string(), body);
+        *i = self.insert_into_block(*i, DTRACE_NEWLINE, body);
 
-        let ret = RET.to_string();
-        *i = self.insert_into_block(*i, ret.to_string(), body);
+        let ret = RET;
+        *i = self.insert_into_block(*i, ret, body);
 
         // remove old return stmt
         body.stmts.remove(*i);
@@ -845,15 +845,15 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     )
                     .unwrap();
                     *exit_counter += 1;
-                    i = self.insert_into_block(i, exit.clone(), body);
+                    i = self.insert_into_block(i, &exit, body);
                     for param_block in &mut *dtrace_param_blocks {
                         // DAIKON TMP ERROR: you will end up using the same __daikon_tmpX values,
                         // but Rust doesn't care. Not high-priority, just weird to see
                         // let __daikon_tmp7 = ... twice in the same scope.
-                        i = self.insert_into_block(i, param_block.clone(), body);
+                        i = self.insert_into_block(i, &param_block, body);
                     }
 
-                    i = self.insert_into_block(i, DTRACE_NEWLINE.to_string(), body);
+                    i = self.insert_into_block(i, DTRACE_NEWLINE, body);
 
                     // we're sitting on the void return we just processed, so inc
                     // to move on.
@@ -905,7 +905,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // This will be transformed into a new impl with dtrace routines.
     fn base_impl_item(&mut self) -> Box<Item> {
         let base_impl = BUILD_A_IMPL_BLOCK;
-        let base_impl_item = self.parser.parse_items_from_string(base_impl.to_string());
+        let base_impl_item = self.parser.parse_items_from_source_str(base_impl);
         match &base_impl_item {
             Err(_why) => panic!("Parsing base impl failed"),
             Ok(base_impl_item) => base_impl_item[0].clone(),
@@ -934,7 +934,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // let struct_as_ret = build_phony_ret(spliced_struct.clone()); // FIXME: fix splice string to handle pub keyword
         the_impl.self_ty = Box::new(struct_ty.clone());
         // FIXME: remove this.
-        // match &self.parser.parse_items_from_string(struct_as_ret) {
+        // match &self.parser.parse_items_from_source_str(struct_as_ret) {
         //     Err(_why) => panic!("Parsing phony arg failed"),
         //     Ok(arg_items) => match &arg_items[0].kind {
         //         ItemKind::Fn(phony) => match &phony.sig.decl.output {
@@ -947,7 +947,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         the_impl.generics = struct_generics.clone();
 
         let dtrace_print_fields_fn = self.build_dtrace_print_fields(struct_fields);
-        match &self.parser.parse_items_from_string(dtrace_print_fields_fn) {
+        match &self.parser.parse_items_from_source_string(dtrace_print_fields_fn) {
             Err(_why) => panic!("Parsing dtrace_print_fields failed"),
             Ok(items) => match &items[0].kind {
                 ItemKind::Impl(tmp_impl) => {
@@ -962,8 +962,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
             _ => panic!("Why don't we have a path?"),
         };
         let dtrace_print_fields_vec =
-            self.build_dtrace_print_fields_vec(plain_struct.as_str(), struct_fields);
-        match &self.parser.parse_items_from_string(dtrace_print_fields_vec) {
+            self.build_dtrace_print_fields_vec(&plain_struct, struct_fields);
+        match &self.parser.parse_items_from_source_string(dtrace_print_fields_vec) {
             Err(_) => panic!("Parsing dtrace_print_fields_vec failed"),
             Ok(items) => match &items[0].kind {
                 ItemKind::Impl(tmp_impl) => {
@@ -976,7 +976,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // FIXME: remove this.
         // build dtrace_print_xfield_vec (AND dtrace_print_xfield...) here, then that should be it for generating fns in the impl.
         let dtrace_print_xfields = self.build_dtrace_print_xfield_vec(&plain_struct, struct_fields);
-        match &self.parser.parse_items_from_string(dtrace_print_xfields) {
+        match &self.parser.parse_items_from_source_string(dtrace_print_xfields) {
             Err(_) => panic!("Parsing dtrace_print_xfields failed"),
             Ok(items) => match &items[0].kind {
                 ItemKind::Impl(tmp_impl) => {
@@ -1988,15 +1988,15 @@ impl<'a> DaikonDtraceVisitor<'a> {
         //   unlock
         //   use the stored value at all exit points in this function
         // Currently there is a nonce counter per file which is not correct.
-        i = self.insert_into_block(i, INIT_NONCE.to_string(), body);
+        i = self.insert_into_block(i, INIT_NONCE, body);
 
         let entry =
             substitute(DTRACE_ENTRY, &FxHashMap::from_iter([("ppt_name", ppt_name)])).unwrap();
-        i = self.insert_into_block(i, entry, body);
+        i = self.insert_into_block(i, &entry, body);
         for param_block in &mut *dtrace_param_blocks {
-            i = self.insert_into_block(i, param_block.clone(), body);
+            i = self.insert_into_block(i, &param_block, body);
         }
-        i = self.insert_into_block(i, DTRACE_NEWLINE.to_string(), body);
+        i = self.insert_into_block(i, DTRACE_NEWLINE, body);
 
         // Before grokking fn body, turn implicit void return into "return;".
         // This may be unreachable in some situations like
@@ -2007,7 +2007,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         match &ret_ty {
             FnRetTy::Default(_) => {
                 if body.stmts.len() == 0 || !last_stmt_is_void_return(body) {
-                    self.append_to_block(VOID_RETURN.to_string(), body);
+                    self.append_to_block(VOID_RETURN, body);
                 }
             }
             _ => {}
@@ -2152,10 +2152,17 @@ impl<'a> Parser<'a> {
         Ok(ItemKind::Mod(safety, ident, mod_kind))
     }
 
+    // Convert &str to items. We create a new file dtrace_parserX each time we want to
+    // parse some new items vec. Diagnostics sometimes point to these files for unknown
+    // reasons.
+    pub fn parse_items_from_source_str(&self, source: &str) -> PResult<'a, ThinVec<Box<Item>>> {
+        self.parse_items_from_source_string(String::from(source))
+    }
+
     // Convert String to items. We create a new file dtrace_parserX each time we want to
     // parse some new items vec. Diagnostics sometimes point to these files for unknown
     // reasons.
-    pub fn parse_items_from_string(&self, source: String) -> PResult<'a, ThinVec<Box<Item>>> {
+    pub fn parse_items_from_source_string(&self, source: String) -> PResult<'a, ThinVec<Box<Item>>> {
         let count = *PARSER_COUNTER.lock().unwrap();
         let mut tmp_parser = unwrap_or_emit_fatal(new_parser_from_source_str(
             &self.psess,
@@ -2287,7 +2294,7 @@ impl<'a> Parser<'a> {
 
             // add imports.
             // FIXME: you should check if these imports are already included.
-            match &self.parse_items_from_string(IMPORTS.to_string()) {
+            match &self.parse_items_from_source_str(IMPORTS) {
                 Err(_why) => panic!("Can't parse imports"),
                 Ok(prepend_items) => {
                     for item in prepend_items {
@@ -2297,7 +2304,7 @@ impl<'a> Parser<'a> {
             }
 
             // add daikon library.
-            match &self.parse_items_from_string(String::from(DAIKON_LIB)) {
+            match &self.parse_items_from_source_str(DAIKON_LIB) {
                 Err(_why) => panic!("Can't parse daikon lib"),
                 Ok(lib_items) => {
                     for item in lib_items {
