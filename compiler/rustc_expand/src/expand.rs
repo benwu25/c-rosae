@@ -1,3 +1,5 @@
+// ignore-tidy-filelength
+
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;

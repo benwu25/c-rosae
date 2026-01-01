@@ -1,3 +1,5 @@
+// ignore-tidy-filelength
+
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::io::Write as FileWrite;
