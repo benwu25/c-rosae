@@ -506,7 +506,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             RustType::PrimVec(p_type) => {
                 let first_tmp: &str = &daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
-                let next_tmp: &str = &daikon_tmp_counter.to_string();
+                let next_tmp = &daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let print_vec = if p_type == "String" || p_type == "str" {
                     substitute(
@@ -1045,7 +1045,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 RustType::PrimVec(p_type) => {
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp: &str = &daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let print_vec = if p_type == "String" || p_type == "str" {
                         substitute(
@@ -1103,7 +1103,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 RustType::UserDefVec(basic_struct) => {
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp: &str = &daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     // We maintain that is_ref represents Vec/array args in this case.
                     let tmp_vec = if is_ref {
@@ -1176,7 +1176,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     // UNTRUSTED:
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp: &str = &daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let print_vec = if p_type == "String" || p_type == "str" {
                         substitute(
@@ -1235,7 +1235,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     // UNTRUSTED:
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp: &str = &daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     // We maintain that is_ref represents Vec/array args in this case.
                     let tmp_vec = if is_ref {
@@ -1335,7 +1335,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 RustType::Prim(_) => {
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp: &str = &daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
@@ -1362,7 +1362,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 RustType::UserDef(field_type) => {
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp: &str = &daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let tmp_vec = if !is_ref {
                         substitute(
@@ -1414,7 +1414,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 RustType::PrimVec(_) => {
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp: &str = &daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
@@ -1441,7 +1441,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 RustType::UserDefVec(_) => {
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp: &str = &daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
@@ -1469,7 +1469,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     // UNTRUSTED: is this exactly the same?
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp: &str = &daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
@@ -1497,7 +1497,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     // UNTRUSTED: is this exactly the same?
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp: &str = &daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
@@ -1703,7 +1703,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     RustType::PrimVec(p_type) => {
                         let first_tmp: &str = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let next_tmp: &str = &daikon_tmp_counter.to_string();
+                        let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let print_vec = if p_type == "String" || p_type == "str" {
                             substitute(
@@ -1749,9 +1749,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     }
                     RustType::UserDefVec(basic_type) => {
-                        let first_tmp: &str = &daikon_tmp_counter.to_string();
+                        let first_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let next_tmp: &str = &daikon_tmp_counter.to_string();
+                        let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let var_name = &get_param_ident(&decl.inputs[i].pat);
                         // We maintain that is_ref represents Vec/array argument in this case.
@@ -1810,7 +1810,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     RustType::PrimArray(p_type) => {
                         let first_tmp: &str = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let next_tmp: &str = &daikon_tmp_counter.to_string();
+                        let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let print_vec = if p_type == "String" || p_type == "str" {
                             substitute(
@@ -1856,9 +1856,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     }
                     RustType::UserDefArray(basic_type) => {
-                        let first_tmp: &str = &daikon_tmp_counter.to_string();
+                        let first_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let next_tmp: &str = &daikon_tmp_counter.to_string();
+                        let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let var_name = &get_param_ident(&decl.inputs[i].pat);
                         // We maintain that is_ref represents Vec/array argument in this case.
