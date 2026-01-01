@@ -10,6 +10,7 @@
 #![feature(if_let_guard)]
 #![feature(iter_intersperse)]
 #![feature(iter_order_by)]
+#![feature(str_as_str)]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
 

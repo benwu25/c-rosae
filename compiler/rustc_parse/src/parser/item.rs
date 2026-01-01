@@ -425,15 +425,15 @@ impl<'a> DaikonDtraceVisitor<'a> {
         ret_ty: &FnRetTy,
         daikon_tmp_counter: &mut u32,
     ) {
-        let exit = subst::substitute(DTRACE_EXIT,
-            HashMap::from([("ppt_name", ppt_name),
-                           ("exit_num", exit_counter.to_string())]));
+        let exit = substitute(DTRACE_EXIT,
+            &HashMap::from([("ppt_name", ppt_name),
+                ("exit_num", exit_counter.to_string())])).unwrap();
         *exit_counter += 1;
         // TODO: create methods specialized for common tasks like
-        // creating exit ppts, which both do subst::substitute and
+        // creating exit ppts, which both do substitute and
         // also do operations like increment exit_counter.
 
-        *i = self.insert_into_block(*i, exit.clone(), body);
+        *i = self.insert_into_block(*i, exit, body);
 
         for param_block in &mut *dtrace_param_blocks {
             *i = self.insert_into_block(*i, param_block.clone(), body);
@@ -450,40 +450,40 @@ impl<'a> DaikonDtraceVisitor<'a> {
         };
         // Process return expr
         let expr = pprust::expr_to_string(&ret_expr);
-        let ret_let = subst::substitute(DTRACE_CALL_PRINT_FIELD,
-                                    HashMap::from([("type", ret_let),
-                                    ("expr", body)]));
+        let ret_let = substitute(DTRACE_CALL_PRINT_FIELD,
+                                    &HashMap::from([("type", pprust::ty_to_string(&pr_ty)),
+                                        ("expr", expr)])).unwrap();
         *i = self.insert_into_block(*i, ret_let, body);
         match &r_ty {
             RustType::Prim(p_type) => {
                 let prim_record_ret = if p_type == "String" || p_type == "str" {
-                    subst::substitute(
+                    substitute(
                         DTRACE_PRIM_TOSTRING,
-                        HashMap::from([("var_name", "__daikon_ret"),
+                        &HashMap::from([("var_name", "__daikon_ret"),
                                        ("var_name_2", "return")])
-                    )
+                    ).unwrap()
                 } else if ret_is_ref {
-                    subst::substitute(
+                    substitute(
                         DTRACE_PRIM_REF,
-                        HashMap::from([("type", p_type),
-                                       ("var_name", "__daikon_ret"),
-                                       ("var_name_2", "__daikon_ret")
+                        &HashMap::from([("type", p_type),
+                            ("var_name", String::from("__daikon_ret")),
+                            ("var_name_2", String::from("__daikon_ret"))
                                       ])
-                    )
+                    ).unwrap()
                 } else {
-                    subst::substitute(DTRACE_PRIM_RET,
-                        HashMap::from([("type", p_type)]))
+                    substitute(DTRACE_PRIM_RET,
+                        &HashMap::from([("type", p_type)])).unwrap()
                 };
                 *i = self.insert_into_block(*i, prim_record_ret, body);
             }
             RustType::UserDef(_) => {
                 if ret_is_ref == false {
                     let userdef_record_ret =
-                        subst::substitute(USERDEF_RET_AMPERSAND, HashMap::from([("depth", "3")]));
+                        substitute(DTRACE_USERDEF_RET_AMPERSAND, &HashMap::from([("depth", "3")])).unwrap();
                     *i = self.insert_into_block(*i, userdef_record_ret, body);
                 } else {
                     let userdef_record_ret =
-                        subst::substitute(USERDEF_RET, HashMap::from([("depth", "3")]));
+                        substitute(DTRACE_USERDEF_RET, &HashMap::from([("depth", "3")])).unwrap();
                     *i = self.insert_into_block(*i, userdef_record_ret, body);
                 }
             }
@@ -493,25 +493,25 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 let next_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let print_vec = if p_type == "String" || p_type == "str" {
-                    subst::substitute(DTRACE_PRINT_STRING_VEC,
-                        HashMap::from([("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                            ("var_name", "return")])),
+                    substitute(DTRACE_PRINT_STRING_VEC,
+                        &HashMap::from([("tmp_uuid", first_tmp),
+                            ("var_name", String::from("return"))])).unwrap()
                 } else {
-                    subst::substitute(DTRACE_PRINT_PRIM_VEC,
-                        HashMap::from([
+                    substitute(DTRACE_PRINT_PRIM_VEC,
+                        &HashMap::from([
                             ("type", p_type),
-                            ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                            ("var_name", "return")]),
-                    )
+                            ("tmp_uuid", String::from(first_tmp)),
+                            ("var_name", String::from("return"))]),
+                    ).unwrap()
                 };
                 let prim_vec_record_ret = format!(
                     "{}\n{}\n{}",
-                    subst::substitute(DAIKON_TMP_VEC_PRIM,
-                        HashMap::from([
+                    substitute(DAIKON_TMP_VEC_PRIM,
+                        &HashMap::from([
                             ("first_tmp", first_tmp),
-                            ("type", p_type),
+                            ("type", String::from(p_type)),
                             ("next_tmp", next_tmp),
-                            ("var_name", "__daikon_ret")])),
+                            ("var_name", String::from("__daikon_ret"))])).unwrap(),
                     DTRACE_VEC_POINTER_RET,
                     print_vec.clone()
                 );
@@ -524,21 +524,21 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 *daikon_tmp_counter += 1;
                 let userdef_vec_record_ret = format!(
                     "{}\n{}\n{}\n{}",
-                    subst::substitute(DAIKON_TMP_VEC,
-                        HashMap::from([
+                    substitute(DAIKON_TMP_VEC,
+                        &HashMap::from([
                             ("first_tmp", first_tmp),
-                            ("basic_type", basic_type),
+                            ("basic_type", String::from(basic_type)),
                             ("next_tmp", next_tmp),
-                            ("var_name", "__daikon_ret")])),
+                            ("var_name", String::from("__daikon_ret"))])).unwrap(),
                     DTRACE_VEC_POINTER_RET,
-                    subst::substitute(DTRACE_PRINT_POINTER_VEC,
-                        HashMap::from([("type", basic_type),
-                            ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                            ("var_name", "return")])), // ?
-                    subst::substitute(DTRACE_VEC_FIELDS,
-                        HashMap::from([("plain_struct", basic_type),
-                            ("tmp_vec_name", format!("__daikon_tmp{}", first_tmp)),
-                            ("var_name", "return")]))
+                    substitute(DTRACE_PRINT_POINTER_VEC,
+                        &HashMap::from([("type", basic_type),
+                            ("tmp_uuid", String::from(first_tmp)),
+                            ("var_name", String::from("return"))])).unwrap(), // ?
+                    substitute(DTRACE_VEC_FIELDS,
+                        &HashMap::from([("plain_struct", basic_type),
+                            ("tmp_vec_name", String::from(first_tmp)),
+                            ("var_name", String::from("return"))])).unwrap()
                 );
                 *i = self.insert_into_block(*i, userdef_vec_record_ret, body);
             }
@@ -548,25 +548,25 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 let next_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let print_vec = if p_type == "String" || p_type == "str" {
-                    subst::substitute(DTRACE_PRINT_STRING_VEC,
-                        HashMap::from([("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                            ("var_name", "return")]))
+                    substitute(DTRACE_PRINT_STRING_VEC,
+                        &HashMap::from([("tmp_uuid", first_tmp),
+                            ("var_name", String::from("return"))])).unwrap()
                 } else {
-                    subst::substitute(DTRACE_PRINT_PRIM_VEC,
-                        HashMap::from([
+                    substitute(DTRACE_PRINT_PRIM_VEC,
+                        &HashMap::from([
                             ("type", p_type),
-                            ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                            ("var_name", "return")]),
-                    )
+                            ("tmp_uuid", String::from(first_tmp)),
+                            ("var_name", String::from("return"))]),
+                    ).unwrap()
                 };
                 let prim_vec_record_ret = format!(
                     "{}\n{}\n{}",
-                    subst::substitute(DAIKON_TMP_VEC_PRIM,
-                        HashMap::from([
+                    substitute(DAIKON_TMP_VEC_PRIM,
+                        &HashMap::from([
                             ("first_tmp", first_tmp),
-                            ("type", p_type),
+                            ("type", String::from(p_type)),
                             ("next_tmp", next_tmp),
-                            ("var_name", "__daikon_ret")])),
+                            ("var_name", String::from("__daikon_ret"))])).unwrap(),
                     BUILD_POINTER_ARR_RET,
                     print_vec.clone()
                 );
@@ -579,21 +579,21 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 *daikon_tmp_counter += 1;
                 let userdef_vec_record_ret = format!(
                     "{}\n{}\n{}\n{}",
-                    subst::substitute(DAIKON_TMP_VEC,
-                        HashMap::from([
+                    substitute(DAIKON_TMP_VEC,
+                        &HashMap::from([
                             ("first_tmp", first_tmp),
-                            ("basic_type", basic_type),
+                            ("basic_type", String::from(basic_type)),
                             ("next_tmp", next_tmp),
-                            ("var_name", "__daikon_ret")])),
+                            ("var_name", String::from("__daikon_ret"))])).unwrap(),
                     BUILD_POINTER_ARR_RET,
-                    subst::substitute(DTRACE_PRINT_POINTER_VEC,
-                        HashMap::from([("type", basic_type),
-                            ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                            ("var_name", "return")])),
-                    subst::substitute(DTRACE_VEC_FIELDS,
-                        HashMap::from([("type", basic_type),
-                            ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                            ("var_name", "return")])),
+                    substitute(DTRACE_PRINT_POINTER_VEC,
+                        &HashMap::from([("type", basic_type),
+                            ("tmp_uuid", String::from(String::from(first_tmp))),
+                            ("var_name", "return")])).unwrap(),
+                    substitute(DTRACE_VEC_FIELDS,
+                        &HashMap::from([("type", basic_type),
+                            ("tmp_uuid", String::from(first_tmp)),
+                            ("var_name", "return")])).unwrap(),
                 );
                 *i = self.insert_into_block(*i, userdef_vec_record_ret, body);
             }
@@ -601,10 +601,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
             RustType::Error => panic!("ret_ty is RustType::Error"),
         }
 
-        *i = self.insert_into_block(*i, DTRACE_NEWLINE, body);
+        *i = self.insert_into_block(*i, DTRACE_NEWLINE.to_string(), body);
 
-        let ret = RET;
-        *i = self.insert_into_block(*i, ret, body);
+        let ret = RET.to_string();
+        *i = self.insert_into_block(*i, ret.to_string(), body);
 
         // remove old return stmt
         body.stmts.remove(*i);
@@ -771,9 +771,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
         match &stmt.kind {
             StmtKind::Semi(semi) => match &semi.kind {
                 ExprKind::Ret(None) => {
-                    let exit = subst::substitute(DTRACE_EXIT,
-                        HashMap::from([("ppt_name", ppt_name),
-                                       ("exit_num", exit_counter.to_string())]));
+                    let exit = substitute(DTRACE_EXIT,
+                        &HashMap::from([("ppt_name", ppt_name),
+                            ("exit_num", exit_counter.to_string())])).unwrap();
                     *exit_counter += 1;
                     i = self.insert_into_block(i, exit.clone(), body);
                     for param_block in &mut *dtrace_param_blocks {
@@ -783,7 +783,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         i = self.insert_into_block(i, param_block.clone(), body);
                     }
 
-                    i = self.insert_into_block(i, DTRACE_NEWLINE, body);
+                    i = self.insert_into_block(i, DTRACE_NEWLINE.to_string(), body);
 
                     // we're sitting on the void return we just processed, so inc
                     // to move on.
@@ -835,7 +835,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // This will be transformed into a new impl with dtrace routines.
     fn base_impl_item(&mut self) -> Box<Item> {
         let base_impl = BUILD_A_IMPL_BLOCK;
-        let base_impl_item = self.parser.parse_items_from_string(base_impl);
+        let base_impl_item = self.parser.parse_items_from_string(base_impl.to_string());
         match &base_impl_item {
             Err(_why) => panic!("Parsing base impl failed"),
             Ok(base_impl_item) => base_impl_item[0].clone(),
@@ -888,7 +888,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
 
         let plain_struct = match &struct_ty.kind {
-            TyKind::Path(_, path) => String::from(path.segments[0].ident.as_str()),
+            TyKind::Path(_, path) => String::from(path.segments[0].ident),
             _ => panic!("Why don't we have a path?"),
         };
         let dtrace_print_fields_vec =
@@ -936,14 +936,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
     ) -> String {
         // WARNING: also building dtrace_print_xfield here... be careful about different issues.
         // dtrace_print_xfield_vec prints scalar fields out of a Vec<Me>, and dtrace_print_xfield takes one Me and prints Me.f which is a Vec.
-        let mut dtrace_print_xfields_vec = DTRACE_PRINT_XFIELDS_VEC_PROLOGUE;
+        let mut dtrace_print_xfields_vec = String::from(DTRACE_PRINT_XFIELDS_VEC_PROLOGUE);
 
         // not important for this to be here, each function is self-contained so
         // the names don't matter.
         let mut daikon_tmp_counter = 0;
         for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
-                Some(field_ident) => String::from(field_ident.as_str()),
+                Some(field_ident) => String::from(field_ident),
                 None => panic!("Field has no identifier"),
             };
 
@@ -952,60 +952,53 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 RustType::Prim(p_type) => {
                     // We have a vec of ourselves, and the field is
                     if p_type == "String" || p_type == "str" {
-                        subst::substitute(DTRACE_PRINT_XFIELDS_STRING,
-                            HashMap::from([("field_name", field_name),
+                        substitute(DTRACE_PRINT_XFIELDS_STRING,
+                            &HashMap::from([("field_name", field_name),
                                 ("type", plain_struct),
-                                ("output_prefix", &*OUTPUT_PREFIX.lock().unwrap()])))
+                                ("output_prefix", &*OUTPUT_PREFIX.lock().unwrap())])).unwrap()
                     } else {
-                        subst::substitute(DTRACE_PRINT_XFIELDS,
-                            HashMap::from([("field_name", field_name),
+                        substitute(DTRACE_PRINT_XFIELDS,
+                            &HashMap::from([("field_name", field_name),
                                 ("type", plain_struct),
-                                ("output_prefix", &*OUTPUT_PREFIX.lock().unwrap()]))) // TODO: change this name to involve vec to be clear.
+                                ("output_prefix", &*OUTPUT_PREFIX.lock().unwrap())])).unwrap() // TODO: change this name to involve vec to be clear.
                     }
                 }
-                // TODO: remove this
-                // mash:
-                //            DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE
                 RustType::PrimVec(p_type) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let print_vec = if p_type == "String" || p_type == "str" {
-                        subst::substitute(DTRACE_PRINT_STRING_VEC_FOR_FIELD,
-                            HashMap::from([("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                ("field_name", field_name)]))
+                        substitute(DTRACE_PRINT_STRING_VEC_FOR_FIELD,
+                            &HashMap::from([("tmp_uuid", String::from(first_tmp)),
+                                ("field_name", field_name)])).unwrap()
                     } else {
-                        subst::substitute(DTRACE_PRINT_PRIM_VEC_FOR_FIELD,
-                            HashMap::from([("p_type", p_type),
-                                ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                ("field_name", field_name)]))
+                        substitute(DTRACE_PRINT_PRIM_VEC_FOR_FIELD,
+                            &HashMap::from([("p_type", p_type),
+                                ("tmp_uuid", String::from(first_tmp)),
+                                ("field_name", field_name)])).unwrap()
                     };
                     let f1 = format!(
                         "{}\n{}\n{}\n{}\n{}\n{}",
-                        subst::substitute(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE,
-                            HashMap::from([("field_name", field_name)])),
-                        subst::substitute(DTRACE_TMP_PRIM_VEC_FOR_FIELD,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE,
+                            &HashMap::from([("field_name", field_name)])).unwrap(),
+                        substitute(DTRACE_TMP_PRIM_VEC_FOR_FIELD,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("type", p_type),
                                 ("next_tmp", next_tmp),
-                                ("field_name", field_name)])),
-                        subst::substitute(DTRACE_POINTER_VEC_USERDEF,
-                            HashMap::from([("field_name", field_name)])),
+                                ("field_name", field_name)])).unwrap(),
+                        substitute(DTRACE_POINTER_VEC_USERDEF,
+                            &HashMap::from([("field_name", field_name)])).unwrap(),
                         DTRACE_PRINT_XFIELD_FOR_FIELD_MID,
                         print_vec.clone(),
                         DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE
                     );
                     let f2 =
-                        subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
-                            HashMap::from([("field_name", field_name),
-                                ("type", plain_struct.to_string())]));
+                        substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            &HashMap::from([("field_name", field_name),
+                                ("type", plain_struct.to_string())])).unwrap();
                     format!("{}\n{}", f1, f2)
                 }
-                // TODO: remove this.
-                // mash:
-                //            build_tmp_vec_for_field(),
-                //            DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE (closing brace)
                 RustType::UserDefVec(basic_struct) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
@@ -1013,39 +1006,39 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     // We maintain that is_ref represents Vec/array args in this case.
                     let tmp_vec = if is_ref {
-                        subst::substitute(DTRACE_TMP_VEC_FOR_FIELD,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DTRACE_TMP_VEC_FOR_FIELD,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("type", basic_struct),
                                 ("next_tmp", next_tmp),
-                                ("field_name", field_name)]))
+                                ("field_name", field_name)])).unwrap()
                     } else {
-                        subst::substitute(DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("type", basic_struct),
                                 ("next_tmp", next_tmp),
-                                ("field_name", field_name)]))
+                                ("field_name", field_name)])).unwrap()
                     };
                     let f1 = format!(
                         "{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                        subst::substitute(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE,
-                            HashMap::from([("field_name", field_name)])),
+                        substitute(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE,
+                            &HashMap::from([("field_name", field_name)])).unwrap(),
                         tmp_vec.clone(),
-                        subst::substitute(DTRACE_POINTER_VEC_USERDEF,
-                            HashMap::from([("field_name", field_name)])),
-                        subst::substitute(DTRACE_POINTERS_VEC_USERDEF,
-                            HashMap::from([("type", basic_struct),
-                                ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                ("field_name", field_name)])),
+                        substitute(DTRACE_POINTER_VEC_USERDEF,
+                            &HashMap::from([("field_name", field_name)])).unwrap(),
+                        substitute(DTRACE_POINTERS_VEC_USERDEF,
+                            &HashMap::from([("type", basic_struct),
+                                ("tmp_uuid", String::from(first_tmp)),
+                                ("field_name", field_name)])).unwrap(),
                         DTRACE_PRINT_XFIELD_FOR_FIELD_MID,
-                        subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
-                            HashMap::from([("type", basic_struct),
-                                ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                ("field_name", field_name)])),
+                        substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            &HashMap::from([("type", basic_struct),
+                                ("tmp_uuid", String::from(first_tmp)),
+                                ("field_name", field_name)])).unwrap(),
                         DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE
                     );
-                    let f2 = subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
-                            HashMap::from([("field_name", field_name),
-                                ("type", plain_struct)]));
+                    let f2 = substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            &HashMap::from([("field_name", field_name),
+                                ("type", plain_struct)])).unwrap();
                     format!("{}\n{}", f1, f2)
                 }
                 // TODO: arrays, mighty similar to vec. Maybe you can cheat and just do the exact same thing... use | in pattern matching.
@@ -1057,34 +1050,34 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     let next_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let print_vec = if p_type == "String" || p_type == "str" {
-                        subst::substitute(DTRACE_PRINT_STRING_VEC_FOR_FIELD,
-                            HashMap::from([("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                ("field_name", field_name)]))
+                        substitute(DTRACE_PRINT_STRING_VEC_FOR_FIELD,
+                            &HashMap::from([("tmp_uuid", String::from(first_tmp)),
+                                ("field_name", field_name)])).unwrap()
                     } else {
-                        subst::substitute(DTRACE_PRINT_PRIM_VEC_FOR_FIELD,
-                            HashMap::from([("p_type", p_type),
-                                ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                ("field_name", field_name)]))
+                        substitute(DTRACE_PRINT_PRIM_VEC_FOR_FIELD,
+                            &HashMap::from([("p_type", p_type),
+                                ("tmp_uuid", String::from(first_tmp)),
+                                ("field_name", field_name)])).unwrap()
                     };
                     let f1 = format!(
                         "{}\n{}\n{}\n{}\n{}\n{}",
-                        subst::substitute(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE,
-                            HashMap::from([("field_name", field_name)])),
-                        subst::substitute(DTRACE_TMP_PRIM_VEC_FOR_FIELD,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE,
+                            &HashMap::from([("field_name", field_name)])).unwrap(),
+                        substitute(DTRACE_TMP_PRIM_VEC_FOR_FIELD,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("type", p_type),
                                 ("next_tmp", next_tmp),
-                                ("field_name", field_name)])),
-                        subst::substitute(DTRACE_POINTER_ARR_USERDEF,
-                            HashMap::from([("field_name", field_name)])),
+                                ("field_name", field_name)])).unwrap(),
+                        substitute(DTRACE_POINTER_ARR_USERDEF,
+                            &HashMap::from([("field_name", field_name)])).unwrap(),
                         DTRACE_PRINT_XFIELD_FOR_FIELD_MID,
                         print_vec.clone(),
                         DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE
                     );
                     let f2 =
-                        subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
-                            HashMap::from([("field_name", field_name),
-                                ("type", plain_struct.to_string())]));
+                        substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            &HashMap::from([("field_name", field_name),
+                                ("type", plain_struct.to_string())])).unwrap();
                     format!("{}\n{}", f1, f2)
                 }
                 RustType::UserDefArray(basic_struct) => {
@@ -1095,39 +1088,39 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     // We maintain that is_ref represents Vec/array args in this case.
                     let tmp_vec = if is_ref {
-                        subst::substitute(DTRACE_TMP_VEC_FOR_FIELD,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DTRACE_TMP_VEC_FOR_FIELD,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("type", basic_struct),
                                 ("next_tmp", next_tmp),
-                                ("field_name", field_name)]))
+                                ("field_name", field_name)])).unwrap()
                     } else {
-                        subst::substitute(DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("type", basic_struct),
                                 ("next_tmp", next_tmp),
-                                ("field_name", field_name)]))
+                                ("field_name", field_name)])).unwrap()
                     };
                     let f1 = format!(
                         "{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                        subst::substitute(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE,
-                            HashMap::from([("field_name", field_name)])),
+                        substitute(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE,
+                            &HashMap::from([("field_name", field_name)])).unwrap(),
                         tmp_vec.clone(),
-                        subst::substitute(DTRACE_POINTER_ARR_USERDEF,
-                            HashMap::from([("field_name", field_name)])),
-                        subst::substitute(DTRACE_POINTERS_VEC_USERDEF,
-                            HashMap::from([("type", basic_struct),
-                                ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                ("field_name", field_name)])),
+                        substitute(DTRACE_POINTER_ARR_USERDEF,
+                            &HashMap::from([("field_name", field_name)])).unwrap(),
+                        substitute(DTRACE_POINTERS_VEC_USERDEF,
+                            &HashMap::from([("type", basic_struct),
+                                ("tmp_uuid", String::from(first_tmp)),
+                                ("field_name", field_name)])).unwrap(),
                         DTRACE_PRINT_XFIELD_FOR_FIELD_MID,
-                        subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
-                            HashMap::from([("type", basic_struct),
-                                ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                ("field_name", field_name)])),
+                        substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            &HashMap::from([("type", basic_struct),
+                                ("tmp_uuid", String::from(first_tmp)),
+                                ("field_name", field_name)])).unwrap(),
                         DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE
                     );
-                    let f2 = subst::substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
-                            HashMap::from([("field_name", field_name),
-                                ("type", plain_struct)]));
+                    let f2 = substitute(DTRACE_PRINT_FIELDS_FOR_FIELD,
+                            &HashMap::from([("field_name", field_name),
+                                ("type", plain_struct)])).unwrap();
                     format!("{}\n{}", f1, f2)
                 }
                 _ => String::from(""),
@@ -1146,12 +1139,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
         fields: &ThinVec<FieldDef>,
     ) -> String {
         let mut dtrace_print_fields_vec =
-                    subst::substitute(DTRACE_PRINT_FIELDS_VEC_PROLOGUE,
-                            HashMap::from([("spliced_struct", plain_struct)]));
+                    substitute(DTRACE_PRINT_FIELDS_VEC_PROLOGUE,
+                        &HashMap::from([("spliced_struct", plain_struct)])).unwrap();
         let mut daikon_tmp_counter = 0;
         for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
-                Some(field_ident) => String::from(field_ident.as_str()),
+                Some(field_ident) => String::from(field_ident),
                 None => panic!("Field has no identifier"),
             };
 
@@ -1165,14 +1158,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
-                        subst::substitute(DAIKON_TMP_VEC_USERDEF,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DAIKON_TMP_VEC_USERDEF,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("plain_struct", plain_struct),
-                                ("next_tmp", next_tmp)])),
-                        subst::substitute(DTRACE_PRINT_XFIELD_VEC,
-                            HashMap::from([("plain_struct", plain_struct),
+                                ("next_tmp", next_tmp)])).unwrap(),
+                        substitute(DTRACE_PRINT_XFIELD_VEC,
+                            &HashMap::from([("plain_struct", plain_struct),
                                 ("field_name", field_name),
-                                ("tmp_vec_name", format!("__daikon_tmp{}", first_tmp))]))
+                                ("tmp_vec_name", String::from(first_tmp))])).unwrap()
                     )
                 }
                 RustType::UserDef(field_type) => {
@@ -1181,29 +1174,29 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     let next_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let tmp_vec = if !is_ref {
-                        subst::substitute(DAIKON_TMP_VEC_USERDEF_FIELD_AMPERSAND,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DAIKON_TMP_VEC_USERDEF_FIELD_AMPERSAND,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("field_type", field_type),
                                 ("next_tmp", next_tmp),
-                                ("field_name", field_name)]))
+                                ("field_name", field_name)])).unwrap()
                     } else {
-                        subst::substitute(DAIKON_TMP_VEC_USERDEF_FIELD,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DAIKON_TMP_VEC_USERDEF_FIELD,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("field_type", field_type),
                                 ("next_tmp", next_tmp),
-                                ("field_name", field_name)]))
+                                ("field_name", field_name)])).unwrap()
                     };
                     format!(
                         "{}\n{}\n{}",
                         tmp_vec,
-                        subst::substitute(DTRACE_PRINT_POINTER_VEC_USERDEF,
-                            HashMap::from([("plain_struct", field_type),
-                                ("tmp_vec_name", format!("__daikon_tmp{}", first_tmp)),
-                                ("field_name", field_name)])),
-                        subst::substitute(DTRACE_USERDEF_VEC_FIELDS,
-                            HashMap::from([("plain_struct", field_type),
-                                ("tmp_vec_name", format!("__daikon_tmp{}", first_tmp)),
-                                ("field_name", field_name)]))
+                        substitute(DTRACE_PRINT_POINTER_VEC_USERDEF,
+                            &HashMap::from([("plain_struct", field_type),
+                                ("tmp_vec_name", String::from(first_tmp)),
+                                ("field_name", field_name)])).unwrap(),
+                        substitute(DTRACE_USERDEF_VEC_FIELDS,
+                            &HashMap::from([("plain_struct", field_type),
+                                ("tmp_vec_name", String::from(first_tmp)),
+                                ("field_name", field_name)])).unwrap()
                     )
                 }
                 // call X::dtrace_print_<field>_vec since it will be implemented to only print pointers. NOT TRUSTED CODE:
@@ -1214,15 +1207,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
-                        subst::substitute(DAIKON_TMP_VEC_USERDEF,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DAIKON_TMP_VEC_USERDEF,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("plain_struct", plain_struct),
-                                ("next_tmp", next_tmp)])),
-                        subst::substitute(DTRACE_PRINT_XFIELD_VEC,
-                            HashMap::from([("plain_struct", plain_struct),
+                                ("next_tmp", next_tmp)])).unwrap(),
+                        substitute(DTRACE_PRINT_XFIELD_VEC,
+                            &HashMap::from([("plain_struct", plain_struct),
                                 ("field_name", field_name),
-                                ("tmp_vec_name", format!("__daikon_tmp{}", first_tmp))]))
-                        )
+                                ("tmp_vec_name", String::from(first_tmp))])).unwrap()
                     )
                 }
                 RustType::UserDefVec(_) => {
@@ -1232,14 +1224,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
-                        subst::substitute(DAIKON_TMP_VEC_USERDEF,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DAIKON_TMP_VEC_USERDEF,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("plain_struct", plain_struct),
-                                ("next_tmp", next_tmp)])),
-                        subst::substitute(DTRACE_PRINT_XFIELD_VEC,
-                            HashMap::from([("plain_struct", plain_struct),
+                                ("next_tmp", next_tmp)])).unwrap(),
+                        substitute(DTRACE_PRINT_XFIELD_VEC,
+                            &HashMap::from([("plain_struct", plain_struct),
                                 ("field_name", field_name),
-                                ("tmp_vec_name", format!("__daikon_tmp{}", first_tmp))]))
+                                ("tmp_vec_name", String::from(first_tmp))])).unwrap()
                     )
                 }
                 RustType::PrimArray(_) => {
@@ -1250,14 +1242,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
-                        subst::substitute(DAIKON_TMP_VEC_USERDEF,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DAIKON_TMP_VEC_USERDEF,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("plain_struct", plain_struct),
-                                ("next_tmp", next_tmp)])),
-                        subst::substitute(DTRACE_PRINT_XFIELD_VEC,
-                            HashMap::from([("plain_struct", plain_struct),
+                                ("next_tmp", next_tmp)])).unwrap(),
+                        substitute(DTRACE_PRINT_XFIELD_VEC,
+                            &HashMap::from([("plain_struct", plain_struct),
                                 ("field_name", field_name),
-                                ("tmp_vec_name", format!("__daikon_tmp{}", first_tmp))]))
+                                ("tmp_vec_name", String::from(first_tmp))])).unwrap()
                     )
                 }
                 RustType::UserDefArray(_) => {
@@ -1268,14 +1260,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
-                        subst::substitute(DAIKON_TMP_VEC_USERDEF,
-                            HashMap::from([("first_tmp", first_tmp),
+                        substitute(DAIKON_TMP_VEC_USERDEF,
+                            &HashMap::from([("first_tmp", String::from(first_tmp)),
                                 ("plain_struct", plain_struct),
-                                ("next_tmp", next_tmp)])),
-                        subst::substitute(DTRACE_PRINT_XFIELD_VEC,
-                            HashMap::from([("plain_struct", plain_struct),
+                                ("next_tmp", next_tmp)])).unwrap(),
+                        substitute(DTRACE_PRINT_XFIELD_VEC,
+                            &HashMap::from([("plain_struct", plain_struct),
                                 ("field_name", field_name),
-                                ("tmp_vec_name", format!("__daikon_tmp{}", first_tmp))]))
+                                ("tmp_vec_name", String::from(first_tmp))])).unwrap()
                     )
                 }
                 RustType::NoRet => String::from(""),
@@ -1292,7 +1284,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // Given a struct's field declarations, generate the function dtrace_print_fields(self)
     // to be added to the synthesized impl block.
     fn build_dtrace_print_fields(&mut self, fields: &mut ThinVec<FieldDef>) -> String {
-        let mut dtrace_print_fields: String = DTRACE_PRINT_FIELDS_PROLOGUE;
+        let mut dtrace_print_fields: String = DTRACE_PRINT_FIELDS_PROLOGUE.to_string();
 
         for i in 0..fields.len() {
             // TODO: remove and add tests for private fields.
@@ -1308,47 +1300,47 @@ impl<'a> DaikonDtraceVisitor<'a> {
             let mut dtrace_field_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
                 RustType::Prim(p_type) => {
                     if p_type == "String" || p_type == "str" {
-                        subst::substitute(
+                        substitute(
                             DTRACE_PRIM_FIELD_TOSTRING,
-                            HashMap::from([("field_name", field_name)])
-                        )
+                            &HashMap::from([("field_name", field_name)])
+                        ).unwrap()
                     } else if is_ref {
-                        subst::substitute(
+                        substitute(
                             DTRACE_PRIM_REF_STRUCT,
-                            HashMap::from([("type", p_type),
+                            &HashMap::from([("type", p_type),
                                 ("field_name", field_name)])
-                        )
+                        ).unwrap()
                     } else {
-                        subst::substitute(
+                        substitute(
                             DTRACE_PRIM_STRUCT,
-                            HashMap::from([("type", p_type),
+                            &HashMap::from([("type", p_type),
                                 ("field_name", field_name)])
-                        )
+                        ).unwrap()
                     }
                 }
                 RustType::UserDef(_) => {
                     if !is_ref {
-                        subst::substitute(DTRACE_USERDEF_STRUCT_AMPERSAND,
-                            HashMap::from([("field_name", field_name)]))
+                        substitute(DTRACE_USERDEF_STRUCT_AMPERSAND,
+                            &HashMap::from([("field_name", field_name)])).unwrap()
                     } else {
-                        subst::substitute(DTRACE_USERDEF_STRUCT,
-                            HashMap::from([("field_name", field_name)]))
+                        substitute(DTRACE_USERDEF_STRUCT,
+                            &HashMap::from([("field_name", field_name)])).unwrap()
                     }
                 }
                 // TODO: use the | operator here.
-                RustType::PrimVec(_) => subst::substitute(DTRACE_CALL_PRINT_FIELD,
-                    HashMap::from([("field_name", field_name)])),
-                RustType::UserDefVec(_) => subst::substitute(DTRACE_CALL_PRINT_FIELD,
-                            HashMap::from([("field_name", field_name)])),
+                RustType::PrimVec(_) => substitute(DTRACE_CALL_PRINT_FIELD,
+                    &HashMap::from([("field_name", field_name)])).unwrap(),
+                RustType::UserDefVec(_) => substitute(DTRACE_CALL_PRINT_FIELD,
+                    &HashMap::from([("field_name", field_name)])).unwrap(),
                 RustType::PrimArray(_p_type) => {
                     // UNTRUSTED:
-                    subst::substitute(DTRACE_CALL_PRINT_FIELD,
-                            HashMap::from([("field_name", field_name)]))
+                    substitute(DTRACE_CALL_PRINT_FIELD,
+                        &HashMap::from([("field_name", field_name)])).unwrap()
                 }
                 RustType::UserDefArray(_) => {
                     // UNTRUSTED:
-                    subst::substitute(DTRACE_CALL_PRINT_FIELD,
-                            HashMap::from([("field_name", field_name)]))
+                    substitute(DTRACE_CALL_PRINT_FIELD,
+                        &HashMap::from([("field_name", field_name)])).unwrap()
                 }
                 RustType::NoRet => String::from(""),
                 RustType::Error => panic!("Field type not handled"),
@@ -1373,49 +1365,49 @@ impl<'a> DaikonDtraceVisitor<'a> {
             let mut is_ref = false;
             let var_name = get_param_ident(&decl.inputs[i].pat);
             let mut dtrace_rec = if get_param_ident(&decl.inputs[i].pat) == "self" {
-                subst::substitute(
+                substitute(
                     DTRACE_USERDEF,
-                    HashMap::from([("var_name", var_name),
+                    &HashMap::from([("var_name", var_name),
                                    ("depth", "3")])
-                )
+                ).unwrap()
             } else {
                 match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
                     RustType::Prim(p_type) => {
                         if p_type == "String" || p_type == "str" {
-                            subst::substitute(
+                            substitute(
                                 DTRACE_PRIM_TOSTRING,
-                                HashMap::from([("var_name", get_param_ident(&decl.inputs[i].pat)),
+                                &HashMap::from([("var_name", get_param_ident(&decl.inputs[i].pat)),
                                                ("var_name_2", get_param_ident(&decl.inputs[i].pat))])
-                            )
+                            ).unwrap()
                         } else if is_ref {
-                            subst::substitute(
+                            substitute(
                                 DTRACE_PRIM_REF,
-                                HashMap::from([("type", p_type),
+                                &HashMap::from([("type", p_type),
                                     ("var_name", get_param_ident(&decl.inputs[i].pat)),
                                     ("var_name_2", get_param_ident(&decl.inputs[i].pat))
                                 ])
-                            )
+                            ).unwrap()
                         } else {
-                            subst::substitute(
+                            substitute(
                                 DTRACE_PRIM,
-                                HashMap::from([("type", p_type),
-                                               ("var_name", get_param_ident(&decl.inputs[i].pat))])
-                            )
+                                &HashMap::from([("type", p_type),
+                                    ("var_name", get_param_ident(&decl.inputs[i].pat))])
+                            ).unwrap()
                         }
                     }
                     RustType::UserDef(_) => {
                         if !is_ref {
-                            subst::substitute(
+                            substitute(
                                 DTRACE_USERDEF_AMPERSAND,
-                                HashMap::from([("var_name", var_name),
+                                &HashMap::from([("var_name", var_name),
                                                ("depth", "3")])
-                            )
+                            ).unwrap()
                         } else {
-                            subst::substitute(
+                            substitute(
                                 DTRACE_USERDEF,
-                                HashMap::from([("var_name", var_name),
+                                &HashMap::from([("var_name", var_name),
                                                ("depth", "3")])
-                            )
+                            ).unwrap()
                         }
                     }
                     RustType::PrimVec(p_type) => {
@@ -1424,27 +1416,27 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let next_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let print_vec = if p_type == "String" || p_type == "str" {
-                            subst::substitute(DTRACE_PRINT_STRING_VEC,
-                                HashMap::from([("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                    ("var_name", get_param_ident(&decl.inputs[i].pat))]))
+                            substitute(DTRACE_PRINT_STRING_VEC,
+                                &HashMap::from([("tmp_uuid", String::from(first_tmp)),
+                                    ("var_name", get_param_ident(&decl.inputs[i].pat))])).unwrap()
                         } else {
-                            subst::substitute(DTRACE_PRINT_PRIM_VEC,
-                                HashMap::from([
+                            substitute(DTRACE_PRINT_PRIM_VEC,
+                                &HashMap::from([
                                     ("type", p_type),
-                                    ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
+                                    ("tmp_uuid", String::from(first_tmp)),
                                     ("var_name", get_param_ident(&decl.inputs[i].pat))]),
-                            )
+                            ).unwrap()
                         };
                         format!(
                             "{}\n{}\n{}",
-                            subst::substitute(DAIKON_TMP_VEC_PRIM,
-                                HashMap::from([
-                                    ("first_tmp", first_tmp),
+                            substitute(DAIKON_TMP_VEC_PRIM,
+                                &HashMap::from([
+                                    ("first_tmp", String::from(first_tmp)),
                                     ("type", p_type),
                                     ("next_tmp", next_tmp),
-                                    ("var_name", get_param_ident(&decl.inputs[i].pat))])),
-                            subst::substitute(DTRACE_VEC_POINTER,
-                                HashMap::from([("var_name", get_param_ident(&decl.inputs[i].pat))])),
+                                    ("var_name", get_param_ident(&decl.inputs[i].pat))])).unwrap(),
+                            substitute(DTRACE_VEC_POINTER,
+                                &HashMap::from([("var_name", get_param_ident(&decl.inputs[i].pat))])).unwrap(),
                             print_vec.clone()
                         )
                     }
@@ -1456,33 +1448,33 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let var_name = get_param_ident(&decl.inputs[i].pat);
                         // We maintain that is_ref represents Vec/array argument in this case.
                         let tmp_vec = if is_ref {
-                            subst::substitute(DAIKON_TMP_VEC,
-                                HashMap::from([
-                                    ("first_tmp", first_tmp),
+                            substitute(DAIKON_TMP_VEC,
+                                &HashMap::from([
+                                    ("first_tmp", String::from(first_tmp)),
                                     ("basic_type", basic_type),
                                     ("next_tmp", next_tmp),
-                                    ("var_name", var_name)]))
+                                    ("var_name", var_name)])).unwrap()
                         } else {
-                            subst::substitute(DAIKON_TMP_VEC_AMPERSAND,
-                                HashMap::from([
-                                    ("first_tmp", first_tmp),
+                            substitute(DAIKON_TMP_VEC_AMPERSAND,
+                                &HashMap::from([
+                                    ("first_tmp", String::from(first_tmp)),
                                     ("basic_type", basic_type),
                                     ("next_tmp", next_tmp),
-                                    ("var_name", var_name)]))
+                                    ("var_name", var_name)])).unwrap()
                         };
                         let res = format!(
                             "{}\n{}\n{}\n{}",
                             tmp_vec.clone(),
-                            subst::substitute(DTRACE_VEC_POINTER,
-                                HashMap::from([("var_name", var_name)])),
-                            subst::substitute(DTRACE_PRINT_POINTER_VEC,
-                                HashMap::from([("type", basic_type),
-                                    ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                    ("var_name", var_name)])),
-                            subst::substitute(DTRACE_VEC_FIELDS,
-                                HashMap::from([("type", basic_type),
-                                    ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                    ("var_name", "return")])),
+                            substitute(DTRACE_VEC_POINTER,
+                                &HashMap::from([("var_name", var_name)])).unwrap(),
+                            substitute(DTRACE_PRINT_POINTER_VEC,
+                                &HashMap::from([("type", basic_type),
+                                    ("tmp_uuid", String::from(first_tmp)),
+                                    ("var_name", var_name)])).unwrap(),
+                            substitute(DTRACE_VEC_FIELDS,
+                                &HashMap::from([("type", basic_type),
+                                    ("tmp_uuid", String::from(first_tmp)),
+                                    ("var_name", "return")])).unwrap(),
                         );
                         res
                     }
@@ -1492,29 +1484,28 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let next_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let print_vec = if p_type == "String" || p_type == "str" {
-                            subst::substitute(DTRACE_PRINT_STRING_VEC,
-                                HashMap::from([("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                    ("var_name", get_param_ident(&decl.inputs[i].pat))]))
-                            )
+                            substitute(DTRACE_PRINT_STRING_VEC,
+                                &HashMap::from([("tmp_uuid", String::from(first_tmp)),
+                                    ("var_name", get_param_ident(&decl.inputs[i].pat))])).unwrap()
                         } else {
-                            subst::substitute(DTRACE_PRINT_PRIM_VEC,
-                                HashMap::from([
+                            substitute(DTRACE_PRINT_PRIM_VEC,
+                                &HashMap::from([
                                     ("type", p_type),
-                                    ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
+                                    ("tmp_uuid", String::from(first_tmp)),
                                     ("var_name", get_param_ident(&decl.inputs[i].pat))]),
-                            )
+                            ).unwrap()
                         };
                         format!(
                             "{}\n{}\n{}",
-                            subst::substitute(DAIKON_TMP_VEC_PRIM,
-                                HashMap::from([
-                                    ("first_tmp", first_tmp),
+                            substitute(DAIKON_TMP_VEC_PRIM,
+                                &HashMap::from([
+                                    ("first_tmp", String::from(first_tmp)),
                                     ("type", p_type),
                                     ("next_tmp", next_tmp),
-                                    ("var_name", get_param_ident(&decl.inputs[i].pat))])),
-                            subst::substitute(BUILD_POINTER_ARR,
-                                HashMap::from([,
-                                    ("var_name", get_param_ident(&decl.inputs[i].pat))])),
+                                    ("var_name", get_param_ident(&decl.inputs[i].pat))])).unwrap(),
+                            substitute(BUILD_POINTER_ARR,
+                                &HashMap::from([
+                                    ("var_name", get_param_ident(&decl.inputs[i].pat))])).unwrap(),
                             print_vec.clone()
                         )
                     }
@@ -1526,34 +1517,34 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let var_name = get_param_ident(&decl.inputs[i].pat);
                         // We maintain that is_ref represents Vec/array argument in this case.
                         let tmp_vec = if is_ref {
-                            subst::substitute(DAIKON_TMP_VEC,
-                                HashMap::from([
-                                    ("first_tmp", first_tmp),
+                            substitute(DAIKON_TMP_VEC,
+                                &HashMap::from([
+                                    ("first_tmp", String::from(first_tmp)),
                                     ("basic_type", basic_type),
                                     ("next_tmp", next_tmp),
-                                    ("var_name", var_name)]))
+                                    ("var_name", var_name)])).unwrap()
                         } else {
-                            subst::substitute(DAIKON_TMP_VEC_AMPERSAND,
-                                HashMap::from([
-                                    ("first_tmp", first_tmp),
+                            substitute(DAIKON_TMP_VEC_AMPERSAND,
+                                &HashMap::from([
+                                    ("first_tmp", String::from(first_tmp)),
                                     ("basic_type", basic_type),
                                     ("next_tmp", next_tmp),
-                                    ("var_name", var_name)]))
+                                    ("var_name", var_name)])).unwrap()
                         };
                         let res = format!(
                             "{}\n{}\n{}\n{}",
                             tmp_vec.clone(),
-                            subst::substitute(BUILD_POINTER_ARR,
-                                HashMap::from([,
-                                    ("var_name", var_name)])),
-                            subst::substitute(DTRACE_PRINT_POINTER_VEC,
-                                HashMap::from([("type", basic_type),
-                                    ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                    ("var_name", var_name)])),
-                            subst::substitute(DTRACE_VEC_FIELDS,
-                                HashMap::from([("type", basic_type),
-                                    ("tmp_name", format!("__daikon_tmp{}", first_tmp)),
-                                    ("var_name", "return")])),
+                            substitute(BUILD_POINTER_ARR,
+                                &HashMap::from([
+                                    ("var_name", var_name)])).unwrap(),
+                            substitute(DTRACE_PRINT_POINTER_VEC,
+                                &HashMap::from([("type", basic_type),
+                                    ("tmp_uuid", String::from(first_tmp)),
+                                    ("var_name", var_name)])).unwrap(),
+                            substitute(DTRACE_VEC_FIELDS,
+                                &HashMap::from([("type", basic_type),
+                                    ("tmp_uuid", String::from(first_tmp)),
+                                    ("var_name", "return")])).unwrap(),
                         );
                         res
                     }
@@ -1631,14 +1622,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
         //   unlock
         //   use the stored value at all exit points in this function
         // Currently there is a nonce counter per file which is not correct.
-        i = self.insert_into_block(i, INIT_NONCE), body);
+        i = self.insert_into_block(i, INIT_NONCE.to_string(), body);
 
-        let entry = subst::substitute(DTRACE_ENTRY, HashMap::from([("ppt_name", ppt_name)]));
+        let entry = substitute(DTRACE_ENTRY, &HashMap::from([("ppt_name", ppt_name)])).unwrap();
         i = self.insert_into_block(i, entry, body);
         for param_block in &mut *dtrace_param_blocks {
             i = self.insert_into_block(i, param_block.clone(), body);
         }
-        i = self.insert_into_block(i, DTRACE_NEWLINE, body);
+        i = self.insert_into_block(i, DTRACE_NEWLINE.to_string(), body);
 
         // Before grokking fn body, turn implicit void return into "return;".
         // This may be unreachable in some situations like
@@ -1649,7 +1640,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         match &ret_ty {
             FnRetTy::Default(_) => {
                 if body.stmts.len() == 0 || !last_stmt_is_void_return(body) {
-                    self.append_to_block(VOID_RETURN, body);
+                    self.append_to_block(VOID_RETURN.to_string(), body);
                 }
             }
             _ => {}
@@ -1689,7 +1680,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
     ) {
         match &mut fk {
             FnKind::Fn(_, _, f) => {
-                let ppt_name = String::from(f.ident.as_str());
+                let ppt_name = String::from(f.ident);
                 if ppt_name == "execute" {
                     return;
                 }
@@ -1797,12 +1788,12 @@ impl<'a> Parser<'a> {
     // Convert String to items. We create a new file dtrace_parserX each time we want to
     // parse some new items vec. Diagnostics sometimes point to these files for unknown
     // reasons.
-    pub fn parse_items_from_string(&self, str: String) -> PResult<'a, ThinVec<Box<Item>>> {
+    pub fn parse_items_from_string(&self, source: String) -> PResult<'a, ThinVec<Box<Item>>> {
         let count = *PARSER_COUNTER.lock().unwrap();
         let mut tmp_parser = unwrap_or_emit_fatal(new_parser_from_source_str(
             &self.psess,
             rustc_span::FileName::Custom(format!("{}{}", "dtrace_parser", count.to_string())),
-            str,
+            source,
             StripTokens::Nothing,
         ));
 
@@ -1810,7 +1801,7 @@ impl<'a> Parser<'a> {
 
         let mut tmp_items: ThinVec<Box<_>> = ThinVec::new();
 
-        // Parse from str.
+        // Parse from source.
         loop {
             while tmp_parser.maybe_consume_incorrect_semicolon(tmp_items.last().map(|x| &**x)) {}
             let Some(item) = tmp_parser.parse_item(ForceCollect::No)? else {
@@ -1929,7 +1920,7 @@ impl<'a> Parser<'a> {
 
             // add imports.
             // TODO: you should check if these imports are already included.
-            match &self.parse_items_from_string(IMPORTS) {
+            match &self.parse_items_from_string(IMPORTS.to_string()) {
                 Err(_why) => panic!("Can't parse imports"),
                 Ok(prepend_items) => {
                     for item in prepend_items {
@@ -1939,7 +1930,7 @@ impl<'a> Parser<'a> {
             }
 
             // add daikon library.
-            match &self.parse_items_from_string(daikon_lib()) {
+            match &self.parse_items_from_string(DAIKON_LIB) {
                 Err(_why) => panic!("Can't parse daikon lib"),
                 Ok(lib_items) => {
                     for item in lib_items {

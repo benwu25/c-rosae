@@ -1,7 +1,5 @@
 // TODO: add one test for each String.
 
-use crate::parser::item::OUTPUT_PREFIX;
-
 // Proper primitive types
 // i8, i16, i32, i64, i128 and isize
 // u8, u16, u32, u64, u128 and usize
@@ -178,7 +176,7 @@ pub(crate) static DTRACE_VEC_POINTER_RET: &str =
     "dtrace_print_pointer(__daikon_ret.as_ptr() as usize, String::from(\"return\"));";
 
 pub(crate) static DTRACE_PRINT_POINTER_VEC: &str =
-    "dtrace_print_pointer_vec::<${type}>(&${tmp_name}, format!(\"{}{}\", String::from(\"${var_name}\"), \"[..]\"));";
+    "dtrace_print_pointer_vec::<${type}>(&__daikon_tmp${tmp_uuid}, format!(\"{}{}\", String::from(\"${var_name}\"), \"[..]\"));";
 
 pub(crate) static DTRACE_VEC_FIELDS: &str =
     // we always mash with a tmp loop, so just close __skip.
@@ -284,12 +282,12 @@ pub(crate) static DTRACE_POINTER_ARR_USERDEF: &str =
 
 pub(crate) static DTRACE_POINTERS_VEC_USERDEF: &str =
     "
-dtrace_print_pointer_vec::<${type}>(&${tmp_name},
+dtrace_print_pointer_vec::<${type}>(&__daikon_tmp${tmp_uuid},
                                     format!(\"{}{}[..]\", prefix, \".${field_name}\"));";
 
 pub(crate) static DTRACE_PRINT_FIELDS_FOR_FIELD: &str =
     "
-    ${type}::dtrace_print_fields_vec(&${tmp_name},
+    ${type}::dtrace_print_fields_vec(&__daikon_tmp${tmp_uuid},
                                      depth - 1,
                                      format!(\"{}{}[..]\", prefix, \".${field_name}\"));";
 
@@ -316,11 +314,11 @@ pub(crate) static DTRACE_TMP_PRIM_VEC_FOR_FIELD: &str =
 
 
 pub(crate) static DTRACE_PRINT_PRIM_VEC_FOR_FIELD: &str =
-    "dtrace_print_prim_vec::<${type}>(&${tmp_name}, format!(\"{}{}\", prefix, \".${field_name}\"));";
+    "dtrace_print_prim_vec::<${type}>(&__daikon_tmp${tmp_uuid}, format!(\"{}{}\", prefix, \".${field_name}\"));";
 
 
 pub(crate) static DTRACE_PRINT_STRING_VEC_FOR_FIELD: &str =
-    "dtrace_print_string_vec(&${tmp_name}, format!(\"{}{}\", prefix, \".${field_name}\"));";
+    "dtrace_print_string_vec(&__daikon_tmp${tmp_uuid}, format!(\"{}{}\", prefix, \".${field_name}\"));";
 
 pub(crate) static DTRACE_CALL_PRINT_FIELD: &str =
     "self.dtrace_print_${field_name}(depth, prefix.clone());";
@@ -401,7 +399,7 @@ pub fn dtrace_print_${field_name}_vec(v: &Vec<&${type}>, var_name: String) {
     arr.push_str(&format!(\"{}\", v[i].${field_name})); }
         arr.push_str(\"]\");
         writeln!(&mut traces, \"{}\", arr).ok();
-        writeln!(traces, \"0\").ok(); }"];
+        writeln!(traces, \"0\").ok(); }";
 
 pub(crate) static DTRACE_PRINT_XFIELDS_STRING: &str = "
 pub fn dtrace_print_${field_name}_vec(v: &Vec<&${type}>, var_name: String) {
@@ -437,13 +435,13 @@ pub(crate) static BUILD_POINTER_ARR_RET: &str = "
 // only end fn __skip because we will smash a tmp vec loop on the front.
 pub(crate) static DTRACE_PRINT_PRIM_VEC: &str =
     "
-    dtrace_print_prim_vec::<${type}>(&${tmp_name},
+    dtrace_print_prim_vec::<${type}>(&__daikon_tmp${tmp_uuid},
                                      String::from(\"${var_name}\"));
 }";
 
 pub(crate) static DTRACE_PRINT_STRING_VEC: &str =
     "
-    dtrace_print_string_vec(&${tmp_name},
+    dtrace_print_string_vec(&__daikon_tmp${tmp_uuid},
                             String::from(\"${var_name}\"));
 }";
 
