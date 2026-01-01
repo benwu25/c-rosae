@@ -407,6 +407,7 @@ const PERMITTED_RUSTC_DEPENDENCIES: &[&str] = &[
     "rustc-demangle",
     "rustc-hash",
     "rustc-literal-escaper",
+    "rustc-main",
     "rustc-stable-hash",
     "rustc_apfloat",
     "rustix",
