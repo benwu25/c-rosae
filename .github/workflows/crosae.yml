@@ -15,6 +15,6 @@ jobs:
       - name: Build the compiler.
         run: ./x setup && ./x build library/std
       - name: Set up Daikon as a toolchain with the stage 1 build.
-        run: rustup toolchain link daikon build/<platform>/stage1
+        run: rustup toolchain link daikon build/host/stage1
       - name: Run end-to-end tests.
         run: cd daikon_tests && cargo run
