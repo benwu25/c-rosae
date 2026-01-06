@@ -600,10 +600,8 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
 #[allow(rustc::default_hash_types)]
 fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
     let mut res = HashMap::new();
-    let mut i = 0;
-    while i < decl.inputs.len() {
+    for i in 0..decl.inputs.len() {
         res.insert(get_param_ident(&decl.inputs[i].pat), i as i32);
-        i += 1;
     }
     res
 }
@@ -715,10 +713,8 @@ impl<'a> ArrayContents<'a> {
         match &mut self.sub_contents {
             None => {}
             Some(sub_contents) => {
-                let mut i = 0;
-                while i < sub_contents.len() {
+                for i in 0..sub_contents.len() {
                     sub_contents[i].write();
-                    i += 1;
                 }
             }
         }
@@ -766,8 +762,7 @@ impl<'a> ArrayContents<'a> {
             return;
         }
 
-        let mut i = 0;
-        while i < fields.len() {
+        for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
@@ -803,10 +798,8 @@ impl<'a> ArrayContents<'a> {
                         match &mut tmp.sub_contents {
                             None => panic!("Expected some field_decls 1"),
                             Some(sub_contents) => {
-                                let mut j = 0;
-                                while j < sub_contents.len() {
+                                for j in 0..sub_contents.len() {
                                     sub_contents[j].var_name = String::from("false");
-                                    j += 1;
                                 }
                             }
                         }
@@ -848,8 +841,6 @@ impl<'a> ArrayContents<'a> {
                     sub_contents.push(var_decl);
                 }
             }
-
-            i += 1;
         }
     }
 }
@@ -876,10 +867,8 @@ impl<'a> FieldDecl<'a> {
         match &mut self.decl.field_decls {
             None => {}
             Some(field_decls) => {
-                let mut i = 0;
-                while i < field_decls.len() {
+                for i in 0..field_decls.len() {
                     field_decls[i].write();
-                    i += 1;
                 }
                 return;
             }
@@ -922,10 +911,8 @@ impl<'a> TopLevlDecl<'a> {
         match &mut self.field_decls {
             None => {}
             Some(field_decls) => {
-                let mut i = 0;
-                while i < field_decls.len() {
+                for i in 0..field_decls.len() {
                     field_decls[i].write();
-                    i += 1;
                 }
                 return;
             }
@@ -951,8 +938,7 @@ impl<'a> TopLevlDecl<'a> {
             return;
         }
 
-        let mut i = 0;
-        while i < fields.len() {
+        for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
@@ -1000,10 +986,8 @@ impl<'a> TopLevlDecl<'a> {
                         match &mut tmp.decl.field_decls {
                             None => panic!("Expected some field_decls 1"),
                             Some(field_decls) => {
-                                let mut j = 0;
-                                while j < field_decls.len() {
+                                for j in 0..field_decls.len() {
                                     field_decls[j].decl.var_name = String::from("false");
-                                    j += 1;
                                 }
                             }
                         }
@@ -1072,10 +1056,8 @@ impl<'a> TopLevlDecl<'a> {
                                 match &mut contents.sub_contents {
                                     None => panic!("Expected some field_decls 1"),
                                     Some(sub_contents) => {
-                                        let mut j = 0;
-                                        while j < sub_contents.len() {
+                                        for j in 0..sub_contents.len() {
                                             sub_contents[j].var_name = String::from("false");
-                                            j += 1;
                                         }
                                     }
                                 }
@@ -1096,8 +1078,6 @@ impl<'a> TopLevlDecl<'a> {
                     field_decls.push(var_decl);
                 }
             }
-
-            i += 1;
         }
     }
 
@@ -1338,10 +1318,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 ExprKind::Ret(None) => {
                     write_exit(ppt_name.clone(), *exit_counter);
                     *exit_counter += 1;
-                    let mut idx = 0;
-                    while idx < param_decls.len() {
+                    for idx in 0..param_decls.len() {
                         param_decls[idx].write();
-                        idx += 1;
                     }
                     write_newline();
 
@@ -1352,10 +1330,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 ExprKind::Ret(Some(_)) => {
                     write_exit(ppt_name.clone(), *exit_counter);
                     *exit_counter += 1;
-                    let mut idx = 0;
-                    while idx < param_decls.len() {
+                    for idx in 0..param_decls.len() {
                         param_decls[idx].write();
-                        idx += 1;
                     }
 
                     // make return TopLevlDecl.
@@ -1398,11 +1374,9 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         match &mut tmp.field_decls {
                                             None => panic!("Expected some field_decls 1"),
                                             Some(field_decls) => {
-                                                let mut j = 0;
-                                                while j < field_decls.len() {
+                                                for j in 0..field_decls.len() {
                                                     field_decls[j].decl.var_name =
                                                         String::from("false");
-                                                    j += 1;
                                                 }
                                             }
                                         }
@@ -1466,11 +1440,9 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 match &mut contents.sub_contents {
                                                     None => panic!("Expected some field_decls 1"),
                                                     Some(sub_contents) => {
-                                                        let mut j = 0;
-                                                        while j < sub_contents.len() {
+                                                        for j in 0..sub_contents.len() {
                                                             sub_contents[j].var_name =
                                                                 String::from("false");
-                                                            j += 1;
                                                         }
                                                     }
                                                 }
@@ -1594,8 +1566,7 @@ fn grok_fn_sig<'a>(
     depth_limit: u32,
 ) -> Vec<TopLevlDecl<'a>> {
     let mut var_decls: Vec<TopLevlDecl<'_>> = Vec::new();
-    let mut i = 0;
-    while i < decl.inputs.len() {
+    for i in 0..decl.inputs.len() {
         let var_name = get_param_ident(&decl.inputs[i].pat);
         let mut is_ref = false;
         let mut do_write = true;
@@ -1629,10 +1600,8 @@ fn grok_fn_sig<'a>(
                     match &mut tmp.field_decls {
                         None => panic!("Expected some field_decls 1"),
                         Some(field_decls) => {
-                            let mut j = 0;
-                            while j < field_decls.len() {
+                            for j in 0..field_decls.len() {
                                 field_decls[j].decl.var_name = String::from("false");
-                                j += 1;
                             }
                         }
                     }
@@ -1691,10 +1660,8 @@ fn grok_fn_sig<'a>(
                             match &mut contents.sub_contents {
                                 None => panic!("Expected some field_decls 1"),
                                 Some(sub_contents) => {
-                                    let mut j = 0;
-                                    while j < sub_contents.len() {
+                                    for j in 0..sub_contents.len() {
                                         sub_contents[j].var_name = String::from("false");
-                                        j += 1;
                                     }
                                 }
                             }
@@ -1710,7 +1677,6 @@ fn grok_fn_sig<'a>(
             }
         };
         var_decls.push(toplevl_decl);
-        i += 1;
     }
 
     var_decls
@@ -1726,10 +1692,8 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                     write_entry(ppt_name.clone());
                     let param_to_block_idx = map_params(&f.sig.decl);
                     let mut param_decls = grok_fn_sig(&f.sig.decl, self.map, self.depth_limit);
-                    let mut i = 0;
-                    while i < param_decls.len() {
+                    for i in 0..param_decls.len() {
                         param_decls[i].write();
-                        i += 1;
                     }
                     write_newline();
                     match &f.body {

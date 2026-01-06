@@ -181,32 +181,6 @@ fn grok_vec_args(path: &Path, is_ref: &mut bool) -> RustType {
     }
 }
 
-// Note: this function is unused, TODO: remove
-// Reduce a String like X<'a, T> to X. Not strictly necessary, just allows
-// function calls like ``X::dtrace_print_*`` rather than
-// ``X<'a, T>::dtrace_print_*`` when we have Vec<X>.
-// spliced_struct represents a struct name + generics, like X<'a, T>.
-fn remove_angle_args(spliced_struct: String) -> String {
-    match spliced_struct.find('<') {
-        Some(idx) => {
-            let slice = &spliced_struct[0..idx - 1];
-            String::from(slice)
-        }
-        None => spliced_struct,
-    }
-    /*
-    let mut res = String::from("");
-    let mut i = 0;
-    while i < spliced_struct.len() {
-        if spliced_struct.chars().nth(i).unwrap() == '<' {
-            return res;
-        }
-        res.push_str(&String::from(spliced_struct.chars().nth(i).unwrap()));
-        i += 1;
-    }
-    res */
-}
-
 // Set global variable OUTPUT_PREFIX using input file path.
 // If there is no output file specified with -o and we have not
 // been invoked by cargo, take the OUTPUT_PREFIX from the input file
@@ -225,65 +199,6 @@ pub fn set_output_prefix(input_name: String) {
     };
     let res = &input_name[slash_idx..dot_idx];
     *OUTPUT_PREFIX.lock().unwrap() = String::from(res);
-}
-
-// TODO: remove this unused function (it is used by gen_impl_noop which must be deleted soon!)
-// Hack.
-// Given a pretty-printed struct:
-// struct X<a, b> {
-// ...
-// }
-// Extract the name X<a, b> from this String. This is the only way
-// I have found to take a struct Item and obtain its identifier
-// including generics in a String.
-// The identifier plus generics are required to synthesize impl blocks
-// with dtrace routines:
-// impl X<a, b> {
-//     dtrace_print_fields(self, ...)
-// }
-// This method is broken in many cases. Pretty-printing can include triple-bar
-// comments or attributes.
-// Indeed, the pretty-printed String could be as bad as:
-/*
-
-/// This is an awesome struct
-#[cfg(test)]
-struct X<a, b> {
-    ...
-}
-
-*/
-fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
-    let start_idx = pp_struct.find(" ");
-    match &start_idx {
-        None => panic!("Can't find space in pp_struct"),
-        Some(idx) => {
-            let bound = pp_struct.find("{");
-            match &bound {
-                None => {
-                    *stop = true;
-                    String::from("")
-                }
-                Some(bound) => {
-                    let mut i = idx + 1;
-                    let mut res = String::from("");
-                    while i < *bound - 1 {
-                        res.push_str(&String::from(pp_struct.chars().nth(i).unwrap()));
-                        i += 1;
-                    }
-                    // don't forget pub struct
-                    if res.starts_with("struct") {
-                        return res[7..].to_string();
-                    } else if res.starts_with("enum") {
-                        return res[5..].to_string();
-                    } else if res.starts_with("union") {
-                        return res[6..].to_string();
-                    }
-                    res
-                }
-            }
-        }
-    }
 }
 
 // Create a RustType for the given Rust type. If it is a reference,
@@ -330,6 +245,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
     }
 }
 
+// TODO: replace this idea with better data structures for the logging code.
 // Unused. This was intended to allow easy invalidation
 // of parameters. E.g., if parameter x was invalidated with
 // drop(x), we need to know which idx it belongs to in our
@@ -339,10 +255,8 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
 #[allow(rustc::default_hash_types)]
 fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
     let mut res = HashMap::new();
-    let mut i = 0;
-    while i < decl.inputs.len() {
+    for i in 0..decl.inputs.len() {
         res.insert(get_param_ident(&decl.inputs[i].pat), i as i32);
-        i += 1;
     }
     res
 }
@@ -824,8 +738,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 // Not sure how to handle match blocks
                 ExprKind::Match(_, arms, _) => {
-                    let mut j = 0;
-                    while j < arms.len() {
+                    for j in 0..arms.len() {
                         match &mut arms[j].body {
                             None => {}
                             Some(bd) => match &mut bd.kind {
@@ -842,7 +755,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 _ => {} // TODO: more careful analysis on whether this is supposed to be a return expr or not, e.g. println/panic vs 7.
                             },
                         }
-                        j += 1;
                     }
                     return i + 1;
                 } // TryBlock, Const block? probably more
@@ -930,60 +842,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
     }
 
-    // Hack: this routine is currently used to handle enums and unions.
-    // This will be fixed by using a /tmp file in a first pass.
-    fn gen_impl_noop(&mut self, pp_struct: &String, struct_generics: &Generics) {
-        let mut impl_item = self.base_impl_item();
-        let the_impl = match &mut impl_item.kind {
-            ItemKind::Impl(i) => i,
-            _ => panic!("Base impl is not impl"),
-        };
-        let mut stop = false;
-        let spliced_struct = splice_struct(&pp_struct, &mut stop);
-        if stop {
-            return;
-        }
-
-        let struct_as_ret = build_phony_ret(spliced_struct.clone());
-        the_impl.self_ty = match &self.parser.parse_items_from_string(struct_as_ret) {
-            Err(_why) => panic!("Parsing phony arg failed"),
-            Ok(arg_items) => match &arg_items[0].kind {
-                ItemKind::Fn(phony) => match &phony.sig.decl.output {
-                    FnRetTy::Ty(ty) => ty.clone(),
-                    _ => panic!("Phony ret is none"),
-                },
-                _ => panic!("Parsing phony fn failed"),
-            },
-        };
-        the_impl.generics = struct_generics.clone();
-
-        // We only need dtrace_print_fields and dtrace_print_fields_vec. xfield routines are only internal.
-        let dtrace_print_fields_fn_noop = self.build_dtrace_print_fields_noop();
-        match &self.parser.parse_items_from_string(dtrace_print_fields_fn_noop) {
-            Err(_) => panic!("Parsing dtrace_print_fields_noop failed"),
-            Ok(items) => match &items[0].kind {
-                ItemKind::Impl(tmp_impl) => {
-                    the_impl.items.push(tmp_impl.items[0].clone());
-                }
-                _ => panic!("Expected impl for noop 1"),
-            },
-        }
-
-        let plain_struct = remove_angle_args(spliced_struct.clone());
-        let dtrace_print_fields_vec = self.build_dtrace_print_fields_vec_noop(plain_struct.clone());
-        match &self.parser.parse_items_from_string(dtrace_print_fields_vec) {
-            Err(_) => panic!("Parsing dtrace_print_fields_vec failed"),
-            Ok(items) => match &items[0].kind {
-                ItemKind::Impl(tmp_impl) => {
-                    the_impl.items.push(tmp_impl.items[0].clone());
-                }
-                _ => panic!("Expected phony impl 2"),
-            },
-        }
-
-        self.mod_items.push(impl_item.clone());
-    }
-
     // This function generates a new impl for a user-defined struct with type
     // ty and enqueues the impl block into self.mod_items to be appended to
     // the end of the current translation unit (file). The impl will contain
@@ -1029,9 +887,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
             },
         }
 
-        // TODO: remove this.
-        // Is this even important?
-        // let plain_struct = remove_angle_args(spliced_struct.clone());
         let plain_struct = match &struct_ty.kind {
             TyKind::Path(_, path) => String::from(path.segments[0].ident.as_str()),
             _ => panic!("Why don't we have a path?"),
@@ -1056,10 +911,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
             Err(_) => panic!("Parsing dtrace_print_xfields failed"),
             Ok(items) => match &items[0].kind {
                 ItemKind::Impl(tmp_impl) => {
-                    let mut i = 0;
-                    while i < tmp_impl.items.len() {
+                    for i in 0..tmp_impl.items.len() {
                         the_impl.items.push(tmp_impl.items[i].clone());
-                        i += 1;
                     }
                 }
                 _ => panic!("Expected phony impl 3"),
@@ -1088,8 +941,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // not important for this to be here, each function is self-contained so
         // the names don't matter.
         let mut daikon_tmp_counter = 0;
-        let mut i = 0;
-        while i < fields.len() {
+        for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
@@ -1284,15 +1136,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
             };
 
             dtrace_print_xfields_vec.push_str(&dtrace_print_xfield);
-            i += 1;
         }
         let res = format!("{}{}", dtrace_print_xfields_vec, dtrace_print_xfields_vec_epilogue());
         res
-    }
-
-    // Just stuff the plain_struct in there.
-    fn build_dtrace_print_fields_vec_noop(&mut self, plain_struct: String) -> String {
-        format!("impl __skip {{ {} }}", build_dtrace_print_fields_vec_noop(plain_struct))
     }
 
     // Builds the top-level function which is called to log a Vec or array of a given struct.
@@ -1304,8 +1150,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut dtrace_print_fields_vec = dtrace_print_fields_vec_prologue(plain_struct.clone());
 
         let mut daikon_tmp_counter = 0;
-        let mut i = 0;
-        while i < fields.len() {
+        for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
@@ -1452,15 +1297,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
             };
 
             dtrace_print_fields_vec.push_str(&dtrace_field_vec_rec); // don't think a newline here would matter? Parsing doesn't care.
-            i += 1;
         }
 
         let res = format!("{}{}", dtrace_print_fields_vec, dtrace_print_fields_vec_epilogue());
         res
-    }
-
-    fn build_dtrace_print_fields_noop(&mut self) -> String {
-        format!("impl __skip {{ {} }}", build_dtrace_print_fields_noop())
     }
 
     // Given a struct's field declarations, generate the function dtrace_print_fields(self)
@@ -1468,8 +1308,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     fn build_dtrace_print_fields(&mut self, fields: &mut ThinVec<FieldDef>) -> String {
         let mut dtrace_print_fields: String = dtrace_print_fields_prologue();
 
-        let mut i = 0;
-        while i < fields.len() {
+        for i in 0..fields.len() {
             // TODO: remove and add tests for private fields.
             // Make all fields public for access in dtrace routines.
             fields[i].vis.kind = VisibilityKind::Public;
@@ -1528,7 +1367,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
             dtrace_field_rec.push_str("\n");
 
             dtrace_print_fields.push_str(&format!("{}{}", dtrace_field_rec, "\n"));
-            i += 1;
         }
 
         format!("{}{}", dtrace_print_fields, dtrace_print_fields_epilogue())
@@ -1541,9 +1379,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // will be reused at the function entry and each exit ppt.
     fn grok_fn_sig(&mut self, decl: &Box<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
         // grok params.
-        let mut i = 0;
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
-        while i < decl.inputs.len() {
+        for i in 0..decl.inputs.len() {
             let mut is_ref = false;
             let var_name = get_param_ident(&decl.inputs[i].pat);
             let mut dtrace_rec = if get_param_ident(&decl.inputs[i].pat) == "self" {
@@ -1757,7 +1594,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
             dtrace_rec.push_str("\n");
 
             dtrace_param_blocks.push(format!("{}{}", dtrace_rec, "\n"));
-            i += 1;
         }
 
         // Return param-dependent dtrace calls.
@@ -1916,18 +1752,13 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
     // TODO: look up struct names in a /tmp file to determine
     //       whether to continue or not.
     fn visit_item(&mut self, item: &mut Item) {
-        let get_struct = pprust::item_to_string(&item);
         match &mut item.kind {
-            ItemKind::Enum(_ident, generics, _enum_def) => {
-                // TODO: remove this.
-                self.gen_impl_noop(&get_struct, &generics);
-            }
+            ItemKind::Enum(_ident, _generics, _enum_def) => {}
             ItemKind::Struct(ident, generics, variant_data) => match variant_data {
                 VariantData::Struct { fields, recovered: _recovered } => {
                     let mut the_path = Path::from_ident(ident.clone());
                     let mut the_args: ThinVec<AngleBracketedArg> = ThinVec::new();
-                    let mut i = 0;
-                    while i < generics.params.len() {
+                    for i in 0..generics.params.len() {
                         match &generics.params[i].kind {
                             GenericParamKind::Lifetime => {
                                 the_args.push(AngleBracketedArg::Arg(GenericArg::Lifetime(
@@ -1944,7 +1775,6 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                                 panic!("Enum has const generic arg.")
                             }
                         }
-                        i += 1;
                     }
                     let angle_bracketed_args =
                         AngleBracketedArgs { span: item.span.clone(), args: the_args };
@@ -1961,10 +1791,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                 VariantData::Tuple(_, _) => {}
                 _ => {}
             },
-            ItemKind::Union(_ident, generics, _variant_data) => {
-                // TODO: remove.
-                self.gen_impl_noop(&get_struct, &generics);
-            }
+            ItemKind::Union(_ident, _generics, _variant_data) => {}
             _ => {}
         }
 
@@ -2113,10 +1940,8 @@ impl<'a> Parser<'a> {
             mut_visit::visit_items(&mut impl_inserter, &mut items);
 
             // push impl blocks.
-            let mut i = 0;
-            while i < items_to_append.len() {
+            for i in 0..items_to_append.len() {
                 items.push(items_to_append[i].clone());
-                i += 1;
             }
 
             // pretty print the instrumented code (without library/imports) for testing.
@@ -2125,12 +1950,12 @@ impl<'a> Parser<'a> {
             std::fs::File::create(&pp_as_path).unwrap();
             let mut pp =
                 std::fs::File::options().write(true).append(true).open(&pp_as_path).unwrap();
-            i = 0;
-            while i < items.len() - 1 {
+
+            for i in 0..items.len()-1 {
                 writeln!(&mut pp, "{}\n", pprust::item_to_string(&items[i])).ok();
-                i += 1;
             }
-            writeln!(&mut pp, "{}", pprust::item_to_string(&items[i])).ok();
+
+            writeln!(&mut pp, "{}", pprust::item_to_string(&items[items.len()-1])).ok(); // no newline
 
             // add imports.
             // TODO: you should check if these imports are already included.
@@ -2159,6 +1984,10 @@ impl<'a> Parser<'a> {
         Ok((attrs, items, mod_spans))
     }
 }
+
+//
+// End of c-rosae additions.
+//
 
 enum ReuseKind {
     Path,

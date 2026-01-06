@@ -1,20 +1,25 @@
-This is the source repository for `c-rosae`, a fork of the Rust compiler. `c-rosae` provides verification tooling for Rust, implementing a Rust frontend for the [Daikon dynamic invariant detector](https://github.com/codespecs/daikon) to hypothesize likely program invariants through dynamic analysis.
+# The c-rosae Daikon front end for Rust
 
-To view a diff of this fork and the Rust compiler, see [https://github.com/benwu25/c-rosae/pull/1](https://github.com/benwu25/c-rosae/pull/1).
+`c-rosae` is a Rust front end for the [Daikon dynamic invariant detector](https://github.com/codespecs/daikon).  Daikon hypothesizes likely program invariants through dynamic analysis.
+
+`c-rosae` is a fork of the Rust compiler. `c-rosae` acts like the Rust compiler, but it produces executables that write a "data trace" file in addition to their normal operation. A data trace file records the run-time values of variables. Daikon reads data trace files to hypothesize likely program invariants.
+
+To view the changes from the upstream Rust compiler to this fork, see [https://github.com/benwu25/c-rosae/pull/1](https://github.com/benwu25/c-rosae/pull/1).
 
  * Build the compiler.
      * `./x setup`
-     * `./x build library/std`
- * Set up daikon as a toolchain with the stage 1 build.
-     * `rustup toolchain link daikon build/<platform>/stage1`
+       * Select the option to develop the compiler. See https://rustc-dev-guide.rust-lang.org/building/quickstart.html for more information.
+     * `./x build std`
+ * Set up Daikon as a toolchain with the stage 1 build.
+     * `rustup toolchain link daikon build/host/stage1`
  * Run end-to-end tests:
-     * `cd daikon_tests && cargo run`
+     * `cd daikon-tests && cargo run`
  * Produce dtrace and decls files in one command via `cargo +daikon run`,
    or instrument with rustc via `rustc +daikon foo.rs`, and run to produce trace data.
 
-----------------------------------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------
 
-# Implementation overview
+## Implementation overview
 
 The implementation consists of two parts: dtrace instrumentation and decls generation.
 
@@ -24,7 +29,7 @@ Decls generation does not require mutation of the AST, so it is implemented afte
 
 ### Dtrace instrumentation
 
-Dtrace instrumentation is implemented in `compiler/rustc_parse/src/parser/item.rs`. Code for the instrumentation starts at the beginning of this file and continues through the function `parse_mod` (line 1923). The rest of the file is part of `rustc`.
+Dtrace instrumentation is implemented in `compiler/rustc_parse/src/parser/item.rs`. Code for the instrumentation starts at the beginning of this file and continues through the function `parse_mod`, inclusive. The rest of the file is unchanged from the upstream
 
 Dtrace instrumentation is the first pass to run. During compilation, `rustc` parses source code one file at a time. Files are parsed by a call to `parse_mod` in item.rs. One pass of dtrace instrumentation is executed for every call to `parse_mod`. Each pass is managed by a `DaikonDtraceVisitor` struct, defined at `item.rs:73`. This struct applies a mutable visitor pass on the file-scope AST fragment, walking functions to add logging of parameters and return values.
 
@@ -61,11 +66,11 @@ A depth counter is used to track depth of recursion when building these trees.
 
 ### daikon_strs.rs
 
-`daikon_strs.rs` is a large file full of helper routines for building parameterized code snippets which will be inserted into the final executable. Each function is paired with a `String` or `String` array. The functions take arguments which represent identifiers for variables or types, and they essentially smash together the `String` array with identifiers in between.
+`daikon_strs.rs` is a large file full of helper routines for building parameterized code snippets which will be inserted into the final executable. The functions take arguments which represent variables or types, and they return code that uses the given variables or types.
 
 <br></br>
 
-# Next Steps
+## Next Steps
 
 ### 1. Logging the correct structs
 
@@ -113,9 +118,9 @@ Fix reused variable labels in dtrace instrumentation.
 
 <br></br>
 
-(Below is the original `rustc` README.md)
+(The remainder of this file is the original `rustc` `README.md`.)
 
------------------------------------------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------
 
 <div align="center">
   <picture>
