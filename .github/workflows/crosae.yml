@@ -14,8 +14,7 @@ jobs:
           fetch-depth: 1
           show-progress: false
       - name: Build the compiler.
-        run: ./x setup < setup-input && ./x build std
-        # the above fails because the setup script requires user input, we can read from a file i guess?
+        run: ./x setup < setup-input && DISABLE_INSTRUMENTATION=1 ./x build --stage 2 std
       - name: Set up Daikon as a toolchain with the stage 1 build.
         run: rustup toolchain link daikon build/host/stage1
       - name: Run end-to-end tests.
