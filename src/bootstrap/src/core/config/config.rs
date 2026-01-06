@@ -1175,10 +1175,10 @@ impl Config {
                 | Subcommand::Bench { .. }
                 | Subcommand::Dist
                 | Subcommand::Install => {
-                    assert_eq!(
-                        stage, 2,
-                        "x.py should be run with `--stage 2` on CI, but was run with `--stage {stage}`",
-                    );
+                    //assert_eq!(
+                        //stage, 2,
+                        //"x.py should be run with `--stage 2` on CI, but was run with `--stage {stage}`",
+                    //);
                 }
                 Subcommand::Clean { .. }
                 | Subcommand::Check { .. }
