@@ -338,9 +338,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     }
                 }
                 // [continues]
-                _ => panic!("Expected a ScopeType with a stmt_vec")
-            }
-            None => panic!("Expected scope_stack to be non-empty")
+                _ => panic!("Expected a ScopeType with a stmt_vec"),
+            },
+            None => panic!("Expected scope_stack to be non-empty"),
         };
     }
 
@@ -355,10 +355,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     }
                 }
                 // [continues]
-                ScopeType::FnBody(_) => panic!("Why is this an FnBody?")
-                //_ => panic!("Expected a ScopeType with an item_vec")
-            }
-            None => panic!("Expected scope_stack to be non-empty")
+                ScopeType::FnBody(_) => panic!("Why is this an FnBody?"), //_ => panic!("Expected a ScopeType with an item_vec")
+            },
+            None => panic!("Expected scope_stack to be non-empty"),
         };
     }
 
@@ -369,12 +368,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
             Some(back) => match &back {
                 // ScopeType::InlineMod(_) |
                 ScopeType::ToplevelScope(_) => {
-                // [continues]
+                    // [continues]
                     true
                 }
-                _ => false
-            }
-            None => false
+                _ => false,
+            },
+            None => false,
         }
     }
 
@@ -386,9 +385,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     stmt_vec.push(impl_stmt);
                 }
                 // [continues]
-                _ => panic!("Expected a ScopeType with stmts")
-            }
-            None => panic!("Expected scope_stack non-empty")
+                _ => panic!("Expected a ScopeType with stmts"),
+            },
+            None => panic!("Expected scope_stack non-empty"),
         };
     }
 
@@ -401,9 +400,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     item_vec.push(impl_item);
                 }
                 // [continues]
-                _ => panic!("Expected a ScopeType with an item_vec")
-            }
-            None => panic!("Expected scope_stack non-empty")
+                _ => panic!("Expected a ScopeType with an item_vec"),
+            },
+            None => panic!("Expected scope_stack non-empty"),
         };
     }
 
@@ -1847,31 +1846,23 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
         // can we just walk something besides fk so it doesn't have to get moved?
         // wait, we can clone every piece of fk and walk that instead!
         // any struct definitions should still exist in the clone.
-        let fk_clone =
-            match &mut fk {
-                FnKind::Fn(ctxt, vis, f) =>
-                    FnKind::Fn(
-                        ctxt.clone(),
-                        &mut vis.clone(),
-                        &mut f.clone()
-                    ),
-                FnKind::Closure(binder, coro_kind, decl, expr) => match &coro_kind {
-                    Some(coro_kind) =>
-                        FnKind::Closure(
-                            &mut binder.clone(),
-                            &mut Some(coro_kind.clone()),
-                            &mut decl.clone(),
-                            &mut expr.clone()
-                        ),
-                    None =>
-                        FnKind::Closure(
-                            &mut binder.clone(),
-                            &mut None,
-                            &mut decl.clone(),
-                            &mut expr.clone()
-                        ),
-                }
-            };
+        let fk_clone = match &mut fk {
+            FnKind::Fn(ctxt, vis, f) => FnKind::Fn(ctxt.clone(), &mut vis.clone(), &mut f.clone()),
+            FnKind::Closure(binder, coro_kind, decl, expr) => match &coro_kind {
+                Some(coro_kind) => FnKind::Closure(
+                    &mut binder.clone(),
+                    &mut Some(coro_kind.clone()),
+                    &mut decl.clone(),
+                    &mut expr.clone(),
+                ),
+                None => FnKind::Closure(
+                    &mut binder.clone(),
+                    &mut None,
+                    &mut decl.clone(),
+                    &mut expr.clone(),
+                ),
+            },
+        };
         mut_visit::walk_fn(self, fk_clone);
 
         // now we can mutate fk like before.
@@ -1880,9 +1871,13 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                 Some(body) => {
                     self.pop_back_into_stmts_front(&mut body.stmts);
                 }
-                None => { self.scope_stack.pop_back(); }
+                None => {
+                    self.scope_stack.pop_back();
+                }
+            },
+            _ => {
+                self.scope_stack.pop_back();
             }
-            _ => { self.scope_stack.pop_back(); }
         };
     }
 
@@ -1938,12 +1933,11 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                     if self.scope_type_requires_items_p() {
                         self.push_impl_item(impl_item);
                     } else {
-                        let impl_stmt =
-                            Stmt {
-                                id: NodeId::MAX_AS_U32.into(),
-                                kind: StmtKind::Item(impl_item),
-                                span: item.span.clone(),
-                            };
+                        let impl_stmt = Stmt {
+                            id: NodeId::MAX_AS_U32.into(),
+                            kind: StmtKind::Item(impl_item),
+                            span: item.span.clone(),
+                        };
                         self.push_impl_stmt(impl_stmt);
                     }
 
@@ -2113,10 +2107,7 @@ impl<'a> Parser<'a> {
 
         if *DO_VISITOR.lock().unwrap() {
             let mut dtrace_visitor =
-                DaikonDtraceVisitor {
-                    parser: &self,
-                    scope_stack: &mut VecDeque::new()
-                };
+                DaikonDtraceVisitor { parser: &self, scope_stack: &mut VecDeque::new() };
             dtrace_visitor.init_scope_stack();
 
             // Do instrumentation
@@ -2124,7 +2115,6 @@ impl<'a> Parser<'a> {
 
             // Push last remaining impl blocks into ToplevelScope
             dtrace_visitor.pop_back_into_items(&mut items);
-
 
             // pretty print the instrumented code (without library/imports) for testing and
             // debugging. The library/imports will be present for inline mods.
@@ -2135,11 +2125,11 @@ impl<'a> Parser<'a> {
             let mut pp =
                 std::fs::File::options().write(true).append(true).open(&pp_as_path).unwrap();
 
-            for i in 0..items.len()-1 {
+            for i in 0..items.len() - 1 {
                 writeln!(&mut pp, "{}\n", pprust::item_to_string(&items[i])).ok();
             }
 
-            writeln!(&mut pp, "{}", pprust::item_to_string(&items[items.len()-1])).ok(); // no newline
+            writeln!(&mut pp, "{}", pprust::item_to_string(&items[items.len() - 1])).ok(); // no newline
 
             // Add required standard library imports.
             // FIXME: you should check if these imports are already included,
