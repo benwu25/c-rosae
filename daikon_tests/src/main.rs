@@ -49,7 +49,7 @@ fn run_daikon_rustc_pp_tests() {
                     .stderr(std::process::Stdio::null())
                     .current_dir(&test_path)
                     .status()
-                    .expect("failed to execute daikon-rustc");
+                    .expect("failed to execute c-rosae");
 
                 // read expected/actual pp to String
                 let pp_path = format!("/checkout/daikon_tests/test/{}{}", output_name, ".pp");
