@@ -139,6 +139,16 @@ pr:
     <<: *job-aarch64-linux
   - name: x86_64-gnu-tools
     <<: *job-linux-4c
+
+  - name: c-rosae CI Number Two
+    env:
+      SCRIPT: >
+        DISABLE_INSTRUMENTATION=1 ./x.py --stage 2 build std &&
+        rustup toolchain link daikon build/host/stage1 &&
+        cd daikon_tests &&
+        cargo run
+    <<: *job-linux-4c
+
   - name: x86_64-gnu-miri
     <<: *job-linux-4c
   - name: x86_64-gnu-gcc
