@@ -142,6 +142,7 @@ pr:
 
   - name: c-rosae CI Number Two
     env:
+      IMAGE: x86_64-gnu
       SCRIPT: >
         DISABLE_INSTRUMENTATION=1 ./x.py --stage 2 build std &&
         rustup toolchain link daikon build/host/stage1 &&
