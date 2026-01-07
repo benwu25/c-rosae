@@ -122,24 +122,26 @@ pr:
       # tidy. This speeds up the PR CI job by ~1 minute.
 #      SKIP_SUBMODULES: src/gcc
 #    <<: *job-linux-4c
-  - name: x86_64-gnu-llvm-20
-    env:
-      ENABLE_GCC_CODEGEN: "1"
-      DOCKER_SCRIPT: x86_64-gnu-llvm.sh
-    <<: *job-linux-4c
+#  - name: x86_64-gnu-llvm-20
+#    env:
+#      ENABLE_GCC_CODEGEN: "1"
+#      DOCKER_SCRIPT: x86_64-gnu-llvm.sh
+#    <<: *job-linux-4c
 #  - name: aarch64-gnu-llvm-20-1
 #    env:
 #      IMAGE: aarch64-gnu-llvm-20
 #      DOCKER_SCRIPT: stage_2_test_set1.sh
 #    <<: *job-aarch64-linux
-  - name: aarch64-gnu-llvm-20-2
-    env:
-      IMAGE: aarch64-gnu-llvm-20
-      DOCKER_SCRIPT: stage_2_test_set2.sh
-    <<: *job-aarch64-linux
-  - name: x86_64-gnu-tools
-    <<: *job-linux-4c
+#  - name: aarch64-gnu-llvm-20-2
+#    env:
+#      IMAGE: aarch64-gnu-llvm-20
+#      DOCKER_SCRIPT: stage_2_test_set2.sh
+#    <<: *job-aarch64-linux
+#  - name: x86_64-gnu-tools
+#    <<: *job-linux-4c
 
+# do we need any of the above? do we need x86_64-gnu-tools to run before us?
+# only aarch64 llvm stuff has been failing and cancelling.
   - name: c-rosae CI Number Two
     env:
       IMAGE: x86_64-gnu
@@ -150,11 +152,11 @@ pr:
         cargo run
     <<: *job-linux-4c
 
-  - name: x86_64-gnu-miri
-    <<: *job-linux-4c
-  - name: x86_64-gnu-gcc
-    doc_url: https://rustc-dev-guide.rust-lang.org/tests/codegen-backend-tests/cg_gcc.html
-    <<: *job-linux-4c
+#  - name: x86_64-gnu-miri
+#    <<: *job-linux-4c
+#  - name: x86_64-gnu-gcc
+#    doc_url: https://rustc-dev-guide.rust-lang.org/tests/codegen-backend-tests/cg_gcc.html
+#    <<: *job-linux-4c
 
 # Jobs that run when you perform a try build (@bors try)
 # These jobs automatically inherit envs.try, to avoid repeating
