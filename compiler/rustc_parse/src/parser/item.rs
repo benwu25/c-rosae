@@ -48,7 +48,6 @@ pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false
 // For generating unique names for auxiliary files to parse in parse_items_from_string.
 static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 
-// Mark C
 enum ScopeType {
     ToplevelScope(ThinVec<Box<Item>>),
     FnBody(ThinVec<Stmt>),
@@ -1843,9 +1842,11 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
         // and walk this function to generate impl blocks
         self.enter_fn_body();
 
-        // can we just walk something besides fk so it doesn't have to get moved?
-        // wait, we can clone every piece of fk and walk that instead!
-        // any struct definitions should still exist in the clone.
+        // We need to preserve fk and avoid moving it, so we cannot call walk_fn
+        // on fk.
+        // To do this, we can fully clone fk and walk that instead so we can
+        // modify fk after calling walk_fn.
+        // FIXME: this seems bad for performance, cloning a whole function AST node.
         let fk_clone = match &mut fk {
             FnKind::Fn(ctxt, vis, f) => FnKind::Fn(ctxt.clone(), &mut vis.clone(), &mut f.clone()),
             FnKind::Closure(binder, coro_kind, decl, expr) => match &coro_kind {
