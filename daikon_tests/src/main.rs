@@ -23,7 +23,7 @@ pub fn get_output_name(s: String) -> String {
 
 // iterate through "./tests" and run rustc +daikon for files, cargo +daikon for multi-file tests in subdirectories
 fn run_daikon_rustc_pp_tests() {
-    let test_path = std::fs::canonicalize(std::path::Path::new("/checkout/daikon_tests/test")).unwrap();
+    let test_path = std::fs::canonicalize(std::path::Path::new("/checkout/obj/daikon_tests/test")).unwrap();
 
     // how to make each one of these a test w/o a new function?
     for entry in std::fs::read_dir(test_path.clone()).unwrap() {
@@ -52,23 +52,23 @@ fn run_daikon_rustc_pp_tests() {
                     .expect("failed to execute c-rosae");
 
                 // read expected/actual pp to String
-                let pp_path = format!("/checkout/daikon_tests/test/{}{}", output_name, ".pp");
+                let pp_path = format!("/checkout/obj/daikon_tests/test/{}{}", output_name, ".pp");
                 let pp_as_path = std::path::Path::new(&pp_path);
                 let pp_as_path_buf = std::fs::canonicalize(pp_as_path).unwrap();
                 let actual = std::fs::read_to_string(&pp_as_path_buf).unwrap();
-                let pp_expected_path = format!("/checkout/daikon_tests/test/{}-expected{}", output_name, ".pp");
+                let pp_expected_path = format!("/checkout/obj/daikon_tests/test/{}-expected{}", output_name, ".pp");
                 let pp_expected_as_path = std::path::Path::new(&pp_expected_path);
                 let pp_expected_as_path_buf = std::fs::canonicalize(pp_expected_as_path).unwrap();
                 let expected = std::fs::read_to_string(&pp_expected_as_path_buf).unwrap();
 
                 // remove junk
-                let exec_path = format!("/checkout/daikon_tests/test/{}", output_name);
+                let exec_path = format!("/checkout/obj/daikon_tests/test/{}", output_name);
                 std::fs::remove_file(std::path::Path::new(&exec_path)).unwrap();
-                let decls_path = format!("/checkout/daikon_tests/test/{}.decls", output_name);
+                let decls_path = format!("/checkout/obj/daikon_tests/test/{}.decls", output_name);
                 std::fs::remove_file(std::path::Path::new(&decls_path)).unwrap();
-                let dtrace_path = format!("/checkout/daikon_tests/test/{}.dtrace", output_name);
+                let dtrace_path = format!("/checkout/obj/daikon_tests/test/{}.dtrace", output_name);
                 std::fs::remove_file(std::path::Path::new(&dtrace_path)).unwrap();
-                let pp_path = format!("/checkout/daikon_tests/test/{}.pp", output_name);
+                let pp_path = format!("/checkout/obj/daikon_tests/test/{}.pp", output_name);
                 std::fs::remove_file(std::path::Path::new(&pp_path)).unwrap();
 
                 // check
