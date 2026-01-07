@@ -145,11 +145,7 @@ pr:
   - name: c-rosae CI Number Two
     env:
       IMAGE: x86_64-gnu-llvm-21
-      SCRIPT: >
-        DISABLE_INSTRUMENTATION=1 ./x.py --stage 2 build std &&
-        rustup toolchain link daikon build/host/stage1 &&
-        cd daikon_tests &&
-        cargo run
+      DOCKER_SCRIPT: crosae.sh
     <<: *job-linux-4c
 
 #  - name: x86_64-gnu-miri
