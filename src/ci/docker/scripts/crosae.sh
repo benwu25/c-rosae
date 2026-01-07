@@ -2,8 +2,7 @@
 
 DISABLE_INSTRUMENTATION=1 ../x --stage 2 build std
 
-rustup toolchain link daikon host/stage1
-
 cd ../daikon_tests
 
-cargo run
+# cargo is in build/host/stage0/bin/
+../build/host/stage0/bin/cargo run

@@ -41,8 +41,8 @@ fn run_daikon_rustc_pp_tests() {
                 let output_name = get_output_name(String::from(path_str));
                 println!("Running test {}", output_name);
 
-                std::process::Command::new("rustc")
-                    .arg("+daikon")
+                std::process::Command::new("../build/host/stage1/bin/rustc")
+                    // .arg("+daikon")
                     .arg(path_str)
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
