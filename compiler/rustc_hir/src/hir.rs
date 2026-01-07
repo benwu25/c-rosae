@@ -150,10 +150,13 @@ impl From<Ident> for LifetimeSyntax {
 /// `LifetimeSource::OutlivesBound` or `LifetimeSource::PreciseCapturing`
 /// — there's no way to "elide" these lifetimes.
 #[derive(Debug, Copy, Clone, HashStable_Generic)]
-// Raise the aligement to at least 4 bytes - this is relied on in other parts of the compiler(for pointer tagging):
-// https://github.com/rust-lang/rust/blob/ce5fdd7d42aba9a2925692e11af2bd39cf37798a/compiler/rustc_data_structures/src/tagged_ptr.rs#L163
-// Removing this `repr(4)` will cause the compiler to not build on platforms like `m68k` Linux, where the aligement of u32 and usize is only 2.
-// Since `repr(align)` may only raise aligement, this has no effect on platforms where the aligement is already sufficient.
+// Raise the alignment to at least 4 bytes.
+// This is relied on in other parts of the compiler (for pointer tagging):
+// <https://github.com/rust-lang/rust/blob/ce5fdd7d42aba9a2925692e11af2bd39cf37798a/compiler/rustc_data_structures/src/tagged_ptr.rs#L163>
+// Removing this `repr(4)` will cause the compiler to not build on platforms
+// like `m68k` Linux, where the alignment of u32 and usize is only 2.
+// Since `repr(align)` may only raise alignment, this has no effect on
+// platforms where the alignment is already sufficient.
 #[repr(align(4))]
 pub struct Lifetime {
     #[stable_hasher(ignore)]
@@ -437,7 +440,7 @@ impl<'hir> ConstItemRhs<'hir> {
 /// versus const args that are literals or have arbitrary computations (e.g., `{ 1 + 3 }`).
 ///
 /// For an explanation of the `Unambig` generic parameter see the dev-guide:
-/// <https://rustc-dev-guide.rust-lang.org/hir/ambig-unambig-ty-and-consts.html>
+/// <https://rustc-dev-guide.rust-lang.org/ambig-unambig-ty-and-consts.html>
 #[derive(Clone, Copy, Debug, HashStable_Generic)]
 #[repr(C)]
 pub struct ConstArg<'hir, Unambig = ()> {
@@ -494,7 +497,9 @@ impl<'hir, Unambig> ConstArg<'hir, Unambig> {
 
     pub fn span(&self) -> Span {
         match self.kind {
+            ConstArgKind::Struct(path, _) => path.span(),
             ConstArgKind::Path(path) => path.span(),
+            ConstArgKind::TupleCall(path, _) => path.span(),
             ConstArgKind::Anon(anon) => anon.span,
             ConstArgKind::Error(span, _) => span,
             ConstArgKind::Infer(span, _) => span,
@@ -513,11 +518,23 @@ pub enum ConstArgKind<'hir, Unambig = ()> {
     /// However, in the future, we'll be using it for all of those.
     Path(QPath<'hir>),
     Anon(&'hir AnonConst),
+    /// Represents construction of struct/struct variants
+    Struct(QPath<'hir>, &'hir [&'hir ConstArgExprField<'hir>]),
+    /// Tuple constructor variant
+    TupleCall(QPath<'hir>, &'hir [&'hir ConstArg<'hir>]),
     /// Error const
     Error(Span, ErrorGuaranteed),
     /// This variant is not always used to represent inference consts, sometimes
     /// [`GenericArg::Infer`] is used instead.
     Infer(Span, Unambig),
+}
+
+#[derive(Clone, Copy, Debug, HashStable_Generic)]
+pub struct ConstArgExprField<'hir> {
+    pub hir_id: HirId,
+    pub span: Span,
+    pub field: Ident,
+    pub expr: &'hir ConstArg<'hir>,
 }
 
 #[derive(Clone, Copy, Debug, HashStable_Generic)]
@@ -1182,7 +1199,7 @@ pub enum AttrArgs {
 
 #[derive(Clone, Debug, HashStable_Generic, Encodable, Decodable)]
 pub struct AttrPath {
-    pub segments: Box<[Ident]>,
+    pub segments: Box<[Symbol]>,
     pub span: Span,
 }
 
@@ -1198,7 +1215,7 @@ impl AttrPath {
             segments: path
                 .segments
                 .iter()
-                .map(|i| Ident { name: i.ident.name, span: lower_span(i.ident.span) })
+                .map(|i| i.ident.name)
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
             span: lower_span(path.span),
@@ -1208,7 +1225,11 @@ impl AttrPath {
 
 impl fmt::Display for AttrPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", join_path_idents(&self.segments))
+        write!(
+            f,
+            "{}",
+            join_path_idents(self.segments.iter().map(|i| Ident { name: *i, span: DUMMY_SP }))
+        )
     }
 }
 
@@ -1313,7 +1334,7 @@ impl AttributeExt for Attribute {
 
     /// For a single-segment attribute, returns its name; otherwise, returns `None`.
     #[inline]
-    fn ident(&self) -> Option<Ident> {
+    fn name(&self) -> Option<Symbol> {
         match &self {
             Attribute::Unparsed(n) => {
                 if let [ident] = n.path.segments.as_ref() {
@@ -1329,7 +1350,7 @@ impl AttributeExt for Attribute {
     #[inline]
     fn path_matches(&self, name: &[Symbol]) -> bool {
         match &self {
-            Attribute::Unparsed(n) => n.path.segments.iter().map(|ident| &ident.name).eq(name),
+            Attribute::Unparsed(n) => n.path.segments.iter().eq(name),
             _ => false,
         }
     }
@@ -1350,6 +1371,7 @@ impl AttributeExt for Attribute {
             // FIXME: should not be needed anymore when all attrs are parsed
             Attribute::Parsed(AttributeKind::DocComment { span, .. }) => *span,
             Attribute::Parsed(AttributeKind::Deprecation { span, .. }) => *span,
+            Attribute::Parsed(AttributeKind::CfgTrace(cfgs)) => cfgs[0].1,
             a => panic!("can't get the span of an arbitrary parsed attribute: {a:?}"),
         }
     }
@@ -1365,10 +1387,17 @@ impl AttributeExt for Attribute {
     }
 
     #[inline]
-    fn ident_path(&self) -> Option<SmallVec<[Ident; 1]>> {
+    fn symbol_path(&self) -> Option<SmallVec<[Symbol; 1]>> {
         match &self {
             Attribute::Unparsed(n) => Some(n.path.segments.iter().copied().collect()),
             _ => None,
+        }
+    }
+
+    fn path_span(&self) -> Option<Span> {
+        match &self {
+            Attribute::Unparsed(attr) => Some(attr.path.span),
+            Attribute::Parsed(_) => None,
         }
     }
 
@@ -1452,11 +1481,6 @@ impl Attribute {
     }
 
     #[inline]
-    pub fn ident(&self) -> Option<Ident> {
-        AttributeExt::ident(self)
-    }
-
-    #[inline]
     pub fn path_matches(&self, name: &[Symbol]) -> bool {
         AttributeExt::path_matches(self, name)
     }
@@ -1489,11 +1513,6 @@ impl Attribute {
     #[inline]
     pub fn path(&self) -> SmallVec<[Symbol; 1]> {
         AttributeExt::path(self)
-    }
-
-    #[inline]
-    pub fn ident_path(&self) -> Option<SmallVec<[Ident; 1]>> {
-        AttributeExt::ident_path(self)
     }
 
     #[inline]
@@ -1930,7 +1949,6 @@ pub enum PatExprKind<'hir> {
         // once instead of matching on unop neg expressions everywhere.
         negated: bool,
     },
-    ConstBlock(ConstBlock),
     /// A path pattern for a unit struct/variant or a (maybe-associated) constant.
     Path(QPath<'hir>),
 }
@@ -3361,7 +3379,7 @@ pub enum AmbigArg {}
 /// Represents a type in the `HIR`.
 ///
 /// For an explanation of the `Unambig` generic parameter see the dev-guide:
-/// <https://rustc-dev-guide.rust-lang.org/hir/ambig-unambig-ty-and-consts.html>
+/// <https://rustc-dev-guide.rust-lang.org/ambig-unambig-ty-and-consts.html>
 #[derive(Debug, Clone, Copy, HashStable_Generic)]
 #[repr(C)]
 pub struct Ty<'hir, Unambig = ()> {
@@ -3700,7 +3718,7 @@ pub enum InferDelegationKind {
 /// The various kinds of types recognized by the compiler.
 ///
 /// For an explanation of the `Unambig` generic parameter see the dev-guide:
-/// <https://rustc-dev-guide.rust-lang.org/hir/ambig-unambig-ty-and-consts.html>
+/// <https://rustc-dev-guide.rust-lang.org/ambig-unambig-ty-and-consts.html>
 // SAFETY: `repr(u8)` is required so that `TyKind<()>` and `TyKind<!>` are layout compatible
 #[repr(u8, C)]
 #[derive(Debug, Clone, Copy, HashStable_Generic)]
@@ -4714,6 +4732,7 @@ pub enum Node<'hir> {
     ConstArg(&'hir ConstArg<'hir>),
     Expr(&'hir Expr<'hir>),
     ExprField(&'hir ExprField<'hir>),
+    ConstArgExprField(&'hir ConstArgExprField<'hir>),
     Stmt(&'hir Stmt<'hir>),
     PathSegment(&'hir PathSegment<'hir>),
     Ty(&'hir Ty<'hir>),
@@ -4773,6 +4792,7 @@ impl<'hir> Node<'hir> {
             Node::AssocItemConstraint(c) => Some(c.ident),
             Node::PatField(f) => Some(f.ident),
             Node::ExprField(f) => Some(f.ident),
+            Node::ConstArgExprField(f) => Some(f.field),
             Node::PreciseCapturingNonLifetimeArg(a) => Some(a.ident),
             Node::Param(..)
             | Node::AnonConst(..)
