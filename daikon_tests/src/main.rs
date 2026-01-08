@@ -32,7 +32,7 @@ fn run_daikon_rustc_pp_tests() {
         };
     let rustc_path =
         if in_ci {
-            "/checkout/obj/build/host/stage1/bin/rustc" // we can use stage2 probably in ci
+            "/checkout/obj/build/host/stage2/bin/rustc" // we can use stage2 probably in ci
         } else {
             "../../build/host/stage1/bin/rustc"
         };
