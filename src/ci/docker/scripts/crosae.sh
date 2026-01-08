@@ -9,5 +9,5 @@ cp -r /checkout/daikon_tests/test /checkout/obj/daikon_tests/
 
 cd /checkout/daikon_tests
 
-# the tests will run in the new environment
-RUSTC=/checkout/obj/build/host/stage0/bin/rustc /checkout/obj/build/host/stage0/bin/cargo run --target-dir /checkout/obj/target_daikon_tests
+# the tests will run in the new environment with the CI environment variable set
+CROSAE_CI=1 RUSTC=/checkout/obj/build/host/stage0/bin/rustc /checkout/obj/build/host/stage0/bin/cargo run --target-dir /checkout/obj/target_daikon_tests

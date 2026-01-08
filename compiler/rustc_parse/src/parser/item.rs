@@ -1865,7 +1865,7 @@ impl<'a> Parser<'a> {
 
         // Determine whether we are building crate std.
         // Check an environment variable as well for ci.
-        let in_ci = std::env::var("DISABLE_INSTRUMENTATION").is_ok();
+        let disable_instrumentation = std::env::var("DISABLE_INSTRUMENTATION").is_ok();
         let source_map = self.psess.source_map();
         let (source_file, _b, _c, _d, _e) = source_map.span_to_location_info(self.token.span);
         *DO_VISITOR.lock().unwrap() = match &source_file {
@@ -1873,7 +1873,7 @@ impl<'a> Parser<'a> {
                 // RealFileName is no longer an enum
                 rustc_span::FileName::Real(file_name) => match &file_name.local_path() {
                     Some(buf) => match &buf.to_str() {
-                        Some(s) => !s.starts_with("library") && !s.contains(".cargo") && !in_ci,
+                        Some(s) => !s.starts_with("library") && !s.contains(".cargo") && !disable_instrumentation,
                         None => false,
                     },
                     None => false,
