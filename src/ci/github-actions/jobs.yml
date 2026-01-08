@@ -139,20 +139,16 @@ pr:
 #    <<: *job-aarch64-linux
 #  - name: x86_64-gnu-tools
 #    <<: *job-linux-4c
-
-# do we need any of the above? do we need x86_64-gnu-tools to run before us?
-# only aarch64 llvm stuff has been failing and cancelling.
-  - name: c-rosae CI Number Two
-    env:
-      IMAGE: x86_64-gnu-llvm-21
-      DOCKER_SCRIPT: crosae.sh
-    <<: *job-linux-4c
-
 #  - name: x86_64-gnu-miri
 #    <<: *job-linux-4c
 #  - name: x86_64-gnu-gcc
 #    doc_url: https://rustc-dev-guide.rust-lang.org/tests/codegen-backend-tests/cg_gcc.html
 #    <<: *job-linux-4c
+  - name: c-rosae build and test
+    env:
+      IMAGE: x86_64-gnu-llvm-21
+      DOCKER_SCRIPT: crosae.sh
+    <<: *job-linux-4c
 
 # Jobs that run when you perform a try build (@bors try)
 # These jobs automatically inherit envs.try, to avoid repeating

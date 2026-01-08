@@ -36,7 +36,6 @@ fn run_daikon_rustc_pp_tests() {
         } else {
             "../../build/host/stage1/bin/rustc"
         };
-    println!("{rustc_path}");
 
     let test_path = std::fs::canonicalize(std::path::Path::new(&test_path_str)).unwrap();
 
