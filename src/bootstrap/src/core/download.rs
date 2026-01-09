@@ -345,7 +345,7 @@ impl Config {
         if !rustc_cache.exists() {
             t!(fs::create_dir_all(&rustc_cache));
         }
-        let base = if llvm_assertions {
+        let _base = if llvm_assertions {
             &self.stage0_metadata.config.artifacts_with_llvm_assertions_server
         } else {
             &self.stage0_metadata.config.artifacts_server
