@@ -1222,7 +1222,7 @@ class RustBuild(object):
 
         cargo_dir = os.path.join(self.rust_root, ".cargo")
         commit = self.get_latest_commit()
-        url = f"https://ci-artifacts.rust-lang.org/rustc-builds/b0e65da2af8f3e12015d78a1828fceed6360642a/rustc-nightly-src.tar.xz"
+        url = f"https://ci-artifacts.rust-lang.org/rustc-builds/{commit}/rustc-nightly-src.tar.xz"
         if self.use_vendored_sources:
             vendor_dir = os.path.join(self.rust_root, "vendor")
             if not os.path.exists(vendor_dir):
