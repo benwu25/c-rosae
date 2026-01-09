@@ -109,41 +109,43 @@ jobs:
 # Auto CI job but with `continue_on_error` overridden to `false` (to fail-fast).
 # When overridden, `citool` will check for equivalence between the PR and CI job
 # of the same name modulo `continue_on_error` and `env`.
+rustc-pr:
+  - name: pr-check-1
+    <<: *job-linux-4c
+  - name: pr-check-2
+    <<: *job-linux-4c
+  - name: tidy
+    continue_on_error: true
+    free_disk: false
+    env:
+      # This submodule is expensive to checkout, and it should not be needed for
+      # tidy. This speeds up the PR CI job by ~1 minute.
+      SKIP_SUBMODULES: src/gcc
+    <<: *job-linux-4c
+  - name: x86_64-gnu-llvm-20
+    env:
+      ENABLE_GCC_CODEGEN: "1"
+      DOCKER_SCRIPT: x86_64-gnu-llvm.sh
+    <<: *job-linux-4c
+  - name: aarch64-gnu-llvm-20-1
+    env:
+      IMAGE: aarch64-gnu-llvm-20
+      DOCKER_SCRIPT: stage_2_test_set1.sh
+    <<: *job-aarch64-linux
+  - name: aarch64-gnu-llvm-20-2
+    env:
+      IMAGE: aarch64-gnu-llvm-20
+      DOCKER_SCRIPT: stage_2_test_set2.sh
+    <<: *job-aarch64-linux
+  - name: x86_64-gnu-tools
+    <<: *job-linux-4c
+  - name: x86_64-gnu-miri
+    <<: *job-linux-4c
+  - name: x86_64-gnu-gcc
+    doc_url: https://rustc-dev-guide.rust-lang.org/tests/codegen-backend-tests/cg_gcc.html
+    <<: *job-linux-4c
+
 pr:
-#  - name: pr-check-1
-#    <<: *job-linux-4c
-#  - name: pr-check-2
-#    <<: *job-linux-4c
-#  - name: tidy
-#    continue_on_error: true
-#    free_disk: false
-#    env:
-#      # This submodule is expensive to checkout, and it should not be needed for
-#      # tidy. This speeds up the PR CI job by ~1 minute.
-#      SKIP_SUBMODULES: src/gcc
-#    <<: *job-linux-4c
-#  - name: x86_64-gnu-llvm-20
-#    env:
-#      ENABLE_GCC_CODEGEN: "1"
-#      DOCKER_SCRIPT: x86_64-gnu-llvm.sh
-#    <<: *job-linux-4c
-#  - name: aarch64-gnu-llvm-20-1
-#    env:
-#      IMAGE: aarch64-gnu-llvm-20
-#      DOCKER_SCRIPT: stage_2_test_set1.sh
-#    <<: *job-aarch64-linux
-#  - name: aarch64-gnu-llvm-20-2
-#    env:
-#      IMAGE: aarch64-gnu-llvm-20
-#      DOCKER_SCRIPT: stage_2_test_set2.sh
-#    <<: *job-aarch64-linux
-#  - name: x86_64-gnu-tools
-#    <<: *job-linux-4c
-#  - name: x86_64-gnu-miri
-#    <<: *job-linux-4c
-#  - name: x86_64-gnu-gcc
-#    doc_url: https://rustc-dev-guide.rust-lang.org/tests/codegen-backend-tests/cg_gcc.html
-#    <<: *job-linux-4c
   - name: c-rosae build and test
     env:
       IMAGE: x86_64-gnu-llvm-21
@@ -323,9 +325,9 @@ auto:
   - name: pr-check-2
     <<: *job-linux-4c
 
-#  - name: tidy
-#    free_disk: false
-#    <<: *job-linux-4c
+  - name: tidy
+    free_disk: false
+    <<: *job-linux-4c
 
   - name: test-various
     <<: *job-linux-4c
