@@ -1,21 +1,19 @@
-use std::fmt::Write;
-use std::mem;
+// ignore-tidy-filelength
 
-use crate::parser::daikon_strs::*;
-use crate::{StripTokens, new_parser_from_source_str, unwrap_or_emit_fatal};
-use rustc_ast::mut_visit::*;
-use rustc_ast::*;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::io::Write as FileWrite;
+use std::mem;
 use std::sync::{LazyLock, Mutex};
 
 use ast::token::IdentIsRaw;
+use rustc_ast::mut_visit::*;
 // use rustc_ast::ast::*;
 use rustc_ast::token::{self, Delimiter, InvisibleOrigin, MetaVarKind, TokenKind};
 use rustc_ast::tokenstream::{DelimSpan, TokenStream, TokenTree};
 use rustc_ast::util::case::Case;
 use rustc_ast::{
-    attr, {self as ast},
+    attr, *, {self as ast},
 };
 use rustc_ast_pretty::pprust;
 use rustc_errors::codes::*;
@@ -34,7 +32,10 @@ use super::{
     Recovered, Trailing, UsePreAttrPos,
 };
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
-use crate::{exp, fluent_generated as fluent};
+use crate::parser::daikon_strs::*;
+use crate::{
+    StripTokens, exp, fluent_generated as fluent, new_parser_from_source_str, unwrap_or_emit_fatal,
+};
 
 // Stores the prefix for output files.
 // Decls and dtrace files will be named according to this value.

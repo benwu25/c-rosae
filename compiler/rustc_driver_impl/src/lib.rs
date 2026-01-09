@@ -13,8 +13,6 @@
 #![feature(try_blocks)]
 // tidy-alphabetical-end
 
-use rustc_parse::parser::item::{OUTPUT_PREFIX, set_output_prefix};
-
 use std::cmp::max;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -51,6 +49,7 @@ use rustc_metadata::creader::MetadataLoader;
 use rustc_metadata::locator;
 use rustc_middle::ty::TyCtxt;
 use rustc_parse::lexer::StripTokens;
+use rustc_parse::parser::item::{OUTPUT_PREFIX, set_output_prefix};
 use rustc_parse::{new_parser_from_file, new_parser_from_source_str, unwrap_or_emit_fatal};
 use rustc_session::config::{
     CG_OPTIONS, CrateType, ErrorOutputType, Input, OptionDesc, OutFileName, OutputType, Sysroot,
