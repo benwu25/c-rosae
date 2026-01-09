@@ -1874,7 +1874,11 @@ impl<'a> Parser<'a> {
                 // RealFileName is no longer an enum
                 rustc_span::FileName::Real(file_name) => match &file_name.local_path() {
                     Some(buf) => match &buf.to_str() {
-                        Some(s) => !s.starts_with("library") && !s.contains(".cargo") && !disable_instrumentation,
+                        Some(s) => {
+                            !s.starts_with("library")
+                                && !s.contains(".cargo")
+                                && !disable_instrumentation
+                        }
                         None => false,
                     },
                     None => false,

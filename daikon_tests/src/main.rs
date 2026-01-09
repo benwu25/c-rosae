@@ -24,18 +24,12 @@ pub fn get_output_name(s: String) -> String {
 // iterate through "./tests" and run rustc +daikon for files, cargo +daikon for multi-file tests in subdirectories
 fn run_daikon_rustc_pp_tests() {
     let in_ci = std::env::var("CROSAE_CI").is_ok();
-    let test_path_str =
-        if in_ci {
-            "/checkout/obj/daikon_tests/test/"
-        } else {
-            "./test/"
-        };
-    let rustc_path =
-        if in_ci {
-            "/checkout/obj/build/host/stage2/bin/rustc"
-        } else {
-            "../../build/host/stage1/bin/rustc"
-        };
+    let test_path_str = if in_ci { "/checkout/obj/daikon_tests/test/" } else { "./test/" };
+    let rustc_path = if in_ci {
+        "/checkout/obj/build/host/stage2/bin/rustc"
+    } else {
+        "../../build/host/stage1/bin/rustc"
+    };
 
     let test_path = std::fs::canonicalize(std::path::Path::new(&test_path_str)).unwrap();
 
