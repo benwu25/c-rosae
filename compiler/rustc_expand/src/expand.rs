@@ -1,33 +1,25 @@
-use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::{iter, mem, slice};
+// ignore-tidy-filelength
 
-use rustc_ast::visit::FnKind;
-#[allow(unused_imports)]
-use rustc_ast::{
-    AngleBracketedArg, Block, Expr, FieldDef, FnDecl, FnRetTy, GenericArg, GenericArgs, Item, Pat,
-    Path, VariantData,
-};
-#[allow(unused_imports)]
-use rustc_parse::parser::daikon_strs::{
-    BOOL, CHAR, F32, F64, I8, I16, I32, I64, I128, ISIZE, STR, STRING, U8, U16, U32, U64, U128,
-    UNIT, USIZE, VEC,
-};
-use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_PREFIX};
 use std::collections::HashMap;
 use std::io::Write;
-use std::sync::{LazyLock, Mutex};
-use thin_vec::ThinVec;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::{iter, mem, slice};
 
 use rustc_ast::mut_visit::*;
 use rustc_ast::tokenstream::TokenStream;
-use rustc_ast::visit::{self, AssocCtxt, Visitor, VisitorResult, try_visit, walk_list};
+use rustc_ast::visit::{self, AssocCtxt, FnKind, Visitor, VisitorResult, try_visit, walk_list};
 use rustc_ast::{
     self as ast, AssocItemKind, AstNodeWrapper, AttrArgs, AttrItemKind, AttrStyle, AttrVec,
     DUMMY_NODE_ID, EarlyParsedAttribute, ExprKind, ForeignItemKind, HasAttrs, HasNodeId, Inline,
     ItemKind, MacStmtStyle, MetaItemInner, MetaItemKind, ModKind, NodeId, PatKind, StmtKind,
     TyKind, token,
+};
+#[allow(unused_imports)]
+use rustc_ast::{
+    AngleBracketedArg, Block, Expr, FieldDef, FnDecl, FnRetTy, GenericArg, GenericArgs, Item, Pat,
+    Path, VariantData,
 };
 use rustc_ast_pretty::pprust;
 use rustc_attr_parsing::{
@@ -41,6 +33,12 @@ use rustc_feature::Features;
 use rustc_hir::Target;
 use rustc_hir::def::MacroKinds;
 use rustc_hir::limit::Limit;
+#[allow(unused_imports)]
+use rustc_parse::parser::daikon_strs::{
+    BOOL, CHAR, F32, F64, I8, I16, I32, I64, I128, ISIZE, STR, STRING, U8, U16, U32, U64, U128,
+    UNIT, USIZE, VEC,
+};
+use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_PREFIX};
 use rustc_parse::parser::{
     AttemptLocalParseRecovery, CommaRecoveryMode, ForceCollect, Parser, RecoverColon, RecoverComma,
     token_descr,
@@ -51,6 +49,7 @@ use rustc_session::parse::feature_err;
 use rustc_span::hygiene::SyntaxContext;
 use rustc_span::{ErrorGuaranteed, FileName, Ident, LocalExpnId, Span, Symbol, sym};
 use smallvec::SmallVec;
+use thin_vec::ThinVec;
 
 use crate::base::*;
 use crate::config::{StripUnconfigured, attr_into_trace};
@@ -591,7 +590,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
                 return RepType::Prim(maybe_prim_rep);
             }
             if ty_string == VEC {
-                // TODO
+                // FIXME
                 return grok_vec_args(&path);
             }
             return RepType::HashCodeStruct(String::from(ty_string));
@@ -611,7 +610,7 @@ fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
 }
 
 // Immutable visitor to visit all structs and build a map data structure.
-// TODO: remove, we will use a /tmp file instead.
+// FIXME: remove, we will use a /tmp file instead.
 #[allow(rustc::default_hash_types)]
 struct DeclsHashMapBuilder<'a> {
     pub map: &'a mut HashMap<String, Box<Item>>,
@@ -1478,7 +1477,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     return i + 1;
                 } // other things you overlooked.
             },
-            // TODO: remove this.
+            // FIXME: remove this.
             // StmtKind::Expr(no_semi_expr) => match &no_semi_expr.kind {
             //     ExprKind::Match(..) => {
             //         return i + 1;
@@ -1688,7 +1687,13 @@ fn grok_fn_sig<'a>(
 
 impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
     // Process a new function and write it to the decls file.
-    fn visit_fn(&mut self, fk: FnKind<'a>, _attrs: &rustc_ast::AttrVec, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
+    fn visit_fn(
+        &mut self,
+        fk: FnKind<'a>,
+        _attrs: &rustc_ast::AttrVec,
+        _span: rustc_span::Span,
+        _id: rustc_ast::NodeId,
+    ) {
         match &fk {
             FnKind::Fn(_, _, f) => {
                 if !f.ident.as_str().starts_with("dtrace") {

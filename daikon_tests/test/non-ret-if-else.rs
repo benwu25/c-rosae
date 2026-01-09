@@ -3,12 +3,7 @@
  */
 
 fn boop(x: i32) -> i32 {
-    let y = 
-        if x == 12 {
-            22
-        } else {
-            19
-        };
+    let y = if x == 12 { 22 } else { 19 };
     return y;
 }
 

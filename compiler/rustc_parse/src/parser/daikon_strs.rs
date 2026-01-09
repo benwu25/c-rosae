@@ -1,4 +1,4 @@
-// TODO: add one test for each String.
+// FIXME: add one test for each String.
 
 use crate::parser::item::OUTPUT_PREFIX;
 
@@ -96,7 +96,7 @@ pub(crate) static DTRACE_PRIM_FIELD_TOSTRING: &str =
 pub(crate) static DTRACE_PRIM_STRUCT: &str =
     "dtrace_print_prim::<$1>(self.$2, format!(\"{}{}\", prefix, \".$3\"));";
 
-// TODO: if you have Vec<&'a &'b i32>, you will probably have to make a new Vec<i32> like this
+// FIXME: if you have Vec<&'a &'b i32>, you will probably have to make a new Vec<i32> like this
 //       to satisfy dtrace_print_prim_vec<T>(v: &Vec<T>).
 
 // Build log stmt for fields with primitive reference type.
@@ -436,7 +436,7 @@ pub(crate) fn build_daikon_tmp_vec(
     res
 }
 
-// TODO: use this for params/returns where you have Vec<Type>.
+// FIXME: use this for params/returns where you have Vec<Type>.
 pub(crate) static DAIKON_TMP_VEC_AMPERSAND: [&str; 10] = [
     "fn __skip() { let mut __daikon_tmp",
     ": Vec<&",
@@ -560,7 +560,7 @@ pub(crate) fn build_tmp_vec_for_field(
     res
 }
 
-// TODO: use this for fields which are f: Vec<Type> or f: &Vec<Type>, need to use &.
+// FIXME: use this for fields which are f: Vec<Type> or f: &Vec<Type>, need to use &.
 pub(crate) static DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND: [&str; 10] = [
     "let mut __daikon_tmp",
     ": Vec<&",
