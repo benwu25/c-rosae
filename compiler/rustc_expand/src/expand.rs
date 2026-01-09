@@ -590,7 +590,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
                 return RepType::Prim(maybe_prim_rep);
             }
             if ty_string == VEC {
-                // TODO
+                // FIXME
                 return grok_vec_args(&path);
             }
             return RepType::HashCodeStruct(String::from(ty_string));
@@ -610,7 +610,7 @@ fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
 }
 
 // Immutable visitor to visit all structs and build a map data structure.
-// TODO: remove, we will use a /tmp file instead.
+// FIXME: remove, we will use a /tmp file instead.
 #[allow(rustc::default_hash_types)]
 struct DeclsHashMapBuilder<'a> {
     pub map: &'a mut HashMap<String, Box<Item>>,
@@ -1477,7 +1477,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     return i + 1;
                 } // other things you overlooked.
             },
-            // TODO: remove this.
+            // FIXME: remove this.
             // StmtKind::Expr(no_semi_expr) => match &no_semi_expr.kind {
             //     ExprKind::Match(..) => {
             //         return i + 1;
