@@ -146,12 +146,13 @@ rustc-pr:
     <<: *job-linux-4c
 
 pr:
+  # we can try making bootstrap.py work for tidy by getting rust-lang
+  # latest commit instead of our latest commit? or somehow change the url
+  # to some permanent resource
   - name: tidy
     continue_on_error: true
     free_disk: false
     env:
-      IMAGE: x86_64-gnu-llvm-21
-      DOCKER_SCRIPT: c-rosae-tidy.sh
       # This submodule is expensive to checkout, and it should not be needed for
       # tidy. This speeds up the PR CI job by ~1 minute.
       SKIP_SUBMODULES: src/gcc
