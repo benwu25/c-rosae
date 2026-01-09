@@ -1688,7 +1688,13 @@ fn grok_fn_sig<'a>(
 
 impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
     // Process a new function and write it to the decls file.
-    fn visit_fn(&mut self, fk: FnKind<'a>, _attrs: &rustc_ast::AttrVec, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
+    fn visit_fn(
+        &mut self,
+        fk: FnKind<'a>,
+        _attrs: &rustc_ast::AttrVec,
+        _span: rustc_span::Span,
+        _id: rustc_ast::NodeId,
+    ) {
         match &fk {
             FnKind::Fn(_, _, f) => {
                 if !f.ident.as_str().starts_with("dtrace") {
