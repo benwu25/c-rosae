@@ -364,7 +364,8 @@ impl Config {
     [llvm]
     download-ci-llvm = false
     ";
-            self.download_file(&format!("{base}/{llvm_sha}/{filename}"), &tarball, help_on_error);
+            // self.download_file(&format!("{base}/{llvm_sha}/{filename}"), &tarball, help_on_error);
+            self.download_file("https://ci-artifacts.rust-lang.org/rustc-builds/a6525d5264da34f51ad48c178281d3c6323dbfcf/rust-dev-nightly-x86_64-unknown-linux-gnu.tar.xz");
         }
         let llvm_root = self.ci_llvm_root();
         self.unpack(&tarball, &llvm_root, "rust-dev");
