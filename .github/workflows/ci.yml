@@ -309,6 +309,9 @@ jobs:
   # This job isused to tell bors the final status of the build, as there is no practical way to detect
   # when a workflow is successful listening to webhooks only in our current bors implementation (homu).
   outcome:
+  release:
+    branches:
+      - "**"
     name: bors build finished
     runs-on: ubuntu-24.04
     needs: [ calculate_matrix, job ]
