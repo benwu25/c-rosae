@@ -147,9 +147,8 @@ rustc-pr:
 
 pr:
   # in order to avoid modifying the tidy CI job, we have to modify
-  # the llvm download url in bootstrap/src/core/downloads.rs which
-  # relies on specific commits our repo may not have compared to
-  # upstream rustc
+  # the llvm_sha in bootstrap/src/core/download.rs to match a specific
+  # commit which is used for local builds
   - name: tidy
     continue_on_error: true
     free_disk: false
