@@ -345,7 +345,7 @@ impl Config {
         if !rustc_cache.exists() {
             t!(fs::create_dir_all(&rustc_cache));
         }
-        let _base = if llvm_assertions {
+        let base = if llvm_assertions {
             &self.stage0_metadata.config.artifacts_with_llvm_assertions_server
         } else {
             &self.stage0_metadata.config.artifacts_server
@@ -364,8 +364,7 @@ impl Config {
     [llvm]
     download-ci-llvm = false
     ";
-            // self.download_file(&format!("{base}/{llvm_sha}/{filename}"), &tarball, help_on_error);
-            self.download_file("https://ci-artifacts.rust-lang.org/rustc-builds/a6525d5264da34f51ad48c178281d3c6323dbfcf/rust-dev-nightly-x86_64-unknown-linux-gnu.tar.xz", &tarball, help_on_error);
+            self.download_file(&format!("{base}/a6525d5264da34f51ad48c178281d3c6323dbfcf/{filename}"), &tarball, help_on_error);
         }
         let llvm_root = self.ci_llvm_root();
         self.unpack(&tarball, &llvm_root, "rust-dev");
