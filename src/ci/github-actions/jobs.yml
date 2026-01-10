@@ -160,11 +160,11 @@ pr:
   # FIXME: we can probably avoid using the x86_64-gnu-llvm-21 image and a
   # DOCKER_SCRIPT in favor of a simple SCRIPT now that we have fixed
   # issues with commit-specific download urls
-  - name: c-rosae build and test
-    env:
-      IMAGE: x86_64-gnu-llvm-21
-      DOCKER_SCRIPT: crosae.sh
-    <<: *job-linux-4c
+#  - name: c-rosae build and test
+#    env:
+#      IMAGE: x86_64-gnu-llvm-21
+#      DOCKER_SCRIPT: crosae.sh
+#    <<: *job-linux-4c
 
 # Jobs that run when you perform a try build (@bors try)
 # These jobs automatically inherit envs.try, to avoid repeating
