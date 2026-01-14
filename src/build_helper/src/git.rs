@@ -261,15 +261,26 @@ pub fn get_closest_upstream_commit(
 
 /// Resolve the commit SHA of `commit_ref`.
 fn resolve_commit_sha(git_dir: Option<&Path>, commit_ref: &str) -> Result<String, String> {
-    let mut git = Command::new("git");
+    // Retrieve rust-lang/rust latest commit
+    let mut git = Command::new("git")
+        .stdout(Stdio::piped());
 
     if let Some(git_dir) = git_dir {
         git.current_dir(git_dir);
     }
 
-    git.args(["rev-parse", commit_ref]);
+    // git.args(["rev-parse", commit_ref]);
+    git.args(["ls-remote", "https://github.com/rust-lang/rust.git"]);
 
-    Ok(output_result(&mut git)?.trim().to_owned())
+    git.spawn().unwrap();
+
+    let head = Command::new("head")
+        .stdin(Stdio::from(git.stdout.unwrap()));
+
+    head.args(["-1"]);
+
+    Ok(output_result(&mut head)?.trim().to_owned())
+    // Ok(output_result(&mut git)?.trim().to_owned())
 }
 
 /// Returns the files that have been modified in the current branch compared to the master branch.
