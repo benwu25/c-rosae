@@ -202,10 +202,13 @@ pub const LLVM_INVALIDATION_PATHS: &[&str] = &[
 /// Detect whether LLVM sources have been modified locally or not.
 pub(crate) fn detect_llvm_freshness(config: &Config, is_git: bool) -> PathFreshness {
     if is_git {
+        println!("branch 1 in detect_llvm_freshness!");
         config.check_path_modifications(LLVM_INVALIDATION_PATHS)
     } else if let Some(info) = crate::utils::channel::read_commit_info_file(&config.src) {
+        println!("branch 2 in detect_llvm_freshness!");
         PathFreshness::LastModifiedUpstream { upstream: info.sha.trim().to_owned() }
     } else {
+        println!("branch 3 in detect_llvm_freshness!");
         PathFreshness::MissingUpstream
     }
 }
