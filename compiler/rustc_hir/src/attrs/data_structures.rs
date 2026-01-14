@@ -11,7 +11,7 @@ use rustc_error_messages::{DiagArgValue, IntoDiagArg};
 use rustc_macros::{Decodable, Encodable, HashStable_Generic, PrintAttribute};
 use rustc_span::def_id::DefId;
 use rustc_span::hygiene::Transparency;
-use rustc_span::{Ident, Span, Symbol};
+use rustc_span::{ErrorGuaranteed, Ident, Span, Symbol};
 pub use rustc_target::spec::SanitizerSet;
 use thin_vec::ThinVec;
 
@@ -20,8 +20,21 @@ use crate::limit::Limit;
 use crate::{DefaultBodyStability, PartialConstStability, RustcVersion, Stability};
 
 #[derive(Copy, Clone, Debug, HashStable_Generic, Encodable, Decodable, PrintAttribute)]
+pub enum EiiImplResolution {
+    /// Usually, finding the extern item that an EII implementation implements means finding
+    /// the defid of the associated attribute macro, and looking at *its* attributes to find
+    /// what foreign item its associated with.
+    Macro(DefId),
+    /// Sometimes though, we already know statically and can skip some name resolution.
+    /// Stored together with the eii's name for diagnostics.
+    Known(EiiDecl),
+    /// For when resolution failed, but we want to continue compilation
+    Error(ErrorGuaranteed),
+}
+
+#[derive(Copy, Clone, Debug, HashStable_Generic, Encodable, Decodable, PrintAttribute)]
 pub struct EiiImpl {
-    pub eii_macro: DefId,
+    pub resolution: EiiImplResolution,
     pub impl_marked_unsafe: bool,
     pub span: Span,
     pub inner_span: Span,
@@ -30,10 +43,10 @@ pub struct EiiImpl {
 
 #[derive(Copy, Clone, Debug, HashStable_Generic, Encodable, Decodable, PrintAttribute)]
 pub struct EiiDecl {
-    pub eii_extern_target: DefId,
+    pub foreign_item: DefId,
     /// whether or not it is unsafe to implement this EII
     pub impl_unsafe: bool,
-    pub span: Span,
+    pub name: Ident,
 }
 
 #[derive(Copy, Clone, PartialEq, Encodable, Decodable, Debug, HashStable_Generic, PrintAttribute)]
@@ -123,7 +136,7 @@ pub enum IntType {
 pub struct Deprecation {
     pub since: DeprecatedSince,
     /// The note to issue a reason.
-    pub note: Option<Symbol>,
+    pub note: Option<Ident>,
     /// A text snippet used to completely replace any use of the deprecated item in an expression.
     ///
     /// This is currently unstable.
@@ -555,6 +568,26 @@ impl<E: rustc_span::SpanEncoder> rustc_serialize::Encodable<E> for DocAttribute 
     }
 }
 
+/// How to perform collapse macros debug info
+/// if-ext - if macro from different crate (related to callsite code)
+/// | cmd \ attr    | no  | (unspecified) | external | yes |
+/// | no            | no  | no            | no       | no  |
+/// | (unspecified) | no  | no            | if-ext   | yes |
+/// | external      | no  | if-ext        | if-ext   | yes |
+/// | yes           | yes | yes           | yes      | yes |
+#[derive(Copy, Clone, Debug, Hash, PartialEq)]
+#[derive(HashStable_Generic, Encodable, Decodable, PrintAttribute)]
+pub enum CollapseMacroDebuginfo {
+    /// Don't collapse debuginfo for the macro
+    No = 0,
+    /// Unspecified value
+    Unspecified = 1,
+    /// Collapse debuginfo if the macro comes from a different crate
+    External = 2,
+    /// Collapse debuginfo for the macro
+    Yes = 3,
+}
+
 /// Represents parsed *built-in* inert attributes.
 ///
 /// ## Overview
@@ -651,6 +684,9 @@ pub enum AttributeKind {
     /// Represents `#[cold]`.
     Cold(Span),
 
+    /// Represents `#[collapse_debuginfo]`.
+    CollapseDebugInfo(CollapseMacroDebuginfo),
+
     /// Represents `#[rustc_confusables]`.
     Confusables {
         symbols: ThinVec<Symbol>,
@@ -708,10 +744,10 @@ pub enum AttributeKind {
     Dummy,
 
     /// Implementation detail of `#[eii]`
-    EiiExternItem,
+    EiiDeclaration(EiiDecl),
 
     /// Implementation detail of `#[eii]`
-    EiiExternTarget(EiiDecl),
+    EiiForeignItem,
 
     /// Implementation detail of `#[eii]`
     EiiImpls(ThinVec<EiiImpl>),
@@ -787,6 +823,9 @@ pub enum AttributeKind {
 
     /// Represents `#[move_size_limit]`
     MoveSizeLimit { attr_span: Span, limit_span: Span, limit: Limit },
+
+    /// Represents `#[must_not_suspend]`
+    MustNotSupend { reason: Option<Symbol> },
 
     /// Represents `#[must_use]`.
     MustUse {
@@ -866,6 +905,24 @@ pub enum AttributeKind {
 
     /// Represents `#[rustc_coherence_is_core]`
     RustcCoherenceIsCore(Span),
+
+    /// Represents `#[rustc_dump_def_parents]`
+    RustcDumpDefParents,
+
+    /// Represents `#[rustc_dump_item_bounds]`
+    RustcDumpItemBounds,
+
+    /// Represents `#[rustc_dump_predicates]`
+    RustcDumpPredicates,
+
+    /// Represents `#[rustc_dump_user_args]`
+    RustcDumpUserArgs,
+
+    /// Represents `#[rustc_dump_vtable]`
+    RustcDumpVtable(Span),
+
+    /// Represents `#[rustc_has_incoherent_inherent_impls]`
+    RustcHasIncoherentInherentImpls,
 
     /// Represents `#[rustc_layout_scalar_valid_range_end]`.
     RustcLayoutScalarValidRangeEnd(Box<u128>, Span),
