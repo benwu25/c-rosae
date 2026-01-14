@@ -365,7 +365,7 @@ impl Config {
     download-ci-llvm = false
     ";
             self.download_file(
-                &format!("{base}/a6525d5264da34f51ad48c178281d3c6323dbfcf/{filename}"),
+                &format!("{base}/{llvm_sha}/{filename}"),
                 &tarball,
                 help_on_error,
             );
