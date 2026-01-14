@@ -880,7 +880,7 @@ impl<'a> Builder<'a> {
                 test::Incremental,
                 test::Debuginfo,
                 test::UiFullDeps,
-                test::Rustdoc,
+                test::RustdocHtml,
                 test::CoverageRunRustdoc,
                 test::Pretty,
                 test::CodegenCranelift,
@@ -967,6 +967,7 @@ impl<'a> Builder<'a> {
                 dist::Mingw,
                 dist::Rustc,
                 dist::CraneliftCodegenBackend,
+                dist::GccCodegenBackend,
                 dist::Std,
                 dist::RustcDev,
                 dist::Analysis,
@@ -989,7 +990,8 @@ impl<'a> Builder<'a> {
                 dist::PlainSourceTarballGpl,
                 dist::BuildManifest,
                 dist::ReproducibleArtifacts,
-                dist::GccDev
+                dist::GccDev,
+                dist::Gcc
             ),
             Kind::Install => describe!(
                 install::Docs,
