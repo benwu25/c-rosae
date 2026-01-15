@@ -271,7 +271,12 @@ pub fn get_closest_upstream_commit(
 }
 
 fn resolve_commit_sha_1() -> Result<String, String> {
-    Ok(std::fs::read_to_string(".bors_hash").expect("Failed to read bors_commit"))
+    let _ = Command::new("bash")
+        .args(["pwd"])
+        .spawn()
+        .expect("bash failed");
+
+    Ok(std::fs::read_to_string("/checkout/.bors_hash").expect("Failed to read bors_commit"))
 }
 
 /// Resolve the commit SHA of `commit_ref`.
