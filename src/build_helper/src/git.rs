@@ -108,6 +108,10 @@ pub fn check_path_modifications(
 
         // Do not include HEAD, as it is never an upstream commit
         // If we do not find an upstream commit in CI, something is seriously wrong.
+
+        // if target_paths is the llvm stuff, call your version of get_closest_upstream_commit
+        // to avoid computing bad sha values in other cases.
+
         Some(
             get_closest_upstream_commit(Some(git_dir), config, ci_env)?
                 .expect("No upstream commit was found on CI"),
@@ -294,6 +298,8 @@ fn resolve_commit_sha(_git_dir: Option<&Path>, _commit_ref: &str) -> Result<Stri
 
     let s = output_result(&mut head)?.trim().to_owned();
     let v: Vec<&str> = s.split(' ').collect();
+    println!("awesome sha is: {}!", v[0]);
+    // println!("the other thing is: {}", v[1]);
     Ok(String::from(v[0]))
     // Ok(output_result(&mut git)?.trim().to_owned())
 }
