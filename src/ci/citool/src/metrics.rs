@@ -52,6 +52,11 @@ pub fn download_auto_job_metrics(
     let mut jobs = HashMap::default();
 
     for job in &job_db.auto_jobs {
+        // can we just not
+        if job.name == "tidy" {
+            continue;
+        }
+
         eprintln!("Downloading metrics of job {}", job.name);
         let metrics_parent =
             parent.and_then(|parent| match download_job_metrics(&job.name, parent) {
