@@ -297,9 +297,7 @@ fn resolve_commit_sha(_git_dir: Option<&Path>, _commit_ref: &str) -> Result<Stri
     head.args(["-1"]);
 
     let s = output_result(&mut head)?.trim().to_owned();
-    let v: Vec<&str> = s.split(' ').collect();
-    println!("awesome sha is: {}!", v[0]);
-    // println!("the other thing is: {}", v[1]);
+    let v: Vec<&str> = s.split("\t").collect();
     Ok(String::from(v[0]))
     // Ok(output_result(&mut git)?.trim().to_owned())
 }
