@@ -375,7 +375,11 @@ impl Config {
     download-ci-llvm = false
     ";
             let crosae_llvm_download_sha = get_bors_hash();
-            self.download_file(&format!("{base}/{crosae_llvm_download_sha}/{filename}"), &tarball, help_on_error);
+            self.download_file(
+                &format!("{base}/{crosae_llvm_download_sha}/{filename}"),
+                &tarball,
+                help_on_error,
+            );
         }
         let llvm_root = self.ci_llvm_root();
         self.unpack(&tarball, &llvm_root, "rust-dev");
