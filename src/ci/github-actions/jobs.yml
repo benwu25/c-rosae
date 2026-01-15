@@ -146,9 +146,10 @@ rustc-pr:
     <<: *job-linux-4c
 
 pr:
-  # in order to avoid modifying the tidy CI job, we have to modify
-  # the llvm_sha in bootstrap/src/core/download.rs to match a specific
-  # commit which is used for local builds
+  # In order to avoid modifying the tidy CI job and download CI
+  # resources, we have to modify the llvm_sha computation in
+  # bootstrap/src/core/download.rs to match HEAD on the main branch
+  # of https://github.com/rust-lang/rust.
   - name: tidy
     continue_on_error: true
     free_disk: false
@@ -157,9 +158,6 @@ pr:
       # tidy. This speeds up the PR CI job by ~1 minute.
       SKIP_SUBMODULES: src/gcc
     <<: *job-linux-4c
-  # FIXME: we can probably avoid using the x86_64-gnu-llvm-21 image and a
-  # DOCKER_SCRIPT in favor of a simple SCRIPT now that we have fixed
-  # issues with commit-specific download urls
   - name: c-rosae build and test
     env:
       IMAGE: x86_64-gnu-llvm-21
