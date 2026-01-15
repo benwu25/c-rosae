@@ -11,9 +11,10 @@ name: CI
 on:
   push:
     branches:
-      - automation/bors/auto
-      - automation/bors/try
-      - try-perf
+      # - automation/bors/auto
+      # - automation/bors/try
+      # - try-perf
+      - "**"
   pull_request:
     branches:
       - "**"
