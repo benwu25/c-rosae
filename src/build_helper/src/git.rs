@@ -260,9 +260,9 @@ pub fn get_closest_upstream_commit(
 }
 
 /// Resolve the commit SHA of `commit_ref`.
-fn resolve_commit_sha(git_dir: Option<&Path>, commit_ref: &str) -> Result<String, String> {
+fn resolve_commit_sha(_git_dir: Option<&Path>, _commit_ref: &str) -> Result<String, String> {
     // Retrieve rust-lang/rust latest commit
-    let mut git = Command::new("git")
+/*    let git = Command::new("git")
         .stdout(Stdio::piped());
 
     if let Some(git_dir) = git_dir {
@@ -272,11 +272,24 @@ fn resolve_commit_sha(git_dir: Option<&Path>, commit_ref: &str) -> Result<String
     // git.args(["rev-parse", commit_ref]);
     git.args(["ls-remote", "https://github.com/rust-lang/rust.git"]);
 
-    git.spawn().unwrap();
+    git.spawn().expect("ls-remote failed");
 
-    let head = Command::new("head")
-        .stdin(Stdio::from(git.stdout.unwrap()));
+    let mut head = Command::new("head")
+        .stdin(git.stdout.unwrap());
 
+    head.args(["-1"]); */
+
+
+    // ----------------------------------------
+    let git = Command::new("git")
+        .args(["ls-remote", "https://github.com/rust-lang/rust.git"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("");
+
+    let mut head = Command::new("head");
+
+    head.stdin(git.stdout.unwrap());
     head.args(["-1"]);
 
     Ok(output_result(&mut head)?.trim().to_owned())
