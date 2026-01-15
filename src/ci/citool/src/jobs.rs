@@ -374,8 +374,7 @@ pub fn calculate_job_matrix(
         anyhow::anyhow!("Cannot determine the type of workflow that is being executed")
     })?;
     let run_type = match the_run_type {
-        RunType::PullRequest => RunType::PullRequest,
-        _ => RunType::AutoJob,
+        _ => RunType::PullRequest,
     };
     eprintln!("Run type: {run_type:?}");
 
