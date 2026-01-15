@@ -30,8 +30,8 @@ case "${channel}" in
 esac
 
 branch="$(ciBaseBranch)"
+branch="main"
 if [[ "${branch}" != "${channel_branch}" ]]; then
-    echo "${branch} doesn't equal ${channel_branch}"
     echo "error: PRs changing the \`${channel}\` channel should be sent to the \
 \`${channel_branch}\` branch!"
 
