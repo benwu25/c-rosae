@@ -112,6 +112,7 @@ pub fn check_path_modifications(
         // if target_paths is the llvm stuff, call your version of get_closest_upstream_commit
         // to avoid computing bad sha values in other cases.
         if target_paths[0] == "src/llvm-project" {
+            println!("Using bors_hash");
             Some(
                 resolve_commit_sha_1().map(Some)?
                     .expect("ls-remote failed"),
