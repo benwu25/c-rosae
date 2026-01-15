@@ -111,11 +111,17 @@ pub fn check_path_modifications(
 
         // if target_paths is the llvm stuff, call your version of get_closest_upstream_commit
         // to avoid computing bad sha values in other cases.
+        if target_paths[0] == "src/llvm-project" {
+            Some(
+                resolve_commit_sha_1().map(Some)?
+                    .expect("ls-remote failed"),
+            )
+        } else {
 
         Some(
             get_closest_upstream_commit(Some(git_dir), config, ci_env)?
                 .expect("No upstream commit was found on CI"),
-        )
+        ) }
     } else {
         // Outside CI, we want to find the most recent upstream commit that
         // modified the set of paths, to have an upstream reference that does not change
@@ -263,28 +269,7 @@ pub fn get_closest_upstream_commit(
     if output.is_empty() { Ok(None) } else { Ok(Some(output)) }
 }
 
-/// Resolve the commit SHA of `commit_ref`.
-fn resolve_commit_sha(_git_dir: Option<&Path>, _commit_ref: &str) -> Result<String, String> {
-    // Retrieve rust-lang/rust latest commit
-/*    let git = Command::new("git")
-        .stdout(Stdio::piped());
-
-    if let Some(git_dir) = git_dir {
-        git.current_dir(git_dir);
-    }
-
-    // git.args(["rev-parse", commit_ref]);
-    git.args(["ls-remote", "https://github.com/rust-lang/rust.git"]);
-
-    git.spawn().expect("ls-remote failed");
-
-    let mut head = Command::new("head")
-        .stdin(git.stdout.unwrap());
-
-    head.args(["-1"]); */
-
-
-    // ----------------------------------------
+fn resolve_commit_sha_1() -> Result<String, String> {
     let git = Command::new("git")
         .args(["ls-remote", "https://github.com/rust-lang/rust.git"])
         .stdout(Stdio::piped())
@@ -299,7 +284,19 @@ fn resolve_commit_sha(_git_dir: Option<&Path>, _commit_ref: &str) -> Result<Stri
     let s = output_result(&mut head)?.trim().to_owned();
     let v: Vec<&str> = s.split("\t").collect();
     Ok(String::from(v[0]))
-    // Ok(output_result(&mut git)?.trim().to_owned())
+}
+
+/// Resolve the commit SHA of `commit_ref`.
+fn resolve_commit_sha(git_dir: Option<&Path>, commit_ref: &str) -> Result<String, String> {
+    let mut git = Command::new("git");
+
+    if let Some(git_dir) = git_dir {
+        git.current_dir(git_dir);
+    }
+
+    git.args(["rev-parse", commit_ref]);
+
+    Ok(output_result(&mut git)?.trim().to_owned())
 }
 
 /// Returns the files that have been modified in the current branch compared to the master branch.
