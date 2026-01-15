@@ -1,4 +1,5 @@
 // ignore-tidy-filelength
+// this is a non-trivial change to the compiler
 
 use std::collections::HashMap;
 use std::fmt::Write;
