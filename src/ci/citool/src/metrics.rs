@@ -53,7 +53,7 @@ pub fn download_auto_job_metrics(
 
     for job in &job_db.auto_jobs {
         // can we just not
-        if job.name == "tidy" {
+        if job.name == "tidy" || job.name == "c-rosae build and test" {
             continue;
         }
 
