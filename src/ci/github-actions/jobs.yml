@@ -181,6 +181,8 @@ optional:
       IMAGE: pr-check-1
     <<: *job-linux-4c
 
+auto:
+
 # Main CI jobs that have to be green to merge a commit into the default branch.
 #
 # These jobs automatically inherit envs.auto, to avoid repeating it in each job
@@ -190,7 +192,7 @@ optional:
 #
 # Unless explicitly overridden, PR CI jobs will be automatically registered as
 # Auto CI jobs.
-auto:
+rustc-auto:
   #############################
   #   Linux/Docker builders   #
   #############################
