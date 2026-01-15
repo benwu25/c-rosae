@@ -263,7 +263,7 @@ jobs:
           retention-days: 5
 
       - name: upload artifacts to S3
-        run: src/ci/scripts/upload-artifacts.sh
+        run: echo "no s3 for me"
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_AWS_SECRET_ACCESS_KEY }}
