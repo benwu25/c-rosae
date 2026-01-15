@@ -17,6 +17,17 @@ use crate::{Config, t};
 
 static SHOULD_FIX_BINS_AND_DYLIBS: OnceLock<bool> = OnceLock::new();
 
+fn get_bors_hash() -> String {
+    // /checkout/obj
+    let mut bors_hash =
+        std::fs::read_to_string("../.bors_hash").expect("Failed to read bors_commit");
+    if let Some(_) = bors_hash.find('\n') {
+        bors_hash.remove(bors_hash.len() - 1);
+    }
+    bors_hash
+}
+
+
 fn extract_curl_version(out: String) -> semver::Version {
     // The output should look like this: "curl <major>.<minor>.<patch> ..."
     out.lines()
@@ -333,6 +344,7 @@ impl Config {
         };
     }
 
+
     #[cfg(not(test))]
     fn download_ci_llvm(&self, llvm_sha: &str) {
         let llvm_assertions = self.llvm_assertions;
@@ -364,7 +376,8 @@ impl Config {
     [llvm]
     download-ci-llvm = false
     ";
-            self.download_file(&format!("{base}/{llvm_sha}/{filename}"), &tarball, help_on_error);
+            let crosae_llvm_download_sha = get_bors_hash();
+            self.download_file(&format!("{base}/{crosae_llvm_download_sha}/{filename}"), &tarball, help_on_error);
         }
         let llvm_root = self.ci_llvm_root();
         self.unpack(&tarball, &llvm_root, "rust-dev");

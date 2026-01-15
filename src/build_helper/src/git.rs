@@ -109,21 +109,10 @@ pub fn check_path_modifications(
         // Do not include HEAD, as it is never an upstream commit
         // If we do not find an upstream commit in CI, something is seriously wrong.
 
-        // if target_paths is the llvm stuff, call your version of get_closest_upstream_commit
-        // to avoid computing bad sha values in other cases.
-        if target_paths[0] == "src/llvm-project" {
-            println!("Using bors_hash");
-            Some(
-                resolve_commit_sha_1().map(Some)?
-                    .expect("ls-remote failed"),
-            )
-        } else {
-
-            Some(
-                get_closest_upstream_commit(Some(git_dir), config, ci_env)?
-                    .expect("No upstream commit was found on CI"),
-            )
-        }
+        Some(
+            get_closest_upstream_commit(Some(git_dir), config, ci_env)?
+                .expect("No upstream commit was found on CI"),
+        )
     } else {
         // Outside CI, we want to find the most recent upstream commit that
         // modified the set of paths, to have an upstream reference that does not change
@@ -269,20 +258,6 @@ pub fn get_closest_upstream_commit(
 
     let output = output_result(&mut git)?.trim().to_owned();
     if output.is_empty() { Ok(None) } else { Ok(Some(output)) }
-}
-
-fn resolve_commit_sha_1() -> Result<String, String> {
-    let _ = Command::new("pwd")
-        .spawn()
-        .expect("pwd failed");
-
-    
-    let mut bors_hash =
-        std::fs::read_to_string("/checkout/.bors_hash").expect("Failed to read bors_commit");
-    if let Some(_) = bors_hash.find('\n') {
-        bors_hash.remove(bors_hash.len() - 1);
-    }
-    Ok(bors_hash)
 }
 
 /// Resolve the commit SHA of `commit_ref`.
