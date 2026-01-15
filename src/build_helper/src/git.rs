@@ -118,10 +118,11 @@ pub fn check_path_modifications(
             )
         } else {
 
-        Some(
-            get_closest_upstream_commit(Some(git_dir), config, ci_env)?
-                .expect("No upstream commit was found on CI"),
-        ) }
+            Some(
+                get_closest_upstream_commit(Some(git_dir), config, ci_env)?
+                    .expect("No upstream commit was found on CI"),
+            )
+        }
     } else {
         // Outside CI, we want to find the most recent upstream commit that
         // modified the set of paths, to have an upstream reference that does not change
@@ -270,20 +271,7 @@ pub fn get_closest_upstream_commit(
 }
 
 fn resolve_commit_sha_1() -> Result<String, String> {
-    let git = Command::new("git")
-        .args(["ls-remote", "https://github.com/rust-lang/rust.git"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("");
-
-    let mut head = Command::new("head");
-
-    head.stdin(git.stdout.unwrap());
-    head.args(["-1"]);
-
-    let s = output_result(&mut head)?.trim().to_owned();
-    let v: Vec<&str> = s.split("\t").collect();
-    Ok(String::from(v[0]))
+    Ok(std::fs::read_to_string(".bors_hash").expect("Failed to read bors_commit"))
 }
 
 /// Resolve the commit SHA of `commit_ref`.
