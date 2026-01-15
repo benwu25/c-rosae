@@ -32,7 +32,9 @@ fn get_bors_hash() -> String {
         .output()
         .expect("Failed to head -1");
 
-    String::from_utf8_lossy(&head.stdout).to_string()
+    let s = String::from(String::from_utf8_lossy(&head.stdout));
+    let v: Vec<&str> = s.split("\t").collect();
+    String::from(v[0])
 }
 
 fn extract_curl_version(out: String) -> semver::Version {
