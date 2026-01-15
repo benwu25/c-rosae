@@ -292,7 +292,9 @@ fn resolve_commit_sha(_git_dir: Option<&Path>, _commit_ref: &str) -> Result<Stri
     head.stdin(git.stdout.unwrap());
     head.args(["-1"]);
 
-    Ok(output_result(&mut head)?.trim().to_owned())
+    let s = output_result(&mut head)?.trim().to_owned();
+    let v: Vec<&str> = s.split(' ').collect();
+    Ok(String::from(v[0]))
     // Ok(output_result(&mut git)?.trim().to_owned())
 }
 
