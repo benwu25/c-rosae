@@ -17,6 +17,26 @@ use crate::{Config, t};
 
 static SHOULD_FIX_BINS_AND_DYLIBS: OnceLock<bool> = OnceLock::new();
 
+fn get_bors_hash() -> String {
+    use std::process::*;
+
+    let git = Command::new("git")
+        .args(["ls-remote", "https://github.com/rust-lang/rust.git"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("Failed to ls-remote");
+
+    let head = Command::new("head")
+        .args(["-1"])
+        .stdin(git.stdout.unwrap())
+        .output()
+        .expect("Failed to head -1");
+
+    let s = String::from(String::from_utf8_lossy(&head.stdout));
+    let v: Vec<&str> = s.split("\t").collect();
+    String::from(v[0])
+}
+
 fn extract_curl_version(out: String) -> semver::Version {
     // The output should look like this: "curl <major>.<minor>.<patch> ..."
     out.lines()
@@ -364,7 +384,12 @@ impl Config {
     [llvm]
     download-ci-llvm = false
     ";
-            self.download_file(&format!("{base}/{llvm_sha}/{filename}"), &tarball, help_on_error);
+            let crosae_llvm_download_sha = get_bors_hash();
+            self.download_file(
+                &format!("{base}/{crosae_llvm_download_sha}/{filename}"),
+                &tarball,
+                help_on_error,
+            );
         }
         let llvm_root = self.ci_llvm_root();
         self.unpack(&tarball, &llvm_root, "rust-dev");

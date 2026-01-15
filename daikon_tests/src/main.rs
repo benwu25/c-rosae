@@ -23,7 +23,15 @@ pub fn get_output_name(s: String) -> String {
 
 // iterate through "./tests" and run rustc +daikon for files, cargo +daikon for multi-file tests in subdirectories
 fn run_daikon_rustc_pp_tests() {
-    let test_path = std::fs::canonicalize(std::path::Path::new("./test")).unwrap();
+    let in_ci = std::env::var("CROSAE_CI").is_ok();
+    let test_path_str = if in_ci { "/checkout/obj/daikon_tests/test/" } else { "./test/" };
+    let rustc_path = if in_ci {
+        "/checkout/obj/build/host/stage2/bin/rustc"
+    } else {
+        "../../build/host/stage1/bin/rustc"
+    };
+
+    let test_path = std::fs::canonicalize(std::path::Path::new(&test_path_str)).unwrap();
 
     // how to make each one of these a test w/o a new function?
     for entry in std::fs::read_dir(test_path.clone()).unwrap() {
@@ -41,34 +49,33 @@ fn run_daikon_rustc_pp_tests() {
                 let output_name = get_output_name(String::from(path_str));
                 println!("Running test {}", output_name);
 
-                std::process::Command::new("rustc")
-                    .arg("+daikon")
+                std::process::Command::new(&rustc_path)
                     .arg(path_str)
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .current_dir(&test_path)
                     .status()
-                    .expect("failed to execute daikon-rustc");
+                    .expect("failed to execute c-rosae");
 
                 // read expected/actual pp to String
-                let pp_path = format!("./test/{}{}", output_name, ".pp");
+                let pp_path = format!("{test_path_str}{}{}", output_name, ".pp");
                 let pp_as_path = std::path::Path::new(&pp_path);
                 let pp_as_path_buf = std::fs::canonicalize(pp_as_path).unwrap();
                 let actual = std::fs::read_to_string(&pp_as_path_buf).unwrap();
-                let pp_expected_path = format!("./test/{}-expected{}", output_name, ".pp");
+                let pp_expected_path = format!("{test_path_str}{}-expected{}", output_name, ".pp");
                 let pp_expected_as_path = std::path::Path::new(&pp_expected_path);
                 let pp_expected_as_path_buf = std::fs::canonicalize(pp_expected_as_path).unwrap();
                 let expected = std::fs::read_to_string(&pp_expected_as_path_buf).unwrap();
 
                 // remove junk
-                let exec_path = format!("./test/{}", output_name);
+                let exec_path = format!("{test_path_str}{}", output_name);
                 std::fs::remove_file(std::path::Path::new(&exec_path)).unwrap();
-                let decls_path = format!("./test/{}.decls", output_name);
+                let decls_path = format!("{test_path_str}{}.decls", output_name);
                 std::fs::remove_file(std::path::Path::new(&decls_path)).unwrap();
-                let dtrace_path = format!("./test/{}.dtrace", output_name);
+                let dtrace_path = format!("{test_path_str}{}.dtrace", output_name);
                 std::fs::remove_file(std::path::Path::new(&dtrace_path)).unwrap();
-                let pp_path = format!("./test/{}.pp", output_name);
+                let pp_path = format!("{test_path_str}{}.pp", output_name);
                 std::fs::remove_file(std::path::Path::new(&pp_path)).unwrap();
 
                 // check
