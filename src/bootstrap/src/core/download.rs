@@ -18,13 +18,27 @@ use crate::{Config, t};
 static SHOULD_FIX_BINS_AND_DYLIBS: OnceLock<bool> = OnceLock::new();
 
 fn get_bors_hash() -> String {
+    let git = Command::new("git")
+        .args(["ls-remote", "https://github.com/rust-lang/rust.git"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("Failed to ls-remote");
+
+    let head = Command::new("head")
+        .args(["-1"])
+        .stdin(git.stdout.unwrap());
+        .output()
+        .expect("Failed to head -1");
+
+    String::from_utf8_lossy(&head.stdout)
+
     // /checkout/obj
-    let mut bors_hash =
-        std::fs::read_to_string("../.bors_hash").expect("Failed to read bors_commit");
-    if let Some(_) = bors_hash.find('\n') {
-        bors_hash.remove(bors_hash.len() - 1);
-    }
-    bors_hash
+    // let mut bors_hash =
+    //    std::fs::read_to_string("../.bors_hash").expect("Failed to read bors_commit");
+    //if let Some(_) = bors_hash.find('\n') {
+    //    bors_hash.remove(bors_hash.len() - 1);
+    //}
+    //bors_hash
 }
 
 fn extract_curl_version(out: String) -> semver::Version {
