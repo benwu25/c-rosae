@@ -13,9 +13,8 @@ on:
     branches:
       - "main"
   pull_request:
-    branches:
-      - "**"
-      - "!main"
+    branches-ignore:
+      - "main"
 
 permissions:
   contents: read
