@@ -40,6 +40,11 @@ lint_atomic_ordering_load = atomic loads cannot have `Release` or `AcqRel` order
 lint_atomic_ordering_store = atomic stores cannot have `Acquire` or `AcqRel` ordering
     .help = consider using ordering modes `Release`, `SeqCst` or `Relaxed`
 
+lint_attr_crate_level =
+    this attribute can only be applied at the crate level
+    .suggestion = to apply to the crate, use an inner attribute
+    .note = read <https://doc.rust-lang.org/nightly/rustdoc/the-doc-attribute.html#at-the-crate-level> for more information
+
 lint_bad_attribute_argument = bad attribute argument
 
 lint_bad_opt_access = {$msg}
@@ -472,6 +477,12 @@ lint_improper_ctypes_union_non_exhaustive = this union is non-exhaustive
 
 lint_improper_ctypes_unsafe_binder = unsafe binders are incompatible with foreign function interfaces
 
+lint_improper_gpu_kernel_arg = passing type `{$ty}` to a function with "gpu-kernel" ABI may have unexpected behavior
+    .help = use primitive types and raw pointers to get reliable behavior
+
+lint_incorrect_do_not_recommend_args =
+    `#[diagnostic::do_not_recommend]` does not expect any arguments
+
 lint_int_to_ptr_transmutes = transmuting an integer to a pointer creates a pointer without provenance
     .note = this is dangerous because dereferencing the resulting pointer is undefined behavior
     .note_exposed_provenance = exposed provenance semantics can be used to create a pointer based on some previously exposed provenance
@@ -598,6 +609,10 @@ lint_mismatched_lifetime_syntaxes_suggestion_mixed =
 
 lint_mismatched_lifetime_syntaxes_suggestion_mixed_only_paths =
     use `'_` for type paths
+
+lint_missing_gpu_kernel_export_name = function with the "gpu-kernel" ABI has a mangled name
+    .note = mangled names make it hard to find the kernel, this is usually not intended
+    .help = use `unsafe(no_mangle)` or `unsafe(export_name = "<name>")`
 
 lint_mixed_script_confusables =
     the usage of Script Group `{$set}` in this crate consists solely of mixed script confusables

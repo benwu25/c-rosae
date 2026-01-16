@@ -1,21 +1,19 @@
-use std::fmt::Write;
-use std::mem;
+// ignore-tidy-filelength
 
-use crate::parser::daikon_strs::*;
-use crate::{StripTokens, new_parser_from_source_str, unwrap_or_emit_fatal};
-use rustc_ast::mut_visit::*;
-use rustc_ast::*;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::io::Write as FileWrite;
+use std::mem;
 use std::sync::{LazyLock, Mutex};
 
 use ast::token::IdentIsRaw;
+use rustc_ast::mut_visit::*;
 // use rustc_ast::ast::*;
 use rustc_ast::token::{self, Delimiter, InvisibleOrigin, MetaVarKind, TokenKind};
 use rustc_ast::tokenstream::{DelimSpan, TokenStream, TokenTree};
 use rustc_ast::util::case::Case;
 use rustc_ast::{
-    attr, {self as ast},
+    attr, *, {self as ast},
 };
 use rustc_ast_pretty::pprust;
 use rustc_errors::codes::*;
@@ -34,7 +32,10 @@ use super::{
     Recovered, Trailing, UsePreAttrPos,
 };
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
-use crate::{exp, fluent_generated as fluent};
+use crate::parser::daikon_strs::*;
+use crate::{
+    StripTokens, exp, fluent_generated as fluent, new_parser_from_source_str, unwrap_or_emit_fatal,
+};
 
 // Stores the prefix for output files.
 // Decls and dtrace files will be named according to this value.
@@ -219,7 +220,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
             RustType::UserDef(basic_type) => RustType::UserDefArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
         },
-        // TODO: implement logging and handling for Rust pointers.
+        // FIXME: implement logging and handling for Rust pointers.
         TyKind::Ptr(_mut_ty) => RustType::Error,
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
@@ -245,7 +246,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
     }
 }
 
-// TODO: replace this idea with better data structures for the logging code.
+// FIXME: replace this idea with better data structures for the logging code.
 // Unused. This was intended to allow easy invalidation
 // of parameters. E.g., if parameter x was invalidated with
 // drop(x), we need to know which idx it belongs to in our
@@ -268,7 +269,7 @@ fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
 if cond { return; } else { return; }
 */
 // In this case, an extra void return is unreachable.
-// TODO: handle checking for exhaustive control flow with
+// FIXME: handle checking for exhaustive control flow with
 // explicit void returns.
 fn last_stmt_is_void_return(block: &Box<Block>) -> bool {
     if block.stmts.len() == 0 {
@@ -396,7 +397,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
     }
 
-    // TODO: noted elsewhere, but also here: implement data structures
+    // FIXME: noted elsewhere, but also here: implement data structures
     // to store exit ppt information rather than in dtrace_param_blocks
     // as a string. This allows for much greater flexibility, and avoids
     // parse errors deep in the instrumentation pipeline.
@@ -428,7 +429,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             DTRACE_EXIT,
         );
         *exit_counter += 1;
-        // TODO: create overloads of build_instrument_code specialized for
+        // FIXME: create overloads of build_instrument_code specialized for
         // common tasks like creating exit ppts, which may also do operations
         // like increment exit_counter.
 
@@ -743,7 +744,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             None => {}
                             Some(bd) => match &mut bd.kind {
                                 ExprKind::Block(_block, _) => {
-                                    // TODO: remove this commented code.
+                                    // FIXME: remove this commented code.
                                     // self.grok_block(ppt_name,
                                     //                 block,
                                     //                 dtrace_param_blocks,
@@ -752,7 +753,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                     //                 exit_counter,
                                     //                 daikon_tmp_counter);
                                 }
-                                _ => {} // TODO: more careful analysis on whether this is supposed to be a return expr or not, e.g. println/panic vs 7.
+                                _ => {} // FIXME: more careful analysis on whether this is supposed to be a return expr or not, e.g. println/panic vs 7.
                             },
                         }
                     }
@@ -859,11 +860,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
             ItemKind::Impl(i) => i,
             _ => panic!("Base impl is not impl"),
         };
-        // TODO: remove this.
+        // FIXME: remove this.
         // let spliced_struct = splice_struct(&pp_struct);
-        // let struct_as_ret = build_phony_ret(spliced_struct.clone()); // TODO: fix splice string to handle pub keyword
+        // let struct_as_ret = build_phony_ret(spliced_struct.clone()); // FIXME: fix splice string to handle pub keyword
         the_impl.self_ty = Box::new(struct_ty.clone());
-        // TODO: remove this.
+        // FIXME: remove this.
         // match &self.parser.parse_items_from_string(struct_as_ret) {
         //     Err(_why) => panic!("Parsing phony arg failed"),
         //     Ok(arg_items) => match &arg_items[0].kind {
@@ -903,7 +904,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             },
         }
 
-        // TODO: remove this.
+        // FIXME: remove this.
         // build dtrace_print_xfield_vec (AND dtrace_print_xfield...) here, then that should be it for generating fns in the impl.
         let dtrace_print_xfields =
             self.build_dtrace_print_xfield_vec(plain_struct.clone(), struct_fields);
@@ -928,7 +929,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // or mutations will be done to this generated code.
     // Additionally, for any Vec or array fields, adds a function
     // which is responsible for logging the field in pointer format.
-    // TODO: write a small example input/output.
+    // FIXME: write a small example input/output.
     fn build_dtrace_print_xfield_vec(
         &mut self,
         plain_struct: String,
@@ -954,10 +955,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     if p_type == "String" || p_type == "str" {
                         build_print_xfield_string(field_name.clone(), plain_struct.clone())
                     } else {
-                        build_print_xfield(field_name.clone(), plain_struct.clone()) // TODO: change this name to involve vec to be clear.
+                        build_print_xfield(field_name.clone(), plain_struct.clone()) // FIXME: change this name to involve vec to be clear.
                     }
                 }
-                // TODO: remove this
+                // FIXME: remove this
                 // mash:
                 //            build_dtrace_print_xfield_prologue(),
                 //            build_tmp_prim_vec_for_field(),
@@ -1000,7 +1001,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         build_print_xfield_for_vec(field_name.clone(), plain_struct.to_string());
                     format!("{}\n{}", f1, f2)
                 }
-                // TODO: remove this.
+                // FIXME: remove this.
                 // mash:
                 //            build_dtrace_print_xfield_prologue(),
                 //            build_tmp_vec_for_field(),
@@ -1051,7 +1052,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.clone());
                     format!("{}\n{}", f1, f2)
                 }
-                // TODO: arrays, mighty similar to vec. Maybe you can cheat and just do the exact same thing... use | in pattern matching.
+                // FIXME: arrays, mighty similar to vec. Maybe you can cheat and just do the exact same thing... use | in pattern matching.
                 // Except pointer is diff, as_ptr() as usize vs as *const _ as *const () as usize...
                 RustType::PrimArray(p_type) => {
                     // UNTRUSTED:
@@ -1309,7 +1310,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut dtrace_print_fields: String = dtrace_print_fields_prologue();
 
         for i in 0..fields.len() {
-            // TODO: remove and add tests for private fields.
+            // FIXME: remove and add tests for private fields.
             // Make all fields public for access in dtrace routines.
             fields[i].vis.kind = VisibilityKind::Public;
 
@@ -1350,7 +1351,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         build_field_userdef(field_name.clone())
                     }
                 }
-                // TODO: use the | operator here.
+                // FIXME: use the | operator here.
                 RustType::PrimVec(_) => build_call_print_field(field_name.clone()),
                 RustType::UserDefVec(_) => build_call_print_field(field_name.clone()),
                 RustType::PrimArray(_p_type) => {
@@ -1372,7 +1373,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         format!("{}{}", dtrace_print_fields, dtrace_print_fields_epilogue())
     }
 
-    // TODO: dtrace calls should be represented with a better data structures rather than
+    // FIXME: dtrace calls should be represented with a better data structures rather than
     // Strings.
     // Given a function signature, generate a set of dtrace calls for each parameter,
     // such as logging a pointer value and logging contents for structs. These
@@ -1653,7 +1654,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     ) {
         let mut i = 0;
 
-        // TODO: implement a similar fix for this
+        // FIXME: implement a similar fix for this
         // How nonces should be done--
         //   lock a global counter shared by all threads
         //   store its current value
@@ -1749,7 +1750,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
 
     // Visit all structs and generate new impl blocks with dtrace
     // routine definitions.
-    // TODO: look up struct names in a /tmp file to determine
+    // FIXME: look up struct names in a /tmp file to determine
     //       whether to continue or not.
     fn visit_item(&mut self, item: &mut Item) {
         match &mut item.kind {
@@ -1864,6 +1865,8 @@ impl<'a> Parser<'a> {
         let attrs = self.parse_inner_attributes()?;
 
         // Determine whether we are building crate std.
+        // Check an environment variable as well for ci.
+        let disable_instrumentation = std::env::var("DISABLE_INSTRUMENTATION").is_ok();
         let source_map = self.psess.source_map();
         let (source_file, _b, _c, _d, _e) = source_map.span_to_location_info(self.token.span);
         *DO_VISITOR.lock().unwrap() = match &source_file {
@@ -1871,7 +1874,11 @@ impl<'a> Parser<'a> {
                 // RealFileName is no longer an enum
                 rustc_span::FileName::Real(file_name) => match &file_name.local_path() {
                     Some(buf) => match &buf.to_str() {
-                        Some(s) => !s.starts_with("library") && !s.contains(".cargo"),
+                        Some(s) => {
+                            !s.starts_with("library")
+                                && !s.contains(".cargo")
+                                && !disable_instrumentation
+                        }
                         None => false,
                     },
                     None => false,
@@ -1951,14 +1958,14 @@ impl<'a> Parser<'a> {
             let mut pp =
                 std::fs::File::options().write(true).append(true).open(&pp_as_path).unwrap();
 
-            for i in 0..items.len()-1 {
+            for i in 0..items.len() - 1 {
                 writeln!(&mut pp, "{}\n", pprust::item_to_string(&items[i])).ok();
             }
 
-            writeln!(&mut pp, "{}", pprust::item_to_string(&items[items.len()-1])).ok(); // no newline
+            writeln!(&mut pp, "{}", pprust::item_to_string(&items[items.len() - 1])).ok(); // no newline
 
             // add imports.
-            // TODO: you should check if these imports are already included.
+            // FIXME: you should check if these imports are already included.
             match &self.parse_items_from_string(build_imports()) {
                 Err(_why) => panic!("Can't parse imports"),
                 Ok(prepend_items) => {
@@ -2280,6 +2287,7 @@ impl<'a> Parser<'a> {
         let insert_span = ident_span.shrink_to_lo();
 
         let ident = if self.token.is_ident()
+            && self.token.is_non_reserved_ident()
             && (!is_const || self.look_ahead(1, |t| *t == token::OpenParen))
             && self.look_ahead(1, |t| {
                 matches!(t.kind, token::Lt | token::OpenBrace | token::OpenParen)
@@ -4043,7 +4051,7 @@ impl<'a> Parser<'a> {
     /// for better diagnostics and suggestions.
     fn parse_field_ident(&mut self, adt_ty: &str, lo: Span) -> PResult<'a, Ident> {
         let (ident, is_raw) = self.ident_or_err(true)?;
-        if matches!(is_raw, IdentIsRaw::No) && ident.is_reserved() {
+        if is_raw == IdentIsRaw::No && ident.is_reserved() {
             let snapshot = self.create_snapshot_for_diagnostic();
             let err = if self.check_fn_front_matter(false, Case::Sensitive) {
                 let inherited_vis =
@@ -4155,7 +4163,7 @@ impl<'a> Parser<'a> {
         self.psess.gated_spans.gate(sym::decl_macro, lo.to(self.prev_token.span));
         Ok(ItemKind::MacroDef(
             ident,
-            ast::MacroDef { body, macro_rules: false, eii_extern_target: None },
+            ast::MacroDef { body, macro_rules: false, eii_declaration: None },
         ))
     }
 
@@ -4205,7 +4213,7 @@ impl<'a> Parser<'a> {
 
         Ok(ItemKind::MacroDef(
             ident,
-            ast::MacroDef { body, macro_rules: true, eii_extern_target: None },
+            ast::MacroDef { body, macro_rules: true, eii_declaration: None },
         ))
     }
 

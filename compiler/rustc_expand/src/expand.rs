@@ -1,35 +1,31 @@
+// ignore-tidy-filelength
+
+use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::{iter, mem, slice};
 
-use rustc_ast::visit::FnKind;
+use rustc_ast::mut_visit::*;
+use rustc_ast::tokenstream::TokenStream;
+use rustc_ast::visit::{self, AssocCtxt, FnKind, Visitor, VisitorResult, try_visit, walk_list};
+use rustc_ast::{
+    self as ast, AssocItemKind, AstNodeWrapper, AttrArgs, AttrItemKind, AttrStyle, AttrVec,
+    DUMMY_NODE_ID, EarlyParsedAttribute, ExprKind, ForeignItemKind, HasAttrs, HasNodeId, Inline,
+    ItemKind, MacStmtStyle, MetaItemInner, MetaItemKind, ModKind, NodeId, PatKind, StmtKind,
+    TyKind, token,
+};
 #[allow(unused_imports)]
 use rustc_ast::{
     AngleBracketedArg, Block, Expr, FieldDef, FnDecl, FnRetTy, GenericArg, GenericArgs, Item, Pat,
     Path, VariantData,
 };
-#[allow(unused_imports)]
-use rustc_parse::parser::daikon_strs::{
-    BOOL, CHAR, F32, F64, I8, I16, I32, I64, I128, ISIZE, STR, STRING, U8, U16, U32, U64, U128,
-    UNIT, USIZE, VEC,
-};
-use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_PREFIX};
-use std::collections::HashMap;
-use std::io::Write;
-use std::sync::{LazyLock, Mutex};
-use thin_vec::ThinVec;
-
-use rustc_ast::mut_visit::*;
-use rustc_ast::tokenstream::TokenStream;
-use rustc_ast::visit::{self, AssocCtxt, Visitor, VisitorResult, try_visit, walk_list};
-use rustc_ast::{
-    self as ast, AssocItemKind, AstNodeWrapper, AttrArgs, AttrStyle, AttrVec, DUMMY_NODE_ID,
-    ExprKind, ForeignItemKind, HasAttrs, HasNodeId, Inline, ItemKind, MacStmtStyle, MetaItemInner,
-    MetaItemKind, ModKind, NodeId, PatKind, StmtKind, TyKind, token,
-};
 use rustc_ast_pretty::pprust;
-use rustc_attr_parsing::{AttributeParser, Early, EvalConfigResult, ShouldEmit, validate_attr};
+use rustc_attr_parsing::{
+    AttributeParser, CFG_TEMPLATE, Early, EvalConfigResult, ShouldEmit, eval_config_entry,
+    parse_cfg, validate_attr,
+};
 use rustc_data_structures::flat_map_in_place::FlatMapInPlace;
 use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_errors::PResult;
@@ -37,6 +33,12 @@ use rustc_feature::Features;
 use rustc_hir::Target;
 use rustc_hir::def::MacroKinds;
 use rustc_hir::limit::Limit;
+#[allow(unused_imports)]
+use rustc_parse::parser::daikon_strs::{
+    BOOL, CHAR, F32, F64, I8, I16, I32, I64, I128, ISIZE, STR, STRING, U8, U16, U32, U64, U128,
+    UNIT, USIZE, VEC,
+};
+use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_PREFIX};
 use rustc_parse::parser::{
     AttemptLocalParseRecovery, CommaRecoveryMode, ForceCollect, Parser, RecoverColon, RecoverComma,
     token_descr,
@@ -47,6 +49,7 @@ use rustc_session::parse::feature_err;
 use rustc_span::hygiene::SyntaxContext;
 use rustc_span::{ErrorGuaranteed, FileName, Ident, LocalExpnId, Span, Symbol, sym};
 use smallvec::SmallVec;
+use thin_vec::ThinVec;
 
 use crate::base::*;
 use crate::config::{StripUnconfigured, attr_into_trace};
@@ -587,7 +590,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
                 return RepType::Prim(maybe_prim_rep);
             }
             if ty_string == VEC {
-                // TODO
+                // FIXME
                 return grok_vec_args(&path);
             }
             return RepType::HashCodeStruct(String::from(ty_string));
@@ -607,7 +610,7 @@ fn map_params(decl: &Box<FnDecl>) -> HashMap<String, i32> {
 }
 
 // Immutable visitor to visit all structs and build a map data structure.
-// TODO: remove, we will use a /tmp file instead.
+// FIXME: remove, we will use a /tmp file instead.
 #[allow(rustc::default_hash_types)]
 struct DeclsHashMapBuilder<'a> {
     pub map: &'a mut HashMap<String, Box<Item>>,
@@ -1474,7 +1477,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     return i + 1;
                 } // other things you overlooked.
             },
-            // TODO: remove this.
+            // FIXME: remove this.
             // StmtKind::Expr(no_semi_expr) => match &no_semi_expr.kind {
             //     ExprKind::Match(..) => {
             //         return i + 1;
@@ -2115,10 +2118,10 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                     };
                     let attr_item = attr.get_normal_item();
                     let safety = attr_item.unsafety;
-                    if let AttrArgs::Eq { .. } = attr_item.args {
+                    if let AttrArgs::Eq { .. } = attr_item.args.unparsed_ref().unwrap() {
                         self.cx.dcx().emit_err(UnsupportedKeyValue { span });
                     }
-                    let inner_tokens = attr_item.args.inner_tokens();
+                    let inner_tokens = attr_item.args.unparsed_ref().unwrap().inner_tokens();
                     match expander.expand_with_safety(self.cx, safety, span, inner_tokens, tokens) {
                         Ok(tok_result) => {
                             let fragment = self.parse_ast_fragment(
@@ -3412,7 +3415,7 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
         let mut attr_pos = None;
         for (pos, attr) in item.attrs().iter().enumerate() {
             if !attr.is_doc_comment() && !self.cx.expanded_inert_attrs.is_marked(attr) {
-                let name = attr.ident().map(|ident| ident.name);
+                let name = attr.name();
                 if name == Some(sym::cfg) || name == Some(sym::cfg_attr) {
                     cfg_pos = Some(pos); // a cfg attr found, no need to search anymore
                     break;
@@ -3489,22 +3492,18 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
             } else if rustc_attr_parsing::is_builtin_attr(attr)
                 && !AttributeParser::<Early>::is_parsed_attribute(&attr.path())
             {
-                let attr_name = attr.ident().unwrap().name;
-                // `#[cfg]` and `#[cfg_attr]` are special - they are
-                // eagerly evaluated.
-                if attr_name != sym::cfg_trace && attr_name != sym::cfg_attr_trace {
-                    self.cx.sess.psess.buffer_lint(
-                        UNUSED_ATTRIBUTES,
-                        attr.span,
-                        self.cx.current_expansion.lint_node_id,
-                        crate::errors::UnusedBuiltinAttribute {
-                            attr_name,
-                            macro_name: pprust::path_to_string(&call.path),
-                            invoc_span: call.path.span,
-                            attr_span: attr.span,
-                        },
-                    );
-                }
+                let attr_name = attr.name().unwrap();
+                self.cx.sess.psess.buffer_lint(
+                    UNUSED_ATTRIBUTES,
+                    attr.span,
+                    self.cx.current_expansion.lint_node_id,
+                    crate::errors::UnusedBuiltinAttribute {
+                        attr_name,
+                        macro_name: pprust::path_to_string(&call.path),
+                        invoc_span: call.path.span,
+                        attr_span: attr.span,
+                    },
+                );
             }
         }
     }
@@ -3515,11 +3514,26 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
         attr: ast::Attribute,
         pos: usize,
     ) -> EvalConfigResult {
-        let res = self.cfg().cfg_true(&attr, ShouldEmit::ErrorsAndLints);
+        let Some(cfg) = AttributeParser::parse_single(
+            self.cfg().sess,
+            &attr,
+            attr.span,
+            self.cfg().lint_node_id,
+            self.cfg().features,
+            ShouldEmit::ErrorsAndLints,
+            parse_cfg,
+            &CFG_TEMPLATE,
+        ) else {
+            // Cfg attribute was not parsable, give up
+            return EvalConfigResult::True;
+        };
+
+        let res = eval_config_entry(self.cfg().sess, &cfg);
         if res.as_bool() {
             // A trace attribute left in AST in place of the original `cfg` attribute.
             // It can later be used by lints or other diagnostics.
-            let trace_attr = attr_into_trace(attr, sym::cfg_trace);
+            let mut trace_attr = attr_into_trace(attr, sym::cfg_trace);
+            trace_attr.replace_args(AttrItemKind::Parsed(EarlyParsedAttribute::CfgTrace(cfg)));
             node.visit_attrs(|attrs| attrs.insert(pos, trace_attr));
         }
 
