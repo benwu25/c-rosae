@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::result;
 use std::sync::Arc;
+use std::sync::Mutex;
 
+use rustc_data_structures::sync::{DynSend, DynSync};
 use rustc_ast::{LitKind, MetaItemKind, token};
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
@@ -382,6 +384,8 @@ pub struct Config {
     /// This is mainly useful for other tools that reads that debuginfo to figure out
     /// how to call the compiler with the same arguments.
     pub expanded_args: Vec<String>,
+
+    pub afp_cb: Arc<Mutex<dyn FnMut() -> () + DynSend + DynSync + Send + Sync>>,
 }
 
 /// Initialize jobserver before getting `jobserver::client` and `build_session`.
@@ -489,6 +493,8 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
             let mut cfg = config::build_configuration(&sess, cfg);
             util::add_configuration(&mut cfg, &mut sess, &*codegen_backend);
             sess.psess.config = cfg;
+            sess.psess.afp_cb.replace(config.afp_cb);
+
 
             let mut check_cfg = parse_check_cfg(sess.dcx(), config.crate_check_cfg);
             check_cfg.fill_well_known(&sess.target);

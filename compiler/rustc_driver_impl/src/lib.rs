@@ -27,15 +27,17 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+// use std::time::Instant;
 use std::{env, str};
 
 use rustc_ast as ast;
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_codegen_ssa::{CodegenErrors, CodegenResults};
 use rustc_data_structures::profiling::{
-    TimePassesFormat, get_resident_set_size, print_time_passes_entry,
+    TimePassesFormat, // get_resident_set_size,
 };
+use rustc_data_structures::sync::{DynSend, DynSync};
 use rustc_errors::emitter::stderr_destination;
 use rustc_errors::registry::Registry;
 use rustc_errors::translation::Translator;
@@ -191,6 +193,13 @@ pub trait Callbacks {
     ) -> Compilation {
         Compilation::Continue
     }
+
+    fn after_full_parse(
+        &mut self, 
+    ) {
+        safe_println!("AFTER FULL PARSE INVOKED")
+        // Compilation::Continue
+    } 
 }
 
 #[derive(Default)]
@@ -216,7 +225,7 @@ pub fn diagnostics_registry() -> Registry {
 }
 
 /// This is the primary entry point for rustc.
-pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) {
+pub fn run_compiler(at_args: &[String], callbacks: Arc<Mutex<dyn Callbacks + DynSend + DynSync + Send + Sync + 'static>>) {
     let mut default_early_dcx = EarlyDiagCtxt::new(ErrorOutputType::default());
 
     // Throw away the first argument, the name of the binary.
@@ -250,6 +259,7 @@ pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) 
 
     drop(default_early_dcx);
 
+    let callbacks_c = callbacks.clone();
     let mut config = interface::Config {
         opts: sopts,
         crate_cfg: matches.opt_strs("cfg"),
@@ -270,9 +280,10 @@ pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) 
         registry: diagnostics_registry(),
         using_internal_features: &USING_INTERNAL_FEATURES,
         expanded_args: args,
+        afp_cb: Arc::new(Mutex::new(Box::new(move || { callbacks_c.lock().unwrap().after_full_parse(); }))),
     };
 
-    callbacks.config(&mut config);
+    callbacks.lock().unwrap().config(&mut config);
 
     let registered_lints = config.register_lints.is_some();
 
@@ -333,7 +344,7 @@ pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) 
             return early_exit();
         }
 
-        if callbacks.after_crate_root_parsing(compiler, &mut krate) == Compilation::Stop {
+        if callbacks.lock().unwrap().after_crate_root_parsing(compiler, &mut krate) == Compilation::Stop {
             return early_exit();
         }
 
@@ -350,7 +361,7 @@ pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) 
             // Make sure name resolution and macro expansion is run.
             let _ = tcx.resolver_for_lowering();
 
-            if callbacks.after_expansion(compiler, tcx) == Compilation::Stop {
+            if callbacks.lock().unwrap().after_expansion(compiler, tcx) == Compilation::Stop {
                 return early_exit();
             }
 
@@ -374,7 +385,7 @@ pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) 
                 dump_feature_usage_metrics(tcx, metrics_dir);
             }
 
-            if callbacks.after_analysis(compiler, tcx) == Compilation::Stop {
+            if callbacks.lock().unwrap().after_analysis(compiler, tcx) == Compilation::Stop {
                 return early_exit();
             }
 
@@ -1610,24 +1621,24 @@ pub fn install_ctrlc_handler() {
 }
 
 pub fn main() -> ! {
-    let start_time = Instant::now();
-    let start_rss = get_resident_set_size();
+    // let start_time = Instant::now();
+    // let start_rss = get_resident_set_size();
 
     let early_dcx = EarlyDiagCtxt::new(ErrorOutputType::default());
 
     init_rustc_env_logger(&early_dcx);
     signal_handler::install();
-    let mut callbacks = TimePassesCallbacks::default();
+    let callbacks = TimePassesCallbacks::default();
     install_ice_hook(DEFAULT_BUG_REPORT_URL, |_| ());
     install_ctrlc_handler();
 
     let exit_code =
-        catch_with_exit_code(|| run_compiler(&args::raw_args(&early_dcx), &mut callbacks));
+        catch_with_exit_code(|| run_compiler(&args::raw_args(&early_dcx), Arc::new(Mutex::new(callbacks))));
 
-    if let Some(format) = callbacks.time_passes {
-        let end_rss = get_resident_set_size();
-        print_time_passes_entry("total", start_time.elapsed(), start_rss, end_rss, format);
-    }
+    // if let Some(format) = callbacks.time_passes {
+    //     let end_rss = get_resident_set_size();
+    //     print_time_passes_entry("total", start_time.elapsed(), start_rss, end_rss, format);
+    // }
 
     process::exit(exit_code)
 }

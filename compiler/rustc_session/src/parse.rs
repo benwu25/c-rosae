@@ -3,7 +3,9 @@
 
 use std::str;
 use std::sync::Arc;
+use std::sync::Mutex;
 
+use rustc_data_structures::sync::{DynSend, DynSync};
 use rustc_ast::attr::AttrIdGenerator;
 use rustc_ast::node_id::NodeId;
 use rustc_data_structures::fx::{FxHashMap, FxIndexMap, FxIndexSet};
@@ -278,6 +280,8 @@ pub struct ParseSess {
     proc_macro_quoted_spans: AppendOnlyVec<Span>,
     /// Used to generate new `AttrId`s. Every `AttrId` is unique.
     pub attr_id_generator: AttrIdGenerator,
+
+    pub afp_cb: Option<Arc<Mutex<dyn FnMut() -> () + DynSend + DynSync + Send + Sync>>>,
 }
 
 impl ParseSess {
@@ -312,6 +316,7 @@ impl ParseSess {
             assume_incomplete_release: false,
             proc_macro_quoted_spans: Default::default(),
             attr_id_generator: AttrIdGenerator::new(),
+            afp_cb: None,
         }
     }
 
