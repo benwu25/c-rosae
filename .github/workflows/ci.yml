@@ -93,7 +93,7 @@ jobs:
       SCCACHE_BUCKET: rust-lang-ci-sccache2
       SCCACHE_REGION: us-west-1
       CACHE_DOMAIN: ci-caches.rust-lang.org
-    continue-on-error: ${{ matrix.continue_on_error || true }}
+    continue-on-error: ${{ matrix.continue_on_error || false }}
     strategy:
       matrix:
         # Check the `calculate_matrix` job to see how is the matrix defined.
