@@ -11,13 +11,10 @@ name: CI
 on:
   push:
     branches:
-      # - automation/bors/auto
-      # - automation/bors/try
-      # - try-perf
-      - "**"
+      - "main"
   pull_request:
-    branches:
-      - "!main"
+    branches-ignore:
+      - "main"
 
 permissions:
   contents: read
