@@ -1,21 +1,19 @@
-use std::fmt::Write;
-use std::mem;
+// ignore-tidy-filelength
 
-use crate::parser::daikon_strs::*;
-use crate::{StripTokens, new_parser_from_source_str, unwrap_or_emit_fatal};
-use rustc_ast::mut_visit::*;
-use rustc_ast::*;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::io::Write as FileWrite;
+use std::mem;
 use std::sync::{LazyLock, Mutex};
 
 use ast::token::IdentIsRaw;
+use rustc_ast::mut_visit::*;
 // use rustc_ast::ast::*;
 use rustc_ast::token::{self, Delimiter, InvisibleOrigin, MetaVarKind, TokenKind};
 use rustc_ast::tokenstream::{DelimSpan, TokenStream, TokenTree};
 use rustc_ast::util::case::Case;
 use rustc_ast::{
-    attr, {self as ast},
+    attr, *, {self as ast},
 };
 use rustc_ast_pretty::pprust;
 use rustc_errors::codes::*;
@@ -34,7 +32,10 @@ use super::{
     Recovered, Trailing, UsePreAttrPos,
 };
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
-use crate::{exp, fluent_generated as fluent};
+use crate::parser::daikon_strs::*;
+use crate::{
+    StripTokens, exp, fluent_generated as fluent, new_parser_from_source_str, unwrap_or_emit_fatal,
+};
 
 // Stores the prefix for output files.
 // Decls and dtrace files will be named according to this value.
@@ -1871,6 +1872,8 @@ impl<'a> Parser<'a> {
         let attrs = self.parse_inner_attributes()?;
 
         // Determine whether we are building crate std.
+        // Check an environment variable as well for ci.
+        let disable_instrumentation = std::env::var("DISABLE_INSTRUMENTATION").is_ok();
         let source_map = self.psess.source_map();
         let (source_file, _b, _c, _d, _e) = source_map.span_to_location_info(self.token.span);
         *DO_VISITOR.lock().unwrap() = match &source_file {
@@ -1878,7 +1881,11 @@ impl<'a> Parser<'a> {
                 // RealFileName is no longer an enum
                 rustc_span::FileName::Real(file_name) => match &file_name.local_path() {
                     Some(buf) => match &buf.to_str() {
-                        Some(s) => !s.starts_with("library") && !s.contains(".cargo"),
+                        Some(s) => {
+                            !s.starts_with("library")
+                                && !s.contains(".cargo")
+                                && !disable_instrumentation
+                        }
                         None => false,
                     },
                     None => false,
@@ -1958,11 +1965,11 @@ impl<'a> Parser<'a> {
             let mut pp =
                 std::fs::File::options().write(true).append(true).open(&pp_as_path).unwrap();
 
-            for i in 0..items.len()-1 {
+            for i in 0..items.len() - 1 {
                 writeln!(&mut pp, "{}\n", pprust::item_to_string(&items[i])).ok();
             }
 
-            writeln!(&mut pp, "{}", pprust::item_to_string(&items[items.len()-1])).ok(); // no newline
+            writeln!(&mut pp, "{}", pprust::item_to_string(&items[items.len() - 1])).ok(); // no newline
 
             // add imports.
             // FIXME: you should check if these imports are already included.
@@ -2287,6 +2294,7 @@ impl<'a> Parser<'a> {
         let insert_span = ident_span.shrink_to_lo();
 
         let ident = if self.token.is_ident()
+            && self.token.is_non_reserved_ident()
             && (!is_const || self.look_ahead(1, |t| *t == token::OpenParen))
             && self.look_ahead(1, |t| {
                 matches!(t.kind, token::Lt | token::OpenBrace | token::OpenParen)
@@ -4050,7 +4058,7 @@ impl<'a> Parser<'a> {
     /// for better diagnostics and suggestions.
     fn parse_field_ident(&mut self, adt_ty: &str, lo: Span) -> PResult<'a, Ident> {
         let (ident, is_raw) = self.ident_or_err(true)?;
-        if matches!(is_raw, IdentIsRaw::No) && ident.is_reserved() {
+        if is_raw == IdentIsRaw::No && ident.is_reserved() {
             let snapshot = self.create_snapshot_for_diagnostic();
             let err = if self.check_fn_front_matter(false, Case::Sensitive) {
                 let inherited_vis =
@@ -4162,7 +4170,7 @@ impl<'a> Parser<'a> {
         self.psess.gated_spans.gate(sym::decl_macro, lo.to(self.prev_token.span));
         Ok(ItemKind::MacroDef(
             ident,
-            ast::MacroDef { body, macro_rules: false, eii_extern_target: None },
+            ast::MacroDef { body, macro_rules: false, eii_declaration: None },
         ))
     }
 
@@ -4212,7 +4220,7 @@ impl<'a> Parser<'a> {
 
         Ok(ItemKind::MacroDef(
             ident,
-            ast::MacroDef { body, macro_rules: true, eii_extern_target: None },
+            ast::MacroDef { body, macro_rules: true, eii_declaration: None },
         ))
     }
 

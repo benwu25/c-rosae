@@ -51,7 +51,7 @@ use rustc_query_system::ich::StableHashingContext;
 use rustc_serialize::{Decodable, Encodable};
 pub use rustc_session::lint::RegisteredTools;
 use rustc_span::hygiene::MacroKind;
-use rustc_span::{DUMMY_SP, ExpnId, ExpnKind, Ident, Span, Symbol, sym};
+use rustc_span::{DUMMY_SP, ExpnId, ExpnKind, Ident, Span, Symbol};
 pub use rustc_type_ir::data_structures::{DelayedMap, DelayedSet};
 pub use rustc_type_ir::fast_reject::DeepRejectCtxt;
 #[allow(
@@ -77,7 +77,7 @@ pub use self::closure::{
 };
 pub use self::consts::{
     AnonConstKind, AtomicOrdering, Const, ConstInt, ConstKind, ConstToValTreeResult, Expr,
-    ExprKind, ScalarInt, SimdAlign, UnevaluatedConst, ValTree, ValTreeKind, Value,
+    ExprKind, ScalarInt, SimdAlign, UnevaluatedConst, ValTree, ValTreeKindExt, Value,
 };
 pub use self::context::{
     CtxtInterners, CurrentGcx, Feed, FreeRegionInfo, GlobalCtxt, Lift, TyCtxt, TyCtxtFeed, tls,
@@ -220,9 +220,8 @@ pub struct ResolverAstLowering {
 
     /// Information about functions signatures for delegation items expansion
     pub delegation_fn_sigs: LocalDefIdMap<DelegationFnSig>,
-    // NodeIds (either delegation.id or item_id in case of a trait impl) for signature resolution,
-    // for details see https://github.com/rust-lang/rust/issues/118212#issuecomment-2160686914
-    pub delegation_sig_resolution_nodes: LocalDefIdMap<ast::NodeId>,
+    // Information about delegations which is used when handling recursive delegations
+    pub delegation_infos: LocalDefIdMap<DelegationInfo>,
 }
 
 bitflags::bitflags! {
@@ -236,13 +235,26 @@ bitflags::bitflags! {
 pub const DELEGATION_INHERIT_ATTRS_START: DelegationFnSigAttrs = DelegationFnSigAttrs::MUST_USE;
 
 #[derive(Debug)]
+pub struct DelegationInfo {
+    // NodeId (either delegation.id or item_id in case of a trait impl) for signature resolution,
+    // for details see https://github.com/rust-lang/rust/issues/118212#issuecomment-2160686914
+    pub resolution_node: ast::NodeId,
+    pub attrs: DelegationAttrs,
+}
+
+#[derive(Debug)]
+pub struct DelegationAttrs {
+    pub flags: DelegationFnSigAttrs,
+    pub to_inherit: AttrVec,
+}
+
+#[derive(Debug)]
 pub struct DelegationFnSig {
     pub header: ast::FnHeader,
     pub param_count: usize,
     pub has_self: bool,
     pub c_variadic: bool,
-    pub attrs_flags: DelegationFnSigAttrs,
-    pub to_inherit_attrs: AttrVec,
+    pub attrs: DelegationAttrs,
 }
 
 #[derive(Clone, Copy, Debug, HashStable)]
@@ -1807,37 +1819,6 @@ impl<'tcx> TyCtxt<'tcx> {
         }
     }
 
-    /// Get an attribute from the diagnostic attribute namespace
-    ///
-    /// This function requests an attribute with the following structure:
-    ///
-    /// `#[diagnostic::$attr]`
-    ///
-    /// This function performs feature checking, so if an attribute is returned
-    /// it can be used by the consumer
-    pub fn get_diagnostic_attr(
-        self,
-        did: impl Into<DefId>,
-        attr: Symbol,
-    ) -> Option<&'tcx hir::Attribute> {
-        let did: DefId = did.into();
-        if did.as_local().is_some() {
-            // it's a crate local item, we need to check feature flags
-            if rustc_feature::is_stable_diagnostic_attribute(attr, self.features()) {
-                self.get_attrs_by_path(did, &[sym::diagnostic, sym::do_not_recommend]).next()
-            } else {
-                None
-            }
-        } else {
-            // we filter out unstable diagnostic attributes before
-            // encoding attributes
-            debug_assert!(rustc_feature::encode_cross_crate(attr));
-            self.attrs_for_def(did)
-                .iter()
-                .find(|a| matches!(a.path().as_ref(), [sym::diagnostic, a] if *a == attr))
-        }
-    }
-
     pub fn get_attrs_by_path(
         self,
         did: DefId,
@@ -2319,8 +2300,8 @@ impl<'tcx> fmt::Debug for SymbolName<'tcx> {
 
 /// The constituent parts of a type level constant of kind ADT or array.
 #[derive(Copy, Clone, Debug, HashStable)]
-pub struct DestructuredConst<'tcx> {
-    pub variant: Option<VariantIdx>,
+pub struct DestructuredAdtConst<'tcx> {
+    pub variant: VariantIdx,
     pub fields: &'tcx [ty::Const<'tcx>],
 }
 

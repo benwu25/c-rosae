@@ -4,7 +4,7 @@ use rustc_abi::{Align, ExternAbi};
 use rustc_ast::expand::autodiff_attrs::{AutoDiffAttrs, DiffActivity, DiffMode};
 use rustc_ast::{LitKind, MetaItem, MetaItemInner, attr};
 use rustc_hir::attrs::{
-    AttributeKind, InlineAttr, InstructionSetAttr, Linkage, RtsanSetting, UsedBy,
+    AttributeKind, EiiImplResolution, InlineAttr, Linkage, RtsanSetting, UsedBy,
 };
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::{DefId, LOCAL_CRATE, LocalDefId};
@@ -15,10 +15,10 @@ use rustc_middle::middle::codegen_fn_attrs::{
 use rustc_middle::mir::mono::Visibility;
 use rustc_middle::query::Providers;
 use rustc_middle::span_bug;
-use rustc_middle::ty::{self as ty, Instance, TyCtxt};
+use rustc_middle::ty::{self as ty, TyCtxt};
 use rustc_session::lint;
 use rustc_session::parse::feature_err;
-use rustc_span::{Ident, Span, Symbol, sym};
+use rustc_span::{Span, sym};
 use rustc_target::spec::Os;
 
 use crate::errors;
@@ -44,37 +44,6 @@ fn try_fn_sig<'tcx>(
     } else {
         tcx.dcx().span_delayed_bug(attr_span, "this attribute can only be applied to functions");
         None
-    }
-}
-
-// FIXME(jdonszelmann): remove when instruction_set becomes a parsed attr
-fn parse_instruction_set_attr(tcx: TyCtxt<'_>, attr: &Attribute) -> Option<InstructionSetAttr> {
-    let list = attr.meta_item_list()?;
-
-    match &list[..] {
-        [MetaItemInner::MetaItem(set)] => {
-            let segments = set.path.segments.iter().map(|x| x.ident.name).collect::<Vec<_>>();
-            match segments.as_slice() {
-                [sym::arm, sym::a32 | sym::t32] if !tcx.sess.target.has_thumb_interworking => {
-                    tcx.dcx().emit_err(errors::UnsupportedInstructionSet { span: attr.span() });
-                    None
-                }
-                [sym::arm, sym::a32] => Some(InstructionSetAttr::ArmA32),
-                [sym::arm, sym::t32] => Some(InstructionSetAttr::ArmT32),
-                _ => {
-                    tcx.dcx().emit_err(errors::InvalidInstructionSet { span: attr.span() });
-                    None
-                }
-            }
-        }
-        [] => {
-            tcx.dcx().emit_err(errors::BareInstructionSet { span: attr.span() });
-            None
-        }
-        _ => {
-            tcx.dcx().emit_err(errors::MultipleInstructionSet { span: attr.span() });
-            None
-        }
     }
 }
 
@@ -313,18 +282,28 @@ fn process_builtin_attrs(
                 AttributeKind::ObjcSelector { methname, .. } => {
                     codegen_fn_attrs.objc_selector = Some(*methname);
                 }
-                AttributeKind::EiiExternItem => {
+                AttributeKind::EiiForeignItem => {
                     codegen_fn_attrs.flags |= CodegenFnAttrFlags::EXTERNALLY_IMPLEMENTABLE_ITEM;
                 }
                 AttributeKind::EiiImpls(impls) => {
                     for i in impls {
-                        let extern_item = find_attr!(
-                            tcx.get_all_attrs(i.eii_macro),
-                            AttributeKind::EiiExternTarget(target) => target.eii_extern_target
-                        )
-                        .expect("eii should have declaration macro with extern target attribute");
-
-                        let symbol_name = tcx.symbol_name(Instance::mono(tcx, extern_item));
+                        let foreign_item = match i.resolution {
+                            EiiImplResolution::Macro(def_id) => {
+                                let Some(extern_item) = find_attr!(
+                                    tcx.get_all_attrs(def_id),
+                                    AttributeKind::EiiDeclaration(target) => target.foreign_item
+                                ) else {
+                                    tcx.dcx().span_delayed_bug(
+                                        i.span,
+                                        "resolved to something that's not an EII",
+                                    );
+                                    continue;
+                                };
+                                extern_item
+                            }
+                            EiiImplResolution::Known(decl) => decl.foreign_item,
+                            EiiImplResolution::Error(_eg) => continue,
+                        };
 
                         // this is to prevent a bug where a single crate defines both the default and explicit implementation
                         // for an EII. In that case, both of them may be part of the same final object file. I'm not 100% sure
@@ -337,13 +316,13 @@ fn process_builtin_attrs(
                             // iterate over all implementations *in the current crate*
                             // (this is ok since we generate codegen fn attrs in the local crate)
                             // if any of them is *not default* then don't emit the alias.
-                            && tcx.externally_implementable_items(LOCAL_CRATE).get(&i.eii_macro).expect("at least one").1.iter().any(|(_, imp)| !imp.is_default)
+                            && tcx.externally_implementable_items(LOCAL_CRATE).get(&foreign_item).expect("at least one").1.iter().any(|(_, imp)| !imp.is_default)
                         {
                             continue;
                         }
 
                         codegen_fn_attrs.foreign_item_symbol_aliases.push((
-                            Symbol::intern(symbol_name.name),
+                            foreign_item,
                             if i.is_default { Linkage::LinkOnceAny } else { Linkage::External },
                             Visibility::Default,
                         ));
@@ -353,11 +332,14 @@ fn process_builtin_attrs(
                 AttributeKind::ThreadLocal => {
                     codegen_fn_attrs.flags |= CodegenFnAttrFlags::THREAD_LOCAL
                 }
+                AttributeKind::InstructionSet(instruction_set) => {
+                    codegen_fn_attrs.instruction_set = Some(*instruction_set)
+                }
                 _ => {}
             }
         }
 
-        let Some(Ident { name, .. }) = attr.ident() else {
+        let Some(name) = attr.name() else {
             continue;
         };
 
@@ -368,9 +350,6 @@ fn process_builtin_attrs(
             sym::rustc_deallocator => codegen_fn_attrs.flags |= CodegenFnAttrFlags::DEALLOCATOR,
             sym::rustc_allocator_zeroed => {
                 codegen_fn_attrs.flags |= CodegenFnAttrFlags::ALLOCATOR_ZEROED
-            }
-            sym::instruction_set => {
-                codegen_fn_attrs.instruction_set = parse_instruction_set_attr(tcx, attr)
             }
             sym::patchable_function_entry => {
                 codegen_fn_attrs.patchable_function_entry =
