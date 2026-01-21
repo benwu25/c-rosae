@@ -1,4 +1,4 @@
-// TODO: add one test for each String.
+// FIXME: add one test for each String.
 
 use crate::parser::item::OUTPUT_PREFIX;
 
@@ -96,7 +96,7 @@ pub(crate) static DTRACE_PRIM_FIELD_TOSTRING: &str =
 pub(crate) static DTRACE_PRIM_STRUCT: &str =
     "dtrace_print_prim::<$1>(self.$2, format!(\"{}{}\", prefix, \".$3\"));";
 
-// TODO: if you have Vec<&'a &'b i32>, you will probably have to make a new Vec<i32> like this
+// FIXME: if you have Vec<&'a &'b i32>, you will probably have to make a new Vec<i32> like this
 //       to satisfy dtrace_print_prim_vec<T>(v: &Vec<T>).
 
 // Build log stmt for fields with primitive reference type.
@@ -436,7 +436,7 @@ pub(crate) fn build_daikon_tmp_vec(
     res
 }
 
-// TODO: use this for params/returns where you have Vec<Type>.
+// FIXME: use this for params/returns where you have Vec<Type>.
 pub(crate) static DAIKON_TMP_VEC_AMPERSAND: [&str; 10] = [
     "fn __skip() { let mut __daikon_tmp",
     ": Vec<&",
@@ -560,7 +560,7 @@ pub(crate) fn build_tmp_vec_for_field(
     res
 }
 
-// TODO: use this for fields which are f: Vec<Type> or f: &Vec<Type>, need to use &.
+// FIXME: use this for fields which are f: Vec<Type> or f: &Vec<Type>, need to use &.
 pub(crate) static DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND: [&str; 10] = [
     "let mut __daikon_tmp",
     ": Vec<&",
@@ -940,21 +940,6 @@ pub(crate) fn build_pointer_arr_ret() -> String {
     String::from(BUILD_POINTER_ARR_RET)
 }
 
-pub(crate) static DTRACE_PRINT_FIELDS_NOOP: &str =
-    "pub fn dtrace_print_fields(&self, _depth: i32, _prefix: String) {}";
-pub(crate) fn build_dtrace_print_fields_noop() -> String {
-    String::from(DTRACE_PRINT_FIELDS_NOOP)
-}
-
-pub(crate) static DTRACE_PRINT_FIELDS_VEC_NOOP: [&str; 2] =
-    ["pub fn dtrace_print_fields_vec(_v: &Vec<&", ">, _depth: i32, _prefix: String) {}"];
-pub(crate) fn build_dtrace_print_fields_vec_noop(basic_struct: String) -> String {
-    let mut res = String::from(DTRACE_PRINT_FIELDS_VEC_NOOP[0]);
-    res.push_str(&basic_struct);
-    res.push_str(DTRACE_PRINT_FIELDS_VEC_NOOP[1]);
-    res
-}
-
 // only end fn __skip because we will smash a tmp vec loop on the front.
 pub(crate) static DTRACE_PRINT_PRIM_VEC: [&str; 4] =
     ["dtrace_print_prim_vec::<", ">(&", ", String::from(\"", "\")); }"];
@@ -983,16 +968,6 @@ pub(crate) fn build_print_string_vec(tmp_name: String, var_name: String) -> Stri
 pub(crate) static BUILD_A_IMPL_BLOCK: &str = "impl __skip {}";
 pub(crate) fn base_impl() -> String {
     String::from(BUILD_A_IMPL_BLOCK)
-}
-
-pub(crate) static FABRICATE_TYPE_FOR_IMPL: [&str; 3] = ["fn __skip() -> ", " {}\nstruct ", "{}"];
-pub(crate) fn build_phony_ret(struct_name: String) -> String {
-    let mut res = String::from(FABRICATE_TYPE_FOR_IMPL[0]);
-    res.push_str(&struct_name);
-    res.push_str(FABRICATE_TYPE_FOR_IMPL[1]);
-    res.push_str(&struct_name);
-    res.push_str(FABRICATE_TYPE_FOR_IMPL[2]);
-    res
 }
 
 pub(crate) static VOID_RETURN: &str = "fn __skip() { return; }";
