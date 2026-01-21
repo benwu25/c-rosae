@@ -8,11 +8,12 @@ To view the changes from the upstream Rust compiler to this fork, see [https://g
 
  * Build the compiler.
      * `./x setup`
-     * `./x build library/std`
- * Set up daikon as a toolchain with the stage 1 build.
-     * `rustup toolchain link daikon build/<platform>/stage1`
+       * Select the option to develop the compiler. See https://rustc-dev-guide.rust-lang.org/building/quickstart.html for more information.
+     * `./x build std`
+ * Set up Daikon as a toolchain with the stage 1 build.
+     * `rustup toolchain link daikon build/host/stage1`
  * Run end-to-end tests:
-     * `cd daikon_tests && cargo run`
+     * `cd daikon-tests && cargo run`
  * Produce dtrace and decls files in one command via `cargo +daikon run`,
    or instrument with rustc via `rustc +daikon foo.rs`, and run to produce trace data.
 

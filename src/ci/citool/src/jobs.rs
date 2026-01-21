@@ -370,9 +370,12 @@ pub fn calculate_job_matrix(
     gh_ctx: GitHubContext,
     channel: &str,
 ) -> anyhow::Result<()> {
-    let run_type = gh_ctx.get_run_type().ok_or_else(|| {
+    let the_run_type = gh_ctx.get_run_type().ok_or_else(|| {
         anyhow::anyhow!("Cannot determine the type of workflow that is being executed")
     })?;
+    let run_type = match the_run_type {
+        _ => RunType::PullRequest,
+    };
     eprintln!("Run type: {run_type:?}");
 
     let jobs = calculate_jobs(&run_type, &db, channel)?;
