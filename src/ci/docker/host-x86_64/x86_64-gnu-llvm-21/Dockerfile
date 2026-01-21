@@ -62,5 +62,6 @@ COPY scripts/x86_64-gnu-llvm2.sh /scripts/
 COPY scripts/x86_64-gnu-llvm3.sh /scripts/
 COPY scripts/stage_2_test_set1.sh /scripts/
 COPY scripts/stage_2_test_set2.sh /scripts/
+COPY scripts/crosae.sh /scripts/
 
 ENV SCRIPT "Must specify DOCKER_SCRIPT for this image"
