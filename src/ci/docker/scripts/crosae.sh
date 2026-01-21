@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build a stage 2 c-rosae compiler and run the c-rosae tests with the
-# stage2 build
+# stage2 build.
 
 DISABLE_INSTRUMENTATION=1 ../x --stage 2 build std
 
