@@ -4,7 +4,7 @@ use rustc_abi::ExternAbi;
 use rustc_errors::DiagMessage;
 use rustc_hir::{self as hir, LangItem};
 use rustc_middle::traits::{ObligationCause, ObligationCauseCode};
-use rustc_middle::ty::{self, Ty, TyCtxt};
+use rustc_middle::ty::{self, Const, Ty, TyCtxt};
 use rustc_span::def_id::LocalDefId;
 use rustc_span::{Span, Symbol, sym};
 
@@ -213,6 +213,7 @@ fn intrinsic_operation_unsafety(tcx: TyCtxt<'_>, intrinsic_id: LocalDefId) -> hi
         | sym::type_id
         | sym::type_id_eq
         | sym::type_name
+        | sym::type_of
         | sym::ub_checks
         | sym::variant_count
         | sym::vtable_for
@@ -308,14 +309,33 @@ pub(crate) fn check_intrinsic_type(
         sym::needs_drop => (1, 0, vec![], tcx.types.bool),
 
         sym::type_name => (1, 0, vec![], Ty::new_static_str(tcx)),
-        sym::type_id => {
-            (1, 0, vec![], tcx.type_of(tcx.lang_items().type_id().unwrap()).instantiate_identity())
-        }
+        sym::type_id => (
+            1,
+            0,
+            vec![],
+            tcx.type_of(tcx.lang_items().type_id().unwrap()).no_bound_vars().unwrap(),
+        ),
         sym::type_id_eq => {
-            let type_id = tcx.type_of(tcx.lang_items().type_id().unwrap()).instantiate_identity();
+            let type_id = tcx.type_of(tcx.lang_items().type_id().unwrap()).no_bound_vars().unwrap();
             (0, 0, vec![type_id, type_id], tcx.types.bool)
         }
-        sym::offload => (3, 0, vec![param(0), param(1)], param(2)),
+        sym::type_of => (
+            0,
+            0,
+            vec![tcx.type_of(tcx.lang_items().type_id().unwrap()).no_bound_vars().unwrap()],
+            tcx.type_of(tcx.lang_items().type_struct().unwrap()).no_bound_vars().unwrap(),
+        ),
+        sym::offload => (
+            3,
+            0,
+            vec![
+                param(0),
+                Ty::new_array_with_const_len(tcx, tcx.types.u32, Const::from_target_usize(tcx, 3)),
+                Ty::new_array_with_const_len(tcx, tcx.types.u32, Const::from_target_usize(tcx, 3)),
+                param(1),
+            ],
+            param(2),
+        ),
         sym::offset => (2, 0, vec![param(0), param(1)], param(0)),
         sym::arith_offset => (
             1,

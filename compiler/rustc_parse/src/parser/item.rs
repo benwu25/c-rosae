@@ -2199,6 +2199,8 @@ impl<'a> Parser<'a> {
         let attrs = self.parse_inner_attributes()?;
 
         // Determine whether we are building crate std.
+        // Check an environment variable as well for ci.
+        let disable_instrumentation = std::env::var("DISABLE_INSTRUMENTATION").is_ok();
         let source_map = self.psess.source_map();
         let (source_file, _b, _c, _d, _e) = source_map.span_to_location_info(self.token.span);
         *DO_VISITOR.lock().unwrap() = match &source_file {
@@ -2206,7 +2208,11 @@ impl<'a> Parser<'a> {
                 // RealFileName is no longer an enum
                 rustc_span::FileName::Real(file_name) => match &file_name.local_path() {
                     Some(buf) => match &buf.to_str() {
-                        Some(s) => !s.starts_with("library") && !s.contains(".cargo"),
+                        Some(s) => {
+                            !s.starts_with("library")
+                                && !s.contains(".cargo")
+                                && !disable_instrumentation
+                        }
                         None => false,
                     },
                     None => false,
@@ -2615,6 +2621,7 @@ impl<'a> Parser<'a> {
         let insert_span = ident_span.shrink_to_lo();
 
         let ident = if self.token.is_ident()
+            && self.token.is_non_reserved_ident()
             && (!is_const || self.look_ahead(1, |t| *t == token::OpenParen))
             && self.look_ahead(1, |t| {
                 matches!(t.kind, token::Lt | token::OpenBrace | token::OpenParen)
@@ -4378,7 +4385,7 @@ impl<'a> Parser<'a> {
     /// for better diagnostics and suggestions.
     fn parse_field_ident(&mut self, adt_ty: &str, lo: Span) -> PResult<'a, Ident> {
         let (ident, is_raw) = self.ident_or_err(true)?;
-        if matches!(is_raw, IdentIsRaw::No) && ident.is_reserved() {
+        if is_raw == IdentIsRaw::No && ident.is_reserved() {
             let snapshot = self.create_snapshot_for_diagnostic();
             let err = if self.check_fn_front_matter(false, Case::Sensitive) {
                 let inherited_vis =
@@ -4490,7 +4497,7 @@ impl<'a> Parser<'a> {
         self.psess.gated_spans.gate(sym::decl_macro, lo.to(self.prev_token.span));
         Ok(ItemKind::MacroDef(
             ident,
-            ast::MacroDef { body, macro_rules: false, eii_extern_target: None },
+            ast::MacroDef { body, macro_rules: false, eii_declaration: None },
         ))
     }
 
@@ -4540,7 +4547,7 @@ impl<'a> Parser<'a> {
 
         Ok(ItemKind::MacroDef(
             ident,
-            ast::MacroDef { body, macro_rules: true, eii_extern_target: None },
+            ast::MacroDef { body, macro_rules: true, eii_declaration: None },
         ))
     }
 
