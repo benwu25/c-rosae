@@ -13,8 +13,6 @@
 #![feature(try_blocks)]
 // tidy-alphabetical-end
 
-use rustc_parse::parser::item::{OUTPUT_PREFIX, set_output_prefix};
-
 use std::cmp::max;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -51,6 +49,7 @@ use rustc_metadata::creader::MetadataLoader;
 use rustc_metadata::locator;
 use rustc_middle::ty::TyCtxt;
 use rustc_parse::lexer::StripTokens;
+use rustc_parse::parser::item::{OUTPUT_PREFIX, set_output_prefix};
 use rustc_parse::{new_parser_from_file, new_parser_from_source_str, unwrap_or_emit_fatal};
 use rustc_session::config::{
     CG_OPTIONS, CrateType, ErrorOutputType, Input, OptionDesc, OutFileName, OutputType, Sysroot,
@@ -792,30 +791,35 @@ fn print_crate_info(
                 for (name, expected_values) in &sess.psess.check_config.expecteds {
                     use crate::config::ExpectedValues;
                     match expected_values {
-                        ExpectedValues::Any => check_cfgs.push(format!("{name}=any()")),
+                        ExpectedValues::Any => {
+                            check_cfgs.push(format!("cfg({name}, values(any()))"))
+                        }
                         ExpectedValues::Some(values) => {
-                            if !values.is_empty() {
-                                check_cfgs.extend(values.iter().map(|value| {
+                            let mut values: Vec<_> = values
+                                .iter()
+                                .map(|value| {
                                     if let Some(value) = value {
-                                        format!("{name}=\"{value}\"")
+                                        format!("\"{value}\"")
                                     } else {
-                                        name.to_string()
+                                        "none()".to_string()
                                     }
-                                }))
-                            } else {
-                                check_cfgs.push(format!("{name}="))
-                            }
+                                })
+                                .collect();
+
+                            values.sort_unstable();
+
+                            let values = values.join(", ");
+
+                            check_cfgs.push(format!("cfg({name}, values({values}))"))
                         }
                     }
                 }
 
                 check_cfgs.sort_unstable();
-                if !sess.psess.check_config.exhaustive_names {
-                    if !sess.psess.check_config.exhaustive_values {
-                        println_info!("any()=any()");
-                    } else {
-                        println_info!("any()");
-                    }
+                if !sess.psess.check_config.exhaustive_names
+                    && sess.psess.check_config.exhaustive_values
+                {
+                    println_info!("cfg(any())");
                 }
                 for check_cfg in check_cfgs {
                     println_info!("{check_cfg}");
@@ -1151,9 +1155,10 @@ fn get_backend_from_raw_matches(
     let backend_name = debug_flags
         .iter()
         .find_map(|x| x.strip_prefix("codegen-backend=").or(x.strip_prefix("codegen_backend=")));
+    let unstable_options = debug_flags.iter().find(|x| *x == "unstable-options").is_some();
     let target = parse_target_triple(early_dcx, matches);
     let sysroot = Sysroot::new(matches.opt_str("sysroot").map(PathBuf::from));
-    let target = config::build_target_config(early_dcx, &target, sysroot.path());
+    let target = config::build_target_config(early_dcx, &target, sysroot.path(), unstable_options);
 
     get_codegen_backend(early_dcx, &sysroot, backend_name, &target)
 }
@@ -1558,14 +1563,14 @@ fn report_ice(
                         .map(PathBuf::from)
                         .map(|env_var| session_diagnostics::IcePathErrorEnv { env_var }),
                 });
-                dcx.emit_note(session_diagnostics::IceVersion { version, triple: tuple });
                 None
             }
         }
     } else {
-        dcx.emit_note(session_diagnostics::IceVersion { version, triple: tuple });
         None
     };
+
+    dcx.emit_note(session_diagnostics::IceVersion { version, triple: tuple });
 
     if let Some((flags, excluded_cargo_defaults)) = rustc_session::utils::extra_compiler_flags() {
         dcx.emit_note(session_diagnostics::IceFlags { flags: flags.join(" ") });

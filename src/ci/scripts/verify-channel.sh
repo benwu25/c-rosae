@@ -8,7 +8,7 @@ IFS=$'\n\t'
 
 source "$(cd "$(dirname "$0")" && pwd)/../shared.sh"
 
-if isCiBranch auto || isCiBranch try || isCiBranch try-perf || isCiBranch automation/bors/try; then
+if isCiBranch try-perf || isCiBranch automation/bors/try || isCiBranch automation/bors/auto; then
     echo "channel verification is only executed on PR builds"
     exit
 fi
@@ -30,6 +30,7 @@ case "${channel}" in
 esac
 
 branch="$(ciBaseBranch)"
+branch="main"
 if [[ "${branch}" != "${channel_branch}" ]]; then
     echo "error: PRs changing the \`${channel}\` channel should be sent to the \
 \`${channel_branch}\` branch!"
