@@ -5,16 +5,17 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::task::Poll;
 use std::time::{Duration, SystemTime};
 
-use either::Either;
 use rand::seq::IteratorRandom;
 use rustc_abi::ExternAbi;
 use rustc_const_eval::CTRL_C_RECEIVED;
+use rustc_data_structures::either::Either;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_index::{Idx, IndexVec};
 use rustc_middle::mir::Mutability;
 use rustc_middle::ty::layout::TyAndLayout;
-use rustc_span::Span;
+use rustc_span::{DUMMY_SP, Span};
+use rustc_target::spec::Os;
 
 use crate::concurrency::GlobalDataRaceHandler;
 use crate::shims::tls;
@@ -110,6 +111,9 @@ pub enum BlockReason {
     Eventfd,
     /// Blocked on unnamed_socket.
     UnnamedSocket,
+    /// Blocked for any reason related to GenMC, such as `assume` statements (GenMC mode only).
+    /// Will be implicitly unblocked when GenMC schedules this thread again.
+    Genmc,
 }
 
 /// The state of a thread.
@@ -170,6 +174,10 @@ pub struct Thread<'tcx> {
     /// The virtual call stack.
     stack: Vec<Frame<'tcx, Provenance, FrameExtra<'tcx>>>,
 
+    /// A span that explains where the thread (or more specifically, its current root
+    /// frame) "comes from".
+    pub(crate) origin_span: Span,
+
     /// The function to call when the stack ran empty, to figure out what to do next.
     /// Conceptually, this is the interpreter implementation of the things that happen 'after' the
     /// Rust language entry point for this thread returns (usually implemented by the C or OS runtime).
@@ -178,7 +186,6 @@ pub struct Thread<'tcx> {
 
     /// The index of the topmost user-relevant frame in `stack`. This field must contain
     /// the value produced by `get_top_user_relevant_frame`.
-    /// The `None` state here represents
     /// This field is a cache to reduce how often we call that method. The cache is manually
     /// maintained inside `MiriMachine::after_stack_push` and `MiriMachine::after_stack_pop`.
     top_user_relevant_frame: Option<usize>,
@@ -229,12 +236,21 @@ impl<'tcx> Thread<'tcx> {
     /// justifying the optimization that only pushes of user-relevant frames require updating the
     /// `top_user_relevant_frame` field.
     fn compute_top_user_relevant_frame(&self, skip: usize) -> Option<usize> {
-        self.stack
-            .iter()
-            .enumerate()
-            .rev()
-            .skip(skip)
-            .find_map(|(idx, frame)| if frame.extra.is_user_relevant { Some(idx) } else { None })
+        // We are search for the frame with maximum relevance.
+        let mut best = None;
+        for (idx, frame) in self.stack.iter().enumerate().rev().skip(skip) {
+            let relevance = frame.extra.user_relevance;
+            if relevance == u8::MAX {
+                // We can short-circuit this search.
+                return Some(idx);
+            }
+            if best.is_none_or(|(_best_idx, best_relevance)| best_relevance < relevance) {
+                // The previous best frame has strictly worse relevance, so despite us being lower
+                // in the stack, we win.
+                best = Some((idx, relevance));
+            }
+        }
+        best.map(|(idx, _relevance)| idx)
     }
 
     /// Re-compute the top user-relevant frame from scratch. `skip` indicates how many top frames
@@ -253,14 +269,20 @@ impl<'tcx> Thread<'tcx> {
     /// Returns the topmost frame that is considered user-relevant, or the
     /// top of the stack if there is no such frame, or `None` if the stack is empty.
     pub fn top_user_relevant_frame(&self) -> Option<usize> {
-        debug_assert_eq!(self.top_user_relevant_frame, self.compute_top_user_relevant_frame(0));
         // This can be called upon creation of an allocation. We create allocations while setting up
         // parts of the Rust runtime when we do not have any stack frames yet, so we need to handle
         // empty stacks.
         self.top_user_relevant_frame.or_else(|| self.stack.len().checked_sub(1))
     }
 
-    pub fn current_span(&self) -> Span {
+    pub fn current_user_relevance(&self) -> u8 {
+        self.top_user_relevant_frame()
+            .map(|frame_idx| self.stack[frame_idx].extra.user_relevance)
+            .unwrap_or(0)
+    }
+
+    pub fn current_user_relevant_span(&self) -> Span {
+        debug_assert_eq!(self.top_user_relevant_frame, self.compute_top_user_relevant_frame(0));
         self.top_user_relevant_frame()
             .map(|frame_idx| self.stack[frame_idx].current_span())
             .unwrap_or(rustc_span::DUMMY_SP)
@@ -285,6 +307,7 @@ impl<'tcx> Thread<'tcx> {
             state: ThreadState::Enabled,
             thread_name: name.map(|name| Vec::from(name.as_bytes())),
             stack: Vec::new(),
+            origin_span: DUMMY_SP,
             top_user_relevant_frame: None,
             join_status: ThreadJoinStatus::Joinable,
             unwind_payloads: Vec::new(),
@@ -300,6 +323,7 @@ impl VisitProvenance for Thread<'_> {
             unwind_payloads: panic_payload,
             last_error,
             stack,
+            origin_span: _,
             top_user_relevant_frame: _,
             state: _,
             thread_name: _,
@@ -454,7 +478,7 @@ impl<'tcx> ThreadManager<'tcx> {
     ) {
         ecx.machine.threads.threads[ThreadId::MAIN_THREAD].on_stack_empty =
             Some(on_main_stack_empty);
-        if ecx.tcx.sess.target.os.as_ref() != "windows" {
+        if ecx.tcx.sess.target.os != Os::Windows {
             // The main thread can *not* be joined on except on windows.
             ecx.machine.threads.threads[ThreadId::MAIN_THREAD].join_status =
                 ThreadJoinStatus::Detached;
@@ -497,10 +521,13 @@ impl<'tcx> ThreadManager<'tcx> {
         &mut self.threads[self.active_thread].stack
     }
 
-    pub fn all_stacks(
+    pub fn all_blocked_stacks(
         &self,
     ) -> impl Iterator<Item = (ThreadId, &[Frame<'tcx, Provenance, FrameExtra<'tcx>>])> {
-        self.threads.iter_enumerated().map(|(id, t)| (id, &t.stack[..]))
+        self.threads
+            .iter_enumerated()
+            .filter(|(_id, t)| matches!(t.state, ThreadState::Blocked { .. }))
+            .map(|(id, t)| (id, &t.stack[..]))
     }
 
     /// Create a new thread and returns its id.
@@ -563,6 +590,10 @@ impl<'tcx> ThreadManager<'tcx> {
         &self.threads[self.active_thread]
     }
 
+    pub fn thread_ref(&self, thread_id: ThreadId) -> &Thread<'tcx> {
+        &self.threads[thread_id]
+    }
+
     /// Mark the thread as detached, which means that no other thread will try
     /// to join it and the thread is responsible for cleaning up.
     ///
@@ -572,6 +603,7 @@ impl<'tcx> ThreadManager<'tcx> {
     /// See <https://docs.microsoft.com/en-us/windows/win32/procthread/thread-handles-and-identifiers>:
     /// > The handle is valid until closed, even after the thread it represents has been terminated.
     fn detach_thread(&mut self, id: ThreadId, allow_terminated_joined: bool) -> InterpResult<'tcx> {
+        // NOTE: In GenMC mode, we treat detached threads like regular threads that are never joined, so there is no special handling required here.
         trace!("detaching {:?}", id);
 
         let is_ub = if allow_terminated_joined && self.threads[id].state.is_terminated() {
@@ -682,8 +714,9 @@ trait EvalContextPrivExt<'tcx>: MiriInterpCxExt<'tcx> {
     #[inline]
     fn run_on_stack_empty(&mut self) -> InterpResult<'tcx, Poll<()>> {
         let this = self.eval_context_mut();
-        let mut callback = this
-            .active_thread_mut()
+        let active_thread = this.active_thread_mut();
+        active_thread.origin_span = DUMMY_SP; // reset, the old value no longer applied
+        let mut callback = active_thread
             .on_stack_empty
             .take()
             .expect("`on_stack_empty` not set up, or already running");
@@ -704,14 +737,31 @@ trait EvalContextPrivExt<'tcx>: MiriInterpCxExt<'tcx> {
         let this = self.eval_context_mut();
 
         // In GenMC mode, we let GenMC do the scheduling.
-        if let Some(genmc_ctx) = this.machine.data_race.as_genmc_ref() {
-            let next_thread_id = genmc_ctx.schedule_thread(this)?;
-
-            let thread_manager = &mut this.machine.threads;
-            thread_manager.active_thread = next_thread_id;
-
-            assert!(thread_manager.threads[thread_manager.active_thread].state.is_enabled());
-            return interp_ok(SchedulingAction::ExecuteStep);
+        if this.machine.data_race.as_genmc_ref().is_some() {
+            loop {
+                let genmc_ctx = this.machine.data_race.as_genmc_ref().unwrap();
+                let Some(next_thread_id) = genmc_ctx.schedule_thread(this)? else {
+                    return interp_ok(SchedulingAction::ExecuteStep);
+                };
+                // If a thread is blocked on GenMC, we have to implicitly unblock it when it gets scheduled again.
+                if this.machine.threads.threads[next_thread_id]
+                    .state
+                    .is_blocked_on(BlockReason::Genmc)
+                {
+                    info!(
+                        "GenMC: scheduling blocked thread {next_thread_id:?}, so we unblock it now."
+                    );
+                    this.unblock_thread(next_thread_id, BlockReason::Genmc)?;
+                }
+                // The thread we just unblocked may have been blocked again during the unblocking callback.
+                // In that case, we need to ask for a different thread to run next.
+                let thread_manager = &mut this.machine.threads;
+                if thread_manager.threads[next_thread_id].state.is_enabled() {
+                    // Set the new active thread.
+                    thread_manager.active_thread = next_thread_id;
+                    return interp_ok(SchedulingAction::ExecuteStep);
+                }
+            }
         }
 
         // We are not in GenMC mode, so we control the scheduling.
@@ -784,7 +834,7 @@ trait EvalContextPrivExt<'tcx>: MiriInterpCxExt<'tcx> {
             // sleep until the first callback.
             interp_ok(SchedulingAction::Sleep(sleep_time))
         } else {
-            throw_machine_stop!(TerminationInfo::Deadlock);
+            throw_machine_stop!(TerminationInfo::GlobalDeadlock);
         }
     }
 }
@@ -852,11 +902,11 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         let this = self.eval_context_mut();
 
         // Create the new thread
+        let current_span = this.machine.current_user_relevant_span();
         let new_thread_id = this.machine.threads.create_thread({
             let mut state = tls::TlsDtorsState::default();
             Box::new(move |m| state.on_stack_empty(m))
         });
-        let current_span = this.machine.current_span();
         match &mut this.machine.data_race {
             GlobalDataRaceHandler::None => {}
             GlobalDataRaceHandler::Vclocks(data_race) =>
@@ -895,12 +945,12 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
         // it.
         let ret_place = this.allocate(ret_layout, MiriMemoryKind::Machine.into())?;
 
-        this.call_function(
+        this.call_thread_root_function(
             instance,
             start_abi,
             &[func_arg],
             Some(&ret_place),
-            ReturnContinuation::Stop { cleanup: true },
+            current_span,
         )?;
 
         // Restore the old active thread frame.

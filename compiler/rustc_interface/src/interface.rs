@@ -17,6 +17,7 @@ use rustc_middle::ty::CurrentGcx;
 use rustc_middle::util::Providers;
 use rustc_parse::lexer::StripTokens;
 use rustc_parse::new_parser_from_source_str;
+use rustc_parse::parser::Recovery;
 use rustc_parse::parser::attr::AllowLeadingUnsafe;
 use rustc_query_impl::QueryCtxt;
 use rustc_query_system::query::print_query_stack;
@@ -25,6 +26,7 @@ use rustc_session::parse::ParseSess;
 use rustc_session::{CompilerIO, EarlyDiagCtxt, Session, lint};
 use rustc_span::source_map::{FileLoader, RealFileLoader, SourceMapInputs};
 use rustc_span::{FileName, sym};
+use rustc_target::spec::Target;
 use tracing::trace;
 
 use crate::util;
@@ -54,9 +56,13 @@ pub struct Compiler {
 pub(crate) fn parse_cfg(dcx: DiagCtxtHandle<'_>, cfgs: Vec<String>) -> Cfg {
     cfgs.into_iter()
         .map(|s| {
-            let psess = ParseSess::with_fatal_emitter(
-                vec![crate::DEFAULT_LOCALE_RESOURCE, rustc_parse::DEFAULT_LOCALE_RESOURCE],
-                format!("this error occurred on the command line: `--cfg={s}`"),
+            let psess = ParseSess::emitter_with_note(
+                vec![
+                    crate::DEFAULT_LOCALE_RESOURCE,
+                    rustc_parse::DEFAULT_LOCALE_RESOURCE,
+                    rustc_session::DEFAULT_LOCALE_RESOURCE,
+                ],
+                format!("this occurred on the command line: `--cfg={s}`"),
             );
             let filename = FileName::cfg_spec_source_code(&s);
 
@@ -64,36 +70,46 @@ pub(crate) fn parse_cfg(dcx: DiagCtxtHandle<'_>, cfgs: Vec<String>) -> Cfg {
                 ($reason: expr) => {
                     #[allow(rustc::untranslatable_diagnostic)]
                     #[allow(rustc::diagnostic_outside_of_impl)]
-                    dcx.fatal(format!(
-                        concat!("invalid `--cfg` argument: `{}` (", $reason, ")"),
-                        s
-                    ));
+                    dcx.fatal(format!("invalid `--cfg` argument: `{s}` ({})", $reason));
                 };
             }
 
             match new_parser_from_source_str(&psess, filename, s.to_string(), StripTokens::Nothing)
             {
-                Ok(mut parser) => match parser.parse_meta_item(AllowLeadingUnsafe::No) {
-                    Ok(meta_item) if parser.token == token::Eof => {
-                        if meta_item.path.segments.len() != 1 {
-                            error!("argument key must be an identifier");
-                        }
-                        match &meta_item.kind {
-                            MetaItemKind::List(..) => {}
-                            MetaItemKind::NameValue(lit) if !lit.kind.is_str() => {
-                                error!("argument value must be a string");
+                Ok(mut parser) => {
+                    parser = parser.recovery(Recovery::Forbidden);
+                    match parser.parse_meta_item(AllowLeadingUnsafe::No) {
+                        Ok(meta_item)
+                            if parser.token == token::Eof
+                                && parser.dcx().has_errors().is_none() =>
+                        {
+                            if meta_item.path.segments.len() != 1 {
+                                error!("argument key must be an identifier");
                             }
-                            MetaItemKind::NameValue(..) | MetaItemKind::Word => {
-                                let ident = meta_item.ident().expect("multi-segment cfg key");
-                                return (ident.name, meta_item.value_str());
+                            match &meta_item.kind {
+                                MetaItemKind::List(..) => {}
+                                MetaItemKind::NameValue(lit) if !lit.kind.is_str() => {
+                                    error!("argument value must be a string");
+                                }
+                                MetaItemKind::NameValue(..) | MetaItemKind::Word => {
+                                    let ident = meta_item.ident().expect("multi-segment cfg key");
+
+                                    if ident.is_path_segment_keyword() {
+                                        error!(
+                                            "malformed `cfg` input, expected a valid identifier"
+                                        );
+                                    }
+
+                                    return (ident.name, meta_item.value_str());
+                                }
                             }
                         }
+                        Ok(..) => {}
+                        Err(err) => err.cancel(),
                     }
-                    Ok(..) => {}
-                    Err(err) => err.cancel(),
-                },
+                }
                 Err(errs) => errs.into_iter().for_each(|err| err.cancel()),
-            }
+            };
 
             // If the user tried to use a key="value" flag, but is missing the quotes, provide
             // a hint about how to resolve this.
@@ -118,9 +134,13 @@ pub(crate) fn parse_check_cfg(dcx: DiagCtxtHandle<'_>, specs: Vec<String>) -> Ch
     let mut check_cfg = CheckCfg { exhaustive_names, exhaustive_values, ..CheckCfg::default() };
 
     for s in specs {
-        let psess = ParseSess::with_fatal_emitter(
-            vec![crate::DEFAULT_LOCALE_RESOURCE, rustc_parse::DEFAULT_LOCALE_RESOURCE],
-            format!("this error occurred on the command line: `--check-cfg={s}`"),
+        let psess = ParseSess::emitter_with_note(
+            vec![
+                crate::DEFAULT_LOCALE_RESOURCE,
+                rustc_parse::DEFAULT_LOCALE_RESOURCE,
+                rustc_session::DEFAULT_LOCALE_RESOURCE,
+            ],
+            format!("this occurred on the command line: `--check-cfg={s}`"),
         );
         let filename = FileName::cfg_spec_source_code(&s);
 
@@ -173,7 +193,7 @@ pub(crate) fn parse_check_cfg(dcx: DiagCtxtHandle<'_>, specs: Vec<String>) -> Ch
         let mut parser =
             match new_parser_from_source_str(&psess, filename, s.to_string(), StripTokens::Nothing)
             {
-                Ok(parser) => parser,
+                Ok(parser) => parser.recovery(Recovery::Forbidden),
                 Err(errs) => {
                     errs.into_iter().for_each(|err| err.cancel());
                     expected_error();
@@ -181,7 +201,9 @@ pub(crate) fn parse_check_cfg(dcx: DiagCtxtHandle<'_>, specs: Vec<String>) -> Ch
             };
 
         let meta_item = match parser.parse_meta_item(AllowLeadingUnsafe::No) {
-            Ok(meta_item) if parser.token == token::Eof => meta_item,
+            Ok(meta_item) if parser.token == token::Eof && parser.dcx().has_errors().is_none() => {
+                meta_item
+            }
             Ok(..) => expected_error(),
             Err(err) => {
                 err.cancel();
@@ -211,6 +233,11 @@ pub(crate) fn parse_check_cfg(dcx: DiagCtxtHandle<'_>, specs: Vec<String>) -> Ch
                 if values_specified {
                     error!("`cfg()` names cannot be after values");
                 }
+
+                if ident.is_path_segment_keyword() {
+                    error!("malformed `cfg` input, expected a valid identifier");
+                }
+
                 names.push(ident);
             } else if let Some(boolean) = arg.boolean_literal() {
                 if values_specified {
@@ -369,7 +396,7 @@ pub struct Config {
     /// custom driver where the custom codegen backend has arbitrary data."
     /// (See #102759.)
     pub make_codegen_backend:
-        Option<Box<dyn FnOnce(&config::Options) -> Box<dyn CodegenBackend> + Send>>,
+        Option<Box<dyn FnOnce(&config::Options, &Target) -> Box<dyn CodegenBackend> + Send>>,
 
     /// Registry of diagnostics codes.
     pub registry: Registry,
@@ -378,12 +405,6 @@ pub struct Config {
     /// enabled. Makes it so that "please report a bug" is hidden, as ICEs with
     /// internal features are wontfix, and they are usually the cause of the ICEs.
     pub using_internal_features: &'static std::sync::atomic::AtomicBool,
-
-    /// All commandline args used to invoke the compiler, with @file args fully expanded.
-    /// This will only be used within debug info, e.g. in the pdb file on windows
-    /// This is mainly useful for other tools that reads that debuginfo to figure out
-    /// how to call the compiler with the same arguments.
-    pub expanded_args: Vec<String>,
 
     pub afp_cb: Arc<Mutex<dyn FnMut() -> () + DynSend + DynSync + Send + Sync>>,
 }
@@ -418,6 +439,7 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
         &early_dcx,
         &config.opts.target_triple,
         config.opts.sysroot.path(),
+        config.opts.unstable_opts.unstable_options,
     );
     let file_loader = config.file_loader.unwrap_or_else(|| Box::new(RealFileLoader));
     let path_mapping = config.opts.file_path_mapping();
@@ -445,7 +467,7 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
                 Some(make_codegen_backend) => {
                     // N.B. `make_codegen_backend` takes precedence over
                     // `target.default_codegen_backend`, which is ignored in this case.
-                    make_codegen_backend(&config.opts)
+                    make_codegen_backend(&config.opts, &target)
                 }
             };
 
@@ -484,7 +506,6 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
                 util::rustc_version_str().unwrap_or("unknown"),
                 config.ice_file,
                 config.using_internal_features,
-                config.expanded_args,
             );
 
             codegen_backend.init(&sess);

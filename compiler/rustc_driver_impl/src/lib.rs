@@ -5,14 +5,11 @@
 //! This API is completely unstable and subject to change.
 
 // tidy-alphabetical-start
-#![allow(internal_features)]
 #![allow(rustc::untranslatable_diagnostic)] // FIXME: make this translatable
-#![doc(html_root_url = "https://doc.rust-lang.org/nightly/nightly-rustc/")]
-#![doc(rust_logo)]
 #![feature(decl_macro)]
 #![feature(panic_backtrace_config)]
 #![feature(panic_update_hook)]
-#![feature(rustdoc_internals)]
+#![feature(trim_prefix_suffix)]
 #![feature(try_blocks)]
 // tidy-alphabetical-end
 
@@ -54,6 +51,7 @@ use rustc_metadata::creader::MetadataLoader;
 use rustc_metadata::locator;
 use rustc_middle::ty::TyCtxt;
 use rustc_parse::lexer::StripTokens;
+use rustc_parse::parser::item::{OUTPUT_PREFIX, set_output_prefix};
 use rustc_parse::{new_parser_from_file, new_parser_from_source_str, unwrap_or_emit_fatal};
 use rustc_session::config::{
     CG_OPTIONS, CrateType, ErrorOutputType, Input, OptionDesc, OutFileName, OutputType, Sysroot,
@@ -279,7 +277,6 @@ pub fn run_compiler(at_args: &[String], callbacks: Arc<Mutex<dyn Callbacks + Dyn
         make_codegen_backend: None,
         registry: diagnostics_registry(),
         using_internal_features: &USING_INTERNAL_FEATURES,
-        expanded_args: args,
         afp_cb: Arc::new(Mutex::new(Box::new(move || { callbacks_c.lock().unwrap().after_full_parse(); }))),
     };
 
@@ -290,6 +287,31 @@ pub fn run_compiler(at_args: &[String], callbacks: Arc<Mutex<dyn Callbacks + Dyn
     interface::run_compiler(config, |compiler| {
         let sess = &compiler.sess;
         let codegen_backend = &*compiler.codegen_backend;
+
+        // get output name for decls, dtrace, and pp
+        // try input/output file names first. Prefer output to input.
+        match &sess.io.output_file {
+            None => match &sess.io.input {
+                Input::File(path) => {
+                    set_output_prefix(String::from(path.to_str().unwrap()));
+                }
+                _ => {}
+            },
+            Some(ofile) => match &ofile {
+                OutFileName::Real(path) => {
+                    *OUTPUT_PREFIX.lock().unwrap() = String::from(path.to_str().unwrap());
+                }
+                _ => {}
+            },
+        }
+
+        // this is the expected path for builds with cargo
+        match &sess.opts.crate_name {
+            Some(name) => {
+                *OUTPUT_PREFIX.lock().unwrap() = String::from(name);
+            }
+            _ => {}
+        }
 
         // This is used for early exits unrelated to errors. E.g. when just
         // printing some information without compiling, or exiting immediately
@@ -478,7 +500,7 @@ pub enum Compilation {
 fn handle_explain(early_dcx: &EarlyDiagCtxt, registry: Registry, code: &str, color: ColorConfig) {
     // Allow "E0123" or "0123" form.
     let upper_cased_code = code.to_ascii_uppercase();
-    if let Ok(code) = upper_cased_code.strip_prefix('E').unwrap_or(&upper_cased_code).parse::<u32>()
+    if let Ok(code) = upper_cased_code.trim_prefix('E').parse::<u32>()
         && code <= ErrCode::MAX_AS_U32
         && let Ok(description) = registry.try_find_description(ErrCode::from_u32(code))
     {
@@ -532,11 +554,11 @@ fn show_md_content_with_pager(content: &str, color: ColorConfig) {
     };
 
     // Try to prettify the raw markdown text. The result can be used by the pager or on stdout.
-    let pretty_data = {
+    let mut pretty_data = {
         let mdstream = markdown::MdStream::parse_str(content);
         let bufwtr = markdown::create_stdout_bufwtr();
-        let mut mdbuf = bufwtr.buffer();
-        if mdstream.write_termcolor_buf(&mut mdbuf).is_ok() { Some((bufwtr, mdbuf)) } else { None }
+        let mut mdbuf = Vec::new();
+        if mdstream.write_anstream_buf(&mut mdbuf).is_ok() { Some((bufwtr, mdbuf)) } else { None }
     };
 
     // Try to print via the pager, pretty output if possible.
@@ -557,8 +579,8 @@ fn show_md_content_with_pager(content: &str, color: ColorConfig) {
     }
 
     // The pager failed. Try to print pretty output to stdout.
-    if let Some((bufwtr, mdbuf)) = &pretty_data
-        && bufwtr.print(mdbuf).is_ok()
+    if let Some((bufwtr, mdbuf)) = &mut pretty_data
+        && bufwtr.write_all(&mdbuf).is_ok()
     {
         return;
     }
@@ -698,7 +720,12 @@ fn print_crate_info(
                 };
                 let t_outputs = rustc_interface::util::build_output_filenames(attrs, sess);
                 let crate_name = passes::get_crate_name(sess, attrs);
-                let crate_types = collect_crate_types(sess, attrs);
+                let crate_types = collect_crate_types(
+                    sess,
+                    &codegen_backend.supported_crate_types(sess),
+                    codegen_backend.name(),
+                    attrs,
+                );
                 for &style in &crate_types {
                     let fname = rustc_session::output::filename_for_input(
                         sess, style, crate_name, &t_outputs,
@@ -775,30 +802,35 @@ fn print_crate_info(
                 for (name, expected_values) in &sess.psess.check_config.expecteds {
                     use crate::config::ExpectedValues;
                     match expected_values {
-                        ExpectedValues::Any => check_cfgs.push(format!("{name}=any()")),
+                        ExpectedValues::Any => {
+                            check_cfgs.push(format!("cfg({name}, values(any()))"))
+                        }
                         ExpectedValues::Some(values) => {
-                            if !values.is_empty() {
-                                check_cfgs.extend(values.iter().map(|value| {
+                            let mut values: Vec<_> = values
+                                .iter()
+                                .map(|value| {
                                     if let Some(value) = value {
-                                        format!("{name}=\"{value}\"")
+                                        format!("\"{value}\"")
                                     } else {
-                                        name.to_string()
+                                        "none()".to_string()
                                     }
-                                }))
-                            } else {
-                                check_cfgs.push(format!("{name}="))
-                            }
+                                })
+                                .collect();
+
+                            values.sort_unstable();
+
+                            let values = values.join(", ");
+
+                            check_cfgs.push(format!("cfg({name}, values({values}))"))
                         }
                     }
                 }
 
                 check_cfgs.sort_unstable();
-                if !sess.psess.check_config.exhaustive_names {
-                    if !sess.psess.check_config.exhaustive_values {
-                        println_info!("any()=any()");
-                    } else {
-                        println_info!("any()");
-                    }
+                if !sess.psess.check_config.exhaustive_names
+                    && sess.psess.check_config.exhaustive_values
+                {
+                    println_info!("cfg(any())");
                 }
                 for check_cfg in check_cfgs {
                     println_info!("{check_cfg}");
@@ -807,6 +839,10 @@ fn print_crate_info(
             CallingConventions => {
                 let calling_conventions = rustc_abi::all_names();
                 println_info!("{}", calling_conventions.join("\n"));
+            }
+            BackendHasZstd => {
+                let has_zstd: bool = codegen_backend.has_zstd();
+                println_info!("{has_zstd}");
             }
             RelocationModels
             | CodeModels
@@ -1130,9 +1166,10 @@ fn get_backend_from_raw_matches(
     let backend_name = debug_flags
         .iter()
         .find_map(|x| x.strip_prefix("codegen-backend=").or(x.strip_prefix("codegen_backend=")));
+    let unstable_options = debug_flags.iter().find(|x| *x == "unstable-options").is_some();
     let target = parse_target_triple(early_dcx, matches);
     let sysroot = Sysroot::new(matches.opt_str("sysroot").map(PathBuf::from));
-    let target = config::build_target_config(early_dcx, &target, sysroot.path());
+    let target = config::build_target_config(early_dcx, &target, sysroot.path(), unstable_options);
 
     get_codegen_backend(early_dcx, &sysroot, backend_name, &target)
 }
@@ -1274,7 +1311,7 @@ fn warn_on_confusing_output_filename_flag(
     if let Some(name) = matches.opt_str("o")
         && let Some(suspect) = args.iter().find(|arg| arg.starts_with("-o") && *arg != "-o")
     {
-        let filename = suspect.strip_prefix("-").unwrap_or(suspect);
+        let filename = suspect.trim_prefix("-");
         let optgroups = config::rustc_optgroups();
         let fake_args = ["optimize", "o0", "o1", "o2", "o3", "ofast", "og", "os", "oz"];
 
@@ -1537,14 +1574,14 @@ fn report_ice(
                         .map(PathBuf::from)
                         .map(|env_var| session_diagnostics::IcePathErrorEnv { env_var }),
                 });
-                dcx.emit_note(session_diagnostics::IceVersion { version, triple: tuple });
                 None
             }
         }
     } else {
-        dcx.emit_note(session_diagnostics::IceVersion { version, triple: tuple });
         None
     };
+
+    dcx.emit_note(session_diagnostics::IceVersion { version, triple: tuple });
 
     if let Some((flags, excluded_cargo_defaults)) = rustc_session::utils::extra_compiler_flags() {
         dcx.emit_note(session_diagnostics::IceFlags { flags: flags.join(" ") });

@@ -4,9 +4,9 @@ use rustc_errors::codes::*;
 use rustc_errors::{
     Applicability, Diag, EmissionGuarantee, StashKey, Suggestions, struct_span_code_err,
 };
-use rustc_hir as hir;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
+use rustc_hir::{self as hir, LangItem};
 use rustc_lint_defs::builtin::{BARE_TRAIT_OBJECTS, UNUSED_ASSOCIATED_TYPE_BOUNDS};
 use rustc_middle::ty::elaborate::ClauseWithSupertraitSpan;
 use rustc_middle::ty::{
@@ -24,7 +24,8 @@ use tracing::{debug, instrument};
 use super::HirTyLowerer;
 use crate::errors::SelfInTypeAlias;
 use crate::hir_ty_lowering::{
-    GenericArgCountMismatch, OverlappingAsssocItemConstraints, PredicateFilter, RegionInferReason,
+    GenericArgCountMismatch, ImpliedBoundsContext, OverlappingAsssocItemConstraints,
+    PredicateFilter, RegionInferReason,
 };
 
 impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
@@ -76,12 +77,26 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                 .iter()
                 .map(|&trait_ref| hir::GenericBound::Trait(trait_ref))
                 .collect::<Vec<_>>(),
-            None,
+            ImpliedBoundsContext::AssociatedTypeOrImplTrait,
             span,
         );
 
-        let (elaborated_trait_bounds, elaborated_projection_bounds) =
+        let (mut elaborated_trait_bounds, elaborated_projection_bounds) =
             traits::expand_trait_aliases(tcx, user_written_bounds.iter().copied());
+
+        // FIXME(sized-hierarchy): https://github.com/rust-lang/rust/pull/142712#issuecomment-3013231794
+        debug!(?user_written_bounds, ?elaborated_trait_bounds);
+        let meta_sized_did = tcx.require_lang_item(LangItem::MetaSized, span);
+        // Don't strip out `MetaSized` when the user wrote it explicitly, only when it was
+        // elaborated
+        if user_written_bounds
+            .iter()
+            .all(|(clause, _)| clause.as_trait_clause().map(|p| p.def_id()) != Some(meta_sized_did))
+        {
+            elaborated_trait_bounds.retain(|(pred, _)| pred.def_id() != meta_sized_did);
+        }
+        debug!(?user_written_bounds, ?elaborated_trait_bounds);
+
         let (regular_traits, mut auto_traits): (Vec<_>, Vec<_>) = elaborated_trait_bounds
             .into_iter()
             .partition(|(trait_ref, _)| !tcx.trait_is_auto(trait_ref.def_id()));
@@ -224,7 +239,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                         // `trait_object_dummy_self`, so check for that.
                         let references_self = match pred.skip_binder().term.kind() {
                             ty::TermKind::Ty(ty) => ty.walk().any(|arg| arg == dummy_self.into()),
-                            // FIXME(associated_const_equality): We should walk the const instead of not doing anything
+                            // FIXME(mgca): We should walk the const instead of not doing anything
                             ty::TermKind::Const(_) => false,
                         };
 
@@ -488,8 +503,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
         // FIXME: point at the type params that don't have appropriate lifetimes:
         // struct S1<F: for<'a> Fn(&i32, &i32) -> &'a i32>(F);
         //                         ----  ----     ^^^^^^^
-        // NOTE(associated_const_equality): This error should be impossible to trigger
-        //                                  with associated const equality constraints.
+        // NOTE(mgca): This error should be impossible to trigger with assoc const bindings.
         self.validate_late_bound_regions(
             late_bound_in_projection_term,
             late_bound_in_term,

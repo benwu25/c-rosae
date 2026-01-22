@@ -13,12 +13,10 @@ use rustc_middle::ty::{self, Ty};
 use rustc_target::callconv::{CastTarget, FnAbi};
 
 use crate::abi::{FnAbiLlvmExt, LlvmType};
+use crate::common;
 use crate::context::{CodegenCx, GenericCx, SCx};
-pub(crate) use crate::llvm::Type;
-use crate::llvm::{FALSE, Metadata, TRUE, ToLlvmBool};
+use crate::llvm::{self, FALSE, Metadata, TRUE, ToGeneric, ToLlvmBool, Type, Value};
 use crate::type_of::LayoutLlvmExt;
-use crate::value::Value;
-use crate::{common, llvm};
 
 impl PartialEq for Type {
     fn eq(&self, other: &Self) -> bool {
@@ -68,6 +66,15 @@ impl<'ll, CX: Borrow<SCx<'ll>>> GenericCx<'ll, CX> {
 
     pub(crate) fn type_vector(&self, ty: &'ll Type, len: u64) -> &'ll Type {
         unsafe { llvm::LLVMVectorType(ty, len as c_uint) }
+    }
+
+    pub(crate) fn type_scalable_vector(&self, ty: &'ll Type, count: u64) -> &'ll Type {
+        unsafe { llvm::LLVMScalableVectorType(ty, count as c_uint) }
+    }
+
+    pub(crate) fn add_func(&self, name: &str, ty: &'ll Type) -> &'ll Value {
+        let name = SmallCStr::new(name);
+        unsafe { llvm::LLVMAddFunction(self.llmod(), name.as_ptr(), ty) }
     }
 
     pub(crate) fn func_params_types(&self, ty: &'ll Type) -> Vec<&'ll Type> {

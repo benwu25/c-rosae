@@ -48,29 +48,15 @@ macro_rules! assert_approx_eq {
     };
 }
 
-/// From IEEE 754 a Signaling NaN for single precision has the following representation:
-/// ```
-/// s | 1111 1111 | 0x..x
-/// ````
-/// Were at least one `x` is a 1.
-///
-/// This sNaN has the following representation and is used for testing purposes.:
-/// ```
-/// 0 | 1111111 | 01..0
-/// ```
-const SNAN_F32: f32 = f32::from_bits(0x7fa00000);
-
-/// From IEEE 754 a Signaling NaN for double precision has the following representation:
-/// ```
-/// s | 1111 1111 111 | 0x..x
-/// ````
-/// Were at least one `x` is a 1.
-///
-/// This sNaN has the following representation and is used for testing purposes.:
-/// ```
-/// 0 | 1111 1111 111 | 01..0
-/// ```
-const SNAN_F64: f64 = f64::from_bits(0x7ff4000000000000);
+/// We turn the quiet NaN f*::NAN into a signaling one by flipping the first (most significant)
+/// two bits of the mantissa. For this we have to shift by `MANTISSA_DIGITS-3` because:
+/// we subtract 1 as the actual mantissa is 1 bit smaller, and 2 more as that's the width
+/// if the value we are shifting.
+const F16_SNAN: f16 = f16::from_bits(f16::NAN.to_bits() ^ (0b11 << (f16::MANTISSA_DIGITS - 3)));
+const F32_SNAN: f32 = f32::from_bits(f32::NAN.to_bits() ^ (0b11 << (f32::MANTISSA_DIGITS - 3)));
+const F64_SNAN: f64 = f64::from_bits(f64::NAN.to_bits() ^ (0b11 << (f64::MANTISSA_DIGITS - 3)));
+const F128_SNAN: f128 =
+    f128::from_bits(f128::NAN.to_bits() ^ (0b11 << (f128::MANTISSA_DIGITS - 3)));
 
 fn main() {
     basic();
@@ -757,6 +743,8 @@ fn ops() {
     assert_eq(f16::NAN.max(-9.0), -9.0);
     assert_eq((9.0_f16).min(f16::NAN), 9.0);
     assert_eq((-9.0_f16).max(f16::NAN), -9.0);
+    assert_eq(F16_SNAN.min(9.0), 9.0);
+    assert_eq((-9.0_f16).max(F16_SNAN), -9.0);
 
     // f32 min/max
     assert_eq((1.0 as f32).max(-1.0), 1.0);
@@ -765,6 +753,8 @@ fn ops() {
     assert_eq(f32::NAN.max(-9.0), -9.0);
     assert_eq((9.0 as f32).min(f32::NAN), 9.0);
     assert_eq((-9.0 as f32).max(f32::NAN), -9.0);
+    assert_eq(F32_SNAN.min(9.0), 9.0);
+    assert_eq((-9.0_f32).max(F32_SNAN), -9.0);
 
     // f64 min/max
     assert_eq((1.0 as f64).max(-1.0), 1.0);
@@ -773,6 +763,8 @@ fn ops() {
     assert_eq(f64::NAN.max(-9.0), -9.0);
     assert_eq((9.0 as f64).min(f64::NAN), 9.0);
     assert_eq((-9.0 as f64).max(f64::NAN), -9.0);
+    assert_eq(F64_SNAN.min(9.0), 9.0);
+    assert_eq((-9.0_f64).max(F64_SNAN), -9.0);
 
     // f128 min/max
     assert_eq((1.0_f128).max(-1.0), 1.0);
@@ -781,6 +773,8 @@ fn ops() {
     assert_eq(f128::NAN.max(-9.0), -9.0);
     assert_eq((9.0_f128).min(f128::NAN), 9.0);
     assert_eq((-9.0_f128).max(f128::NAN), -9.0);
+    assert_eq(F128_SNAN.min(9.0), 9.0);
+    assert_eq((-9.0_f128).max(F128_SNAN), -9.0);
 
     // f16 copysign
     assert_eq(3.5_f16.copysign(0.42), 3.5_f16);
@@ -1037,7 +1031,7 @@ fn mul_add() {
     assert_eq!(f.to_bits(), f32::to_bits(-0.0));
 }
 
-pub fn libm() {
+fn libm() {
     fn ldexp(a: f64, b: i32) -> f64 {
         extern "C" {
             fn ldexp(x: f64, n: i32) -> f64;
@@ -1300,7 +1294,7 @@ fn test_fast() {
     use std::intrinsics::{fadd_fast, fdiv_fast, fmul_fast, frem_fast, fsub_fast};
 
     #[inline(never)]
-    pub fn test_operations_f16(a: f16, b: f16) {
+    fn test_operations_f16(a: f16, b: f16) {
         // make sure they all map to the correct operation
         unsafe {
             assert_approx_eq!(fadd_fast(a, b), a + b);
@@ -1312,7 +1306,7 @@ fn test_fast() {
     }
 
     #[inline(never)]
-    pub fn test_operations_f32(a: f32, b: f32) {
+    fn test_operations_f32(a: f32, b: f32) {
         // make sure they all map to the correct operation
         unsafe {
             assert_approx_eq!(fadd_fast(a, b), a + b);
@@ -1324,7 +1318,7 @@ fn test_fast() {
     }
 
     #[inline(never)]
-    pub fn test_operations_f64(a: f64, b: f64) {
+    fn test_operations_f64(a: f64, b: f64) {
         // make sure they all map to the correct operation
         unsafe {
             assert_approx_eq!(fadd_fast(a, b), a + b);
@@ -1336,7 +1330,7 @@ fn test_fast() {
     }
 
     #[inline(never)]
-    pub fn test_operations_f128(a: f128, b: f128) {
+    fn test_operations_f128(a: f128, b: f128) {
         // make sure they all map to the correct operation
         unsafe {
             assert_approx_eq!(fadd_fast(a, b), a + b);
@@ -1363,7 +1357,7 @@ fn test_algebraic() {
     };
 
     #[inline(never)]
-    pub fn test_operations_f16(a: f16, b: f16) {
+    fn test_operations_f16(a: f16, b: f16) {
         // make sure they all map to the correct operation
         assert_approx_eq!(fadd_algebraic(a, b), a + b);
         assert_approx_eq!(fsub_algebraic(a, b), a - b);
@@ -1373,7 +1367,7 @@ fn test_algebraic() {
     }
 
     #[inline(never)]
-    pub fn test_operations_f32(a: f32, b: f32) {
+    fn test_operations_f32(a: f32, b: f32) {
         // make sure they all map to the correct operation
         assert_approx_eq!(fadd_algebraic(a, b), a + b);
         assert_approx_eq!(fsub_algebraic(a, b), a - b);
@@ -1383,7 +1377,7 @@ fn test_algebraic() {
     }
 
     #[inline(never)]
-    pub fn test_operations_f64(a: f64, b: f64) {
+    fn test_operations_f64(a: f64, b: f64) {
         // make sure they all map to the correct operation
         assert_approx_eq!(fadd_algebraic(a, b), a + b);
         assert_approx_eq!(fsub_algebraic(a, b), a - b);
@@ -1393,7 +1387,7 @@ fn test_algebraic() {
     }
 
     #[inline(never)]
-    pub fn test_operations_f128(a: f128, b: f128) {
+    fn test_operations_f128(a: f128, b: f128) {
         // make sure they all map to the correct operation
         assert_approx_eq!(fadd_algebraic(a, b), a + b);
         assert_approx_eq!(fsub_algebraic(a, b), a - b);
@@ -1418,12 +1412,12 @@ fn test_fmuladd() {
     // FIXME(f16_f128): add when supported
 
     #[inline(never)]
-    pub fn test_operations_f32(a: f32, b: f32, c: f32) {
+    fn test_operations_f32(a: f32, b: f32, c: f32) {
         assert_approx_eq!(fmuladdf32(a, b, c), a * b + c);
     }
 
     #[inline(never)]
-    pub fn test_operations_f64(a: f64, b: f64, c: f64) {
+    fn test_operations_f64(a: f64, b: f64, c: f64) {
         assert_approx_eq!(fmuladdf64(a, b, c), a * b + c);
     }
 
@@ -1468,10 +1462,10 @@ fn test_non_determinism() {
         };
     }
 
-    pub fn test_operations_f16(a: f16, b: f16) {
+    fn test_operations_f16(a: f16, b: f16) {
         test_operations_f!(a, b);
     }
-    pub fn test_operations_f32(a: f32, b: f32) {
+    fn test_operations_f32(a: f32, b: f32) {
         test_operations_f!(a, b);
         check_nondet(|| a.powf(b));
         check_nondet(|| a.powi(2));
@@ -1507,7 +1501,7 @@ fn test_non_determinism() {
         check_nondet(|| 5.0f32.erf());
         check_nondet(|| 5.0f32.erfc());
     }
-    pub fn test_operations_f64(a: f64, b: f64) {
+    fn test_operations_f64(a: f64, b: f64) {
         test_operations_f!(a, b);
         check_nondet(|| a.powf(b));
         check_nondet(|| a.powi(2));
@@ -1538,7 +1532,7 @@ fn test_non_determinism() {
         check_nondet(|| 5.0f64.erf());
         check_nondet(|| 5.0f64.erfc());
     }
-    pub fn test_operations_f128(a: f128, b: f128) {
+    fn test_operations_f128(a: f128, b: f128) {
         test_operations_f!(a, b);
     }
 
@@ -1548,15 +1542,15 @@ fn test_non_determinism() {
     test_operations_f128(25., 18.);
 
     // SNaN^0 = (1 | NaN)
-    check_nondet(|| f32::powf(SNAN_F32, 0.0).is_nan());
-    check_nondet(|| f64::powf(SNAN_F64, 0.0).is_nan());
+    check_nondet(|| f32::powf(F32_SNAN, 0.0).is_nan());
+    check_nondet(|| f64::powf(F64_SNAN, 0.0).is_nan());
 
     // 1^SNaN = (1 | NaN)
-    check_nondet(|| f32::powf(1.0, SNAN_F32).is_nan());
-    check_nondet(|| f64::powf(1.0, SNAN_F64).is_nan());
+    check_nondet(|| f32::powf(1.0, F32_SNAN).is_nan());
+    check_nondet(|| f64::powf(1.0, F64_SNAN).is_nan());
 
     // same as powf (keep it consistent):
     // x^SNaN = (1 | NaN)
-    check_nondet(|| f32::powi(SNAN_F32, 0).is_nan());
-    check_nondet(|| f64::powi(SNAN_F64, 0).is_nan());
+    check_nondet(|| f32::powi(F32_SNAN, 0).is_nan());
+    check_nondet(|| f64::powi(F64_SNAN, 0).is_nan());
 }

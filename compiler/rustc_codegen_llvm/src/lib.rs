@@ -5,9 +5,6 @@
 //! This API is completely unstable and subject to change.
 
 // tidy-alphabetical-start
-#![allow(internal_features)]
-#![doc(html_root_url = "https://doc.rust-lang.org/nightly/nightly-rustc/")]
-#![doc(rust_logo)]
 #![feature(assert_matches)]
 #![feature(extern_types)]
 #![feature(file_buffered)]
@@ -15,8 +12,8 @@
 #![feature(impl_trait_in_assoc_type)]
 #![feature(iter_intersperse)]
 #![feature(macro_derive)]
-#![feature(rustdoc_internals)]
-#![feature(slice_as_array)]
+#![feature(once_cell_try)]
+#![feature(trim_prefix_suffix)]
 #![feature(try_blocks)]
 // tidy-alphabetical-end
 
@@ -30,7 +27,7 @@ use back::write::{create_informational_target_machine, create_target_machine};
 use context::SimpleCx;
 use errors::ParseTargetMachineConfig;
 use llvm_util::target_config;
-use rustc_ast::expand::allocator::AllocatorKind;
+use rustc_ast::expand::allocator::AllocatorMethod;
 use rustc_codegen_ssa::back::lto::{SerializedModule, ThinModule};
 use rustc_codegen_ssa::back::write::{
     CodegenContext, FatLtoInput, ModuleConfig, TargetMachineFactoryConfig, TargetMachineFactoryFn,
@@ -47,6 +44,8 @@ use rustc_session::Session;
 use rustc_session::config::{OptLevel, OutputFilenames, PrintKind, PrintRequest};
 use rustc_span::Symbol;
 use rustc_target::spec::{RelocModel, TlsModel};
+
+use crate::llvm::ToLlvmBool;
 
 mod abi;
 mod allocator;
@@ -107,14 +106,13 @@ impl ExtraBackendMethods for LlvmCodegenBackend {
         &self,
         tcx: TyCtxt<'tcx>,
         module_name: &str,
-        kind: AllocatorKind,
-        alloc_error_handler_kind: AllocatorKind,
+        methods: &[AllocatorMethod],
     ) -> ModuleLlvm {
         let module_llvm = ModuleLlvm::new_metadata(tcx, module_name);
         let cx =
             SimpleCx::new(module_llvm.llmod(), &module_llvm.llcx, tcx.data_layout.pointer_size());
         unsafe {
-            allocator::codegen(tcx, cx, module_name, kind, alloc_error_handler_kind);
+            allocator::codegen(tcx, cx, module_name, methods);
         }
         module_llvm
     }
@@ -242,11 +240,32 @@ impl CodegenBackend for LlvmCodegenBackend {
 
     fn init(&self, sess: &Session) {
         llvm_util::init(sess); // Make sure llvm is inited
+
+        // autodiff is based on Enzyme, a library which we might not have available, when it was
+        // neither build, nor downloaded via rustup. If autodiff is used, but not available we emit
+        // an early error here and abort compilation.
+        {
+            use rustc_session::config::AutoDiff;
+
+            use crate::back::lto::enable_autodiff_settings;
+            if sess.opts.unstable_opts.autodiff.contains(&AutoDiff::Enable) {
+                match llvm::EnzymeWrapper::get_or_init(&sess.opts.sysroot) {
+                    Ok(_) => {}
+                    Err(llvm::EnzymeLibraryError::NotFound { err }) => {
+                        sess.dcx().emit_fatal(crate::errors::AutoDiffComponentMissing { err });
+                    }
+                    Err(llvm::EnzymeLibraryError::LoadFailed { err }) => {
+                        sess.dcx().emit_fatal(crate::errors::AutoDiffComponentUnavailable { err });
+                    }
+                }
+                enable_autodiff_settings(&sess.opts.unstable_opts.autodiff);
+            }
+        }
     }
 
     fn provide(&self, providers: &mut Providers) {
-        providers.global_backend_features =
-            |tcx, ()| llvm_util::global_llvm_features(tcx.sess, true, false)
+        providers.queries.global_backend_features =
+            |tcx, ()| llvm_util::global_llvm_features(tcx.sess, false)
     }
 
     fn print(&self, req: &PrintRequest, out: &mut String, sess: &Session) {
@@ -310,6 +329,10 @@ impl CodegenBackend for LlvmCodegenBackend {
 
     fn print_version(&self) {
         llvm_util::print_version();
+    }
+
+    fn has_zstd(&self) -> bool {
+        llvm::LLVMRustLLVMHasZstdCompression()
     }
 
     fn target_config(&self, sess: &Session) -> TargetConfig {
@@ -384,7 +407,8 @@ unsafe impl Sync for ModuleLlvm {}
 impl ModuleLlvm {
     fn new(tcx: TyCtxt<'_>, mod_name: &str) -> Self {
         unsafe {
-            let llcx = llvm::LLVMRustContextCreate(tcx.sess.fewer_names());
+            let llcx = llvm::LLVMContextCreate();
+            llvm::LLVMContextSetDiscardValueNames(llcx, tcx.sess.fewer_names().to_llvm_bool());
             let llmod_raw = context::create_module(tcx, llcx, mod_name) as *const _;
             ModuleLlvm {
                 llmod_raw,
@@ -396,7 +420,8 @@ impl ModuleLlvm {
 
     fn new_metadata(tcx: TyCtxt<'_>, mod_name: &str) -> Self {
         unsafe {
-            let llcx = llvm::LLVMRustContextCreate(tcx.sess.fewer_names());
+            let llcx = llvm::LLVMContextCreate();
+            llvm::LLVMContextSetDiscardValueNames(llcx, tcx.sess.fewer_names().to_llvm_bool());
             let llmod_raw = context::create_module(tcx, llcx, mod_name) as *const _;
             ModuleLlvm {
                 llmod_raw,
@@ -427,7 +452,8 @@ impl ModuleLlvm {
         dcx: DiagCtxtHandle<'_>,
     ) -> Self {
         unsafe {
-            let llcx = llvm::LLVMRustContextCreate(cgcx.fewer_names);
+            let llcx = llvm::LLVMContextCreate();
+            llvm::LLVMContextSetDiscardValueNames(llcx, cgcx.fewer_names.to_llvm_bool());
             let llmod_raw = back::lto::parse_module(llcx, name, buffer, dcx);
             let tm = ModuleLlvm::tm_from_cgcx(cgcx, name.to_str().unwrap(), dcx);
 

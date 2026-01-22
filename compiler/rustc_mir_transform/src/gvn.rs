@@ -129,6 +129,7 @@ impl<'tcx> crate::MirPass<'tcx> for GVN {
         let ssa = SsaLocals::new(tcx, body, typing_env);
         // Clone dominators because we need them while mutating the body.
         let dominators = body.basic_blocks.dominators().clone();
+        let maybe_loop_headers = loops::maybe_loop_headers(body);
 
         let arena = DroplessArena::default();
         let mut state =
@@ -141,6 +142,11 @@ impl<'tcx> crate::MirPass<'tcx> for GVN {
 
         let reverse_postorder = body.basic_blocks.reverse_postorder().to_vec();
         for bb in reverse_postorder {
+            // N.B. With loops, reverse postorder cannot produce a valid topological order.
+            // A statement or terminator from inside the loop, that is not processed yet, may have performed an indirect write.
+            if maybe_loop_headers.contains(bb) {
+                state.invalidate_derefs();
+            }
             let data = &mut body.basic_blocks.as_mut_preserves_cfg()[bb];
             state.visit_basic_block_data(bb, data);
         }
@@ -242,7 +248,7 @@ enum Value<'a, 'tcx> {
     Discriminant(VnIndex),
 
     // Operations.
-    NullaryOp(NullOp<'tcx>, Ty<'tcx>),
+    RuntimeChecks(RuntimeChecks),
     UnaryOp(UnOp, VnIndex),
     BinaryOp(BinOp, VnIndex, VnIndex),
     Cast {
@@ -364,7 +370,10 @@ struct VnState<'body, 'a, 'tcx> {
     rev_locals: IndexVec<VnIndex, SmallVec<[Local; 1]>>,
     values: ValueSet<'a, 'tcx>,
     /// Values evaluated as constants if possible.
-    evaluated: IndexVec<VnIndex, Option<OpTy<'tcx>>>,
+    /// - `None` are values not computed yet;
+    /// - `Some(None)` are values for which computation has failed;
+    /// - `Some(Some(op))` are successful computations.
+    evaluated: IndexVec<VnIndex, Option<Option<&'a OpTy<'tcx>>>>,
     /// Cache the deref values.
     derefs: Vec<VnIndex>,
     ssa: &'body SsaLocals,
@@ -411,13 +420,25 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
         self.ecx.typing_env()
     }
 
+    fn insert_unique(
+        &mut self,
+        ty: Ty<'tcx>,
+        value: impl FnOnce(VnOpaque) -> Value<'a, 'tcx>,
+    ) -> VnIndex {
+        let index = self.values.insert_unique(ty, value);
+        let _index = self.evaluated.push(None);
+        debug_assert_eq!(index, _index);
+        let _index = self.rev_locals.push(SmallVec::new());
+        debug_assert_eq!(index, _index);
+        index
+    }
+
     #[instrument(level = "trace", skip(self), ret)]
     fn insert(&mut self, ty: Ty<'tcx>, value: Value<'a, 'tcx>) -> VnIndex {
         let (index, new) = self.values.insert(ty, value);
         if new {
             // Grow `evaluated` and `rev_locals` here to amortize the allocations.
-            let evaluated = self.eval_to_const(index);
-            let _index = self.evaluated.push(evaluated);
+            let _index = self.evaluated.push(None);
             debug_assert_eq!(index, _index);
             let _index = self.rev_locals.push(SmallVec::new());
             debug_assert_eq!(index, _index);
@@ -429,11 +450,8 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
     /// from all the others.
     #[instrument(level = "trace", skip(self), ret)]
     fn new_opaque(&mut self, ty: Ty<'tcx>) -> VnIndex {
-        let index = self.values.insert_unique(ty, Value::Opaque);
-        let _index = self.evaluated.push(None);
-        debug_assert_eq!(index, _index);
-        let _index = self.rev_locals.push(SmallVec::new());
-        debug_assert_eq!(index, _index);
+        let index = self.insert_unique(ty, Value::Opaque);
+        self.evaluated[index] = Some(None);
         index
     }
 
@@ -462,44 +480,29 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             projection.map(|proj| proj.try_map(|index| self.locals[index], |ty| ty).ok_or(()));
         let projection = self.arena.try_alloc_from_iter(projection).ok()?;
 
-        let index = self.values.insert_unique(ty, |provenance| Value::Address {
+        let index = self.insert_unique(ty, |provenance| Value::Address {
             base,
             projection,
             kind,
             provenance,
         });
-        let evaluated = self.eval_to_const(index);
-        let _index = self.evaluated.push(evaluated);
-        debug_assert_eq!(index, _index);
-        let _index = self.rev_locals.push(SmallVec::new());
-        debug_assert_eq!(index, _index);
-
         Some(index)
     }
 
     #[instrument(level = "trace", skip(self), ret)]
     fn insert_constant(&mut self, value: Const<'tcx>) -> VnIndex {
-        let (index, new) = if value.is_deterministic() {
+        if value.is_deterministic() {
             // The constant is deterministic, no need to disambiguate.
             let constant = Value::Constant { value, disambiguator: None };
-            self.values.insert(value.ty(), constant)
+            self.insert(value.ty(), constant)
         } else {
             // Multiple mentions of this constant will yield different values,
             // so assign a different `disambiguator` to ensure they do not get the same `VnIndex`.
-            let index = self.values.insert_unique(value.ty(), |disambiguator| Value::Constant {
+            self.insert_unique(value.ty(), |disambiguator| Value::Constant {
                 value,
                 disambiguator: Some(disambiguator),
-            });
-            (index, true)
-        };
-        if new {
-            let evaluated = self.eval_to_const(index);
-            let _index = self.evaluated.push(evaluated);
-            debug_assert_eq!(index, _index);
-            let _index = self.rev_locals.push(SmallVec::new());
-            debug_assert_eq!(index, _index);
+            })
         }
-        index
     }
 
     #[inline]
@@ -551,7 +554,7 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
     }
 
     #[instrument(level = "trace", skip(self), ret)]
-    fn eval_to_const(&mut self, value: VnIndex) -> Option<OpTy<'tcx>> {
+    fn eval_to_const_inner(&mut self, value: VnIndex) -> Option<OpTy<'tcx>> {
         use Value::*;
         let ty = self.ty(value);
         // Avoid computing layouts inside a coroutine, as that can cause cycles.
@@ -564,48 +567,61 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             _ if ty.is_zst() => ImmTy::uninit(ty).into(),
 
             Opaque(_) => return None,
-            // Do not bother evaluating repeat expressions. This would uselessly consume memory.
-            Repeat(..) => return None,
+            // Keep runtime check constants as symbolic.
+            RuntimeChecks(..) => return None,
 
-            Constant { ref value, disambiguator: _ } => {
-                self.ecx.eval_mir_constant(value, DUMMY_SP, None).discard_err()?
-            }
-            Aggregate(variant, ref fields) => {
-                let fields = fields
-                    .iter()
-                    .map(|&f| self.evaluated[f].as_ref())
-                    .collect::<Option<Vec<_>>>()?;
-                let variant = if ty.ty.is_enum() { Some(variant) } else { None };
-                if matches!(ty.backend_repr, BackendRepr::Scalar(..) | BackendRepr::ScalarPair(..))
-                {
-                    let dest = self.ecx.allocate(ty, MemoryKind::Stack).discard_err()?;
-                    let variant_dest = if let Some(variant) = variant {
-                        self.ecx.project_downcast(&dest, variant).discard_err()?
-                    } else {
-                        dest.clone()
-                    };
-                    for (field_index, op) in fields.into_iter().enumerate() {
-                        let field_dest = self
-                            .ecx
-                            .project_field(&variant_dest, FieldIdx::from_usize(field_index))
-                            .discard_err()?;
-                        self.ecx.copy_op(op, &field_dest).discard_err()?;
-                    }
-                    self.ecx
-                        .write_discriminant(variant.unwrap_or(FIRST_VARIANT), &dest)
-                        .discard_err()?;
-                    self.ecx
-                        .alloc_mark_immutable(dest.ptr().provenance.unwrap().alloc_id())
-                        .discard_err()?;
-                    dest.into()
+            // In general, evaluating repeat expressions just consumes a lot of memory.
+            // But in the special case that the element is just Immediate::Uninit, we can evaluate
+            // it without extra memory! If we don't propagate uninit values like this, LLVM can get
+            // very confused: https://github.com/rust-lang/rust/issues/139355
+            Repeat(value, _count) => {
+                let value = self.eval_to_const(value)?;
+                if value.is_immediate_uninit() {
+                    ImmTy::uninit(ty).into()
                 } else {
                     return None;
                 }
             }
+            Constant { ref value, disambiguator: _ } => {
+                self.ecx.eval_mir_constant(value, DUMMY_SP, None).discard_err()?
+            }
+            Aggregate(variant, ref fields) => {
+                let fields =
+                    fields.iter().map(|&f| self.eval_to_const(f)).collect::<Option<Vec<_>>>()?;
+                let variant = if ty.ty.is_enum() { Some(variant) } else { None };
+                let (BackendRepr::Scalar(..) | BackendRepr::ScalarPair(..)) = ty.backend_repr
+                else {
+                    return None;
+                };
+                let dest = self.ecx.allocate(ty, MemoryKind::Stack).discard_err()?;
+                let variant_dest = if let Some(variant) = variant {
+                    self.ecx.project_downcast(&dest, variant).discard_err()?
+                } else {
+                    dest.clone()
+                };
+                for (field_index, op) in fields.into_iter().enumerate() {
+                    let field_dest = self
+                        .ecx
+                        .project_field(&variant_dest, FieldIdx::from_usize(field_index))
+                        .discard_err()?;
+                    self.ecx.copy_op(op, &field_dest).discard_err()?;
+                }
+                self.ecx
+                    .write_discriminant(variant.unwrap_or(FIRST_VARIANT), &dest)
+                    .discard_err()?;
+                self.ecx
+                    .alloc_mark_immutable(dest.ptr().provenance.unwrap().alloc_id())
+                    .discard_err()?;
+                dest.into()
+            }
             Union(active_field, field) => {
-                let field = self.evaluated[field].as_ref()?;
-                if matches!(ty.backend_repr, BackendRepr::Scalar(..) | BackendRepr::ScalarPair(..))
-                {
+                let field = self.eval_to_const(field)?;
+                if field.layout.layout.is_zst() {
+                    ImmTy::from_immediate(Immediate::Uninit, ty).into()
+                } else if matches!(
+                    ty.backend_repr,
+                    BackendRepr::Scalar(..) | BackendRepr::ScalarPair(..)
+                ) {
                     let dest = self.ecx.allocate(ty, MemoryKind::Stack).discard_err()?;
                     let field_dest = self.ecx.project_field(&dest, active_field).discard_err()?;
                     self.ecx.copy_op(field, &field_dest).discard_err()?;
@@ -618,8 +634,8 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
                 }
             }
             RawPtr { pointer, metadata } => {
-                let pointer = self.evaluated[pointer].as_ref()?;
-                let metadata = self.evaluated[metadata].as_ref()?;
+                let pointer = self.eval_to_const(pointer)?;
+                let metadata = self.eval_to_const(metadata)?;
 
                 // Pointers don't have fields, so don't `project_field` them.
                 let data = self.ecx.read_pointer(pointer).discard_err()?;
@@ -633,7 +649,7 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             }
 
             Projection(base, elem) => {
-                let base = self.evaluated[base].as_ref()?;
+                let base = self.eval_to_const(base)?;
                 // `Index` by constants should have been replaced by `ConstantIndex` by
                 // `simplify_place_projection`.
                 let elem = elem.try_map(|_| None, |()| ty.ty)?;
@@ -642,7 +658,7 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             Address { base, projection, .. } => {
                 debug_assert!(!projection.contains(&ProjectionElem::Deref));
                 let pointer = match base {
-                    AddressBase::Deref(pointer) => self.evaluated[pointer].as_ref()?,
+                    AddressBase::Deref(pointer) => self.eval_to_const(pointer)?,
                     // We have no stack to point to.
                     AddressBase::Local(_) => return None,
                 };
@@ -658,61 +674,41 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             }
 
             Discriminant(base) => {
-                let base = self.evaluated[base].as_ref()?;
+                let base = self.eval_to_const(base)?;
                 let variant = self.ecx.read_discriminant(base).discard_err()?;
                 let discr_value =
                     self.ecx.discriminant_for_variant(base.layout.ty, variant).discard_err()?;
                 discr_value.into()
             }
-            NullaryOp(null_op, arg_ty) => {
-                let arg_layout = self.ecx.layout_of(arg_ty).ok()?;
-                if let NullOp::SizeOf | NullOp::AlignOf = null_op
-                    && arg_layout.is_unsized()
-                {
-                    return None;
-                }
-                let val = match null_op {
-                    NullOp::SizeOf => arg_layout.size.bytes(),
-                    NullOp::AlignOf => arg_layout.align.bytes(),
-                    NullOp::OffsetOf(fields) => self
-                        .ecx
-                        .tcx
-                        .offset_of_subfield(self.typing_env(), arg_layout, fields.iter())
-                        .bytes(),
-                    NullOp::UbChecks => return None,
-                    NullOp::ContractChecks => return None,
-                };
-                ImmTy::from_uint(val, ty).into()
-            }
             UnaryOp(un_op, operand) => {
-                let operand = self.evaluated[operand].as_ref()?;
+                let operand = self.eval_to_const(operand)?;
                 let operand = self.ecx.read_immediate(operand).discard_err()?;
                 let val = self.ecx.unary_op(un_op, &operand).discard_err()?;
                 val.into()
             }
             BinaryOp(bin_op, lhs, rhs) => {
-                let lhs = self.evaluated[lhs].as_ref()?;
+                let lhs = self.eval_to_const(lhs)?;
+                let rhs = self.eval_to_const(rhs)?;
                 let lhs = self.ecx.read_immediate(lhs).discard_err()?;
-                let rhs = self.evaluated[rhs].as_ref()?;
                 let rhs = self.ecx.read_immediate(rhs).discard_err()?;
                 let val = self.ecx.binary_op(bin_op, &lhs, &rhs).discard_err()?;
                 val.into()
             }
             Cast { kind, value } => match kind {
                 CastKind::IntToInt | CastKind::IntToFloat => {
-                    let value = self.evaluated[value].as_ref()?;
+                    let value = self.eval_to_const(value)?;
                     let value = self.ecx.read_immediate(value).discard_err()?;
                     let res = self.ecx.int_to_int_or_float(&value, ty).discard_err()?;
                     res.into()
                 }
                 CastKind::FloatToFloat | CastKind::FloatToInt => {
-                    let value = self.evaluated[value].as_ref()?;
+                    let value = self.eval_to_const(value)?;
                     let value = self.ecx.read_immediate(value).discard_err()?;
                     let res = self.ecx.float_to_float_or_int(&value, ty).discard_err()?;
                     res.into()
                 }
                 CastKind::Transmute | CastKind::Subtype => {
-                    let value = self.evaluated[value].as_ref()?;
+                    let value = self.eval_to_const(value)?;
                     // `offset` for immediates generally only supports projections that match the
                     // type of the immediate. However, as a HACK, we exploit that it can also do
                     // limited transmutes: it only works between types with the same layout, and
@@ -724,12 +720,12 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
                                     && !matches!(s1.primitive(), Primitive::Pointer(..))
                             }
                             (BackendRepr::ScalarPair(a1, b1), BackendRepr::ScalarPair(a2, b2)) => {
-                                a1.size(&self.ecx) == a2.size(&self.ecx) &&
-                                b1.size(&self.ecx) == b2.size(&self.ecx) &&
-                                // The alignment of the second component determines its offset, so that also needs to match.
-                                b1.align(&self.ecx) == b2.align(&self.ecx) &&
-                                // None of the inputs may be a pointer.
-                                !matches!(a1.primitive(), Primitive::Pointer(..))
+                                a1.size(&self.ecx) == a2.size(&self.ecx)
+                                    && b1.size(&self.ecx) == b2.size(&self.ecx)
+                                    // The alignment of the second component determines its offset, so that also needs to match.
+                                    && b1.align(&self.ecx) == b2.align(&self.ecx)
+                                    // None of the inputs may be a pointer.
+                                    && !matches!(a1.primitive(), Primitive::Pointer(..))
                                     && !matches!(b1.primitive(), Primitive::Pointer(..))
                             }
                             _ => false,
@@ -741,7 +737,7 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
                     value.offset(Size::ZERO, ty, &self.ecx).discard_err()?
                 }
                 CastKind::PointerCoercion(ty::adjustment::PointerCoercion::Unsize, _) => {
-                    let src = self.evaluated[value].as_ref()?;
+                    let src = self.eval_to_const(value)?;
                     let dest = self.ecx.allocate(ty, MemoryKind::Stack).discard_err()?;
                     self.ecx.unsize_into(src, ty, &dest).discard_err()?;
                     self.ecx
@@ -750,13 +746,13 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
                     dest.into()
                 }
                 CastKind::FnPtrToPtr | CastKind::PtrToPtr => {
-                    let src = self.evaluated[value].as_ref()?;
+                    let src = self.eval_to_const(value)?;
                     let src = self.ecx.read_immediate(src).discard_err()?;
                     let ret = self.ecx.ptr_to_ptr(&src, ty).discard_err()?;
                     ret.into()
                 }
                 CastKind::PointerCoercion(ty::adjustment::PointerCoercion::UnsafeFnPointer, _) => {
-                    let src = self.evaluated[value].as_ref()?;
+                    let src = self.eval_to_const(value)?;
                     let src = self.ecx.read_immediate(src).discard_err()?;
                     ImmTy::from_immediate(*src, ty).into()
                 }
@@ -764,6 +760,15 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             },
         };
         Some(op)
+    }
+
+    fn eval_to_const(&mut self, index: VnIndex) -> Option<&'a OpTy<'tcx>> {
+        if let Some(op) = self.evaluated[index] {
+            return op;
+        }
+        let op = self.eval_to_const_inner(index);
+        self.evaluated[index] = Some(self.arena.alloc(op).as_ref());
+        self.evaluated[index].unwrap()
     }
 
     /// Represent the *value* we obtain by dereferencing an `Address` value.
@@ -901,7 +906,7 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             if let ProjectionElem::Index(idx_local) = elem
                 && let Some(idx) = self.locals[idx_local]
             {
-                if let Some(offset) = self.evaluated[idx].as_ref()
+                if let Some(offset) = self.eval_to_const(idx)
                     && let Some(offset) = self.ecx.read_target_usize(offset).discard_err()
                     && let Some(min_length) = offset.checked_add(1)
                 {
@@ -916,7 +921,7 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             }
         }
 
-        if projection.is_owned() {
+        if Cow::is_owned(&projection) {
             place.projection = self.tcx.mk_place_elems(&projection);
         }
 
@@ -1000,11 +1005,16 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
         location: Location,
     ) -> Option<VnIndex> {
         match *operand {
+            Operand::RuntimeChecks(c) => {
+                Some(self.insert(self.tcx.types.bool, Value::RuntimeChecks(c)))
+            }
             Operand::Constant(ref constant) => Some(self.insert_constant(constant.const_)),
             Operand::Copy(ref mut place) | Operand::Move(ref mut place) => {
                 let value = self.simplify_place_value(place, location)?;
                 if let Some(const_) = self.try_as_constant(value) {
                     *operand = Operand::Constant(Box::new(const_));
+                } else if let Value::RuntimeChecks(c) = self.get(value) {
+                    *operand = Operand::RuntimeChecks(c);
                 }
                 Some(value)
             }
@@ -1021,19 +1031,12 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
         let value = match *rvalue {
             // Forward values.
             Rvalue::Use(ref mut operand) => return self.simplify_operand(operand, location),
-            Rvalue::CopyForDeref(place) => {
-                let mut operand = Operand::Copy(place);
-                let val = self.simplify_operand(&mut operand, location);
-                *rvalue = Rvalue::Use(operand);
-                return val;
-            }
 
             // Roots.
             Rvalue::Repeat(ref mut op, amount) => {
                 let op = self.simplify_operand(op, location)?;
                 Value::Repeat(op, amount)
             }
-            Rvalue::NullaryOp(op, ty) => Value::NullaryOp(op, ty),
             Rvalue::Aggregate(..) => return self.simplify_aggregate(lhs, rvalue, location),
             Rvalue::Ref(_, borrow_kind, ref mut place) => {
                 self.simplify_place_projection(place, location);
@@ -1067,7 +1070,10 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             }
 
             // Unsupported values.
-            Rvalue::ThreadLocalRef(..) | Rvalue::ShallowInitBox(..) => return None,
+            Rvalue::ThreadLocalRef(..) => return None,
+            Rvalue::CopyForDeref(_) | Rvalue::ShallowInitBox(..) => {
+                bug!("forbidden in runtime MIR: {rvalue:?}")
+            }
         };
         let ty = rvalue.ty(self.local_decls, self.tcx);
         Some(self.insert(ty, value))
@@ -1389,8 +1395,8 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
 
         let layout = self.ecx.layout_of(lhs_ty).ok()?;
 
-        let as_bits = |value: VnIndex| {
-            let constant = self.evaluated[value].as_ref()?;
+        let mut as_bits = |value: VnIndex| {
+            let constant = self.eval_to_const(value)?;
             if layout.backend_repr.is_scalar() {
                 let scalar = self.ecx.read_scalar(constant).discard_err()?;
                 scalar.to_bits(constant.layout.size).discard_err()
@@ -1513,7 +1519,7 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             return Some(value);
         }
 
-        if let CastKind::PointerCoercion(ReifyFnPointer | ClosureFnPointer(_), _) = kind {
+        if let CastKind::PointerCoercion(ReifyFnPointer(_) | ClosureFnPointer(_), _) = kind {
             // Each reification of a generic fn may get a different pointer.
             // Do not try to merge them.
             return Some(self.new_opaque(to));
@@ -1657,7 +1663,9 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             BackendRepr::ScalarPair(a, b) => {
                 !a.is_always_valid(&self.ecx) || !b.is_always_valid(&self.ecx)
             }
-            BackendRepr::SimdVector { .. } | BackendRepr::Memory { .. } => false,
+            BackendRepr::SimdVector { .. }
+            | BackendRepr::ScalableVector { .. }
+            | BackendRepr::Memory { .. } => false,
         }
     }
 
@@ -1704,7 +1712,11 @@ fn op_to_prop_const<'tcx>(
 
     // Do not synthetize too large constants. Codegen will just memcpy them, which we'd like to
     // avoid.
-    if !matches!(op.layout.backend_repr, BackendRepr::Scalar(..) | BackendRepr::ScalarPair(..)) {
+    // But we *do* want to synthesize any size constant if it is entirely uninit because that
+    // benefits codegen, which has special handling for them.
+    if !op.is_immediate_uninit()
+        && !matches!(op.layout.backend_repr, BackendRepr::Scalar(..) | BackendRepr::ScalarPair(..))
+    {
         return None;
     }
 
@@ -1772,6 +1784,8 @@ impl<'tcx> VnState<'_, '_, 'tcx> {
     fn try_as_operand(&mut self, index: VnIndex, location: Location) -> Option<Operand<'tcx>> {
         if let Some(const_) = self.try_as_constant(index) {
             Some(Operand::Constant(Box::new(const_)))
+        } else if let Value::RuntimeChecks(c) = self.get(index) {
+            Some(Operand::RuntimeChecks(c))
         } else if let Some(place) = self.try_as_place(index, location, false) {
             self.reused_locals.insert(place.local);
             Some(Operand::Copy(place))
@@ -1790,7 +1804,7 @@ impl<'tcx> VnState<'_, '_, 'tcx> {
             return Some(ConstOperand { span: DUMMY_SP, user_ty: None, const_: value });
         }
 
-        let op = self.evaluated[index].as_ref()?;
+        let op = self.eval_to_const(index)?;
         if op.layout.is_unsized() {
             // Do not attempt to propagate unsized locals.
             return None;
@@ -1919,13 +1933,8 @@ impl<'tcx> MutVisitor<'tcx> for VnState<'_, '_, 'tcx> {
                 self.assign(local, opaque);
             }
         }
-        // Function calls and ASM may invalidate (nested) derefs. We must handle them carefully.
-        // Currently, only preserving derefs for trivial terminators like SwitchInt and Goto.
-        let safe_to_preserve_derefs = matches!(
-            terminator.kind,
-            TerminatorKind::SwitchInt { .. } | TerminatorKind::Goto { .. }
-        );
-        if !safe_to_preserve_derefs {
+        // Terminators that can write to memory may invalidate (nested) derefs.
+        if terminator.kind.can_write_to_memory() {
             self.invalidate_derefs();
         }
         self.super_terminator(terminator, location);

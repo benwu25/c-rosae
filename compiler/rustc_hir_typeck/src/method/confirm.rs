@@ -7,19 +7,19 @@ use rustc_hir_analysis::hir_ty_lowering::generics::{
     check_generic_arg_count_for_call, lower_generic_args,
 };
 use rustc_hir_analysis::hir_ty_lowering::{
-    FeedConstTy, GenericArgsLowerer, HirTyLowerer, IsMethodCall, RegionInferReason,
+    GenericArgsLowerer, HirTyLowerer, IsMethodCall, RegionInferReason,
 };
 use rustc_infer::infer::{
     BoundRegionConversionTime, DefineOpaqueTypes, InferOk, RegionVariableOrigin,
 };
-use rustc_lint::builtin::SUPERTRAIT_ITEM_SHADOWING_USAGE;
+use rustc_lint::builtin::RESOLVING_TO_ITEMS_SHADOWING_SUPERTRAIT_ITEMS;
 use rustc_middle::traits::ObligationCauseCode;
 use rustc_middle::ty::adjustment::{
     Adjust, Adjustment, AllowTwoPhase, AutoBorrow, AutoBorrowMutability, PointerCoercion,
 };
 use rustc_middle::ty::{
-    self, GenericArgs, GenericArgsRef, GenericParamDefKind, Ty, TyCtxt, TypeFoldable,
-    TypeVisitableExt, UserArgs,
+    self, AssocContainer, GenericArgs, GenericArgsRef, GenericParamDefKind, Ty, TyCtxt,
+    TypeFoldable, TypeVisitableExt, UserArgs,
 };
 use rustc_middle::{bug, span_bug};
 use rustc_span::{DUMMY_SP, Span};
@@ -272,7 +272,7 @@ impl<'a, 'tcx> ConfirmContext<'a, 'tcx> {
             probe::InherentImplPick => {
                 let impl_def_id = pick.item.container_id(self.tcx);
                 assert!(
-                    self.tcx.impl_trait_ref(impl_def_id).is_none(),
+                    matches!(pick.item.container, AssocContainer::InherentImpl),
                     "impl {impl_def_id:?} is not an inherent impl"
                 );
                 self.fresh_args_for_item(self.span, impl_def_id)
@@ -447,7 +447,10 @@ impl<'a, 'tcx> ConfirmContext<'a, 'tcx> {
                         // We handle the ambig portions of `ConstArg` in the match arms below
                         .lower_const_arg(
                             ct.as_unambig_ct(),
-                            FeedConstTy::Param(param.def_id, preceding_args),
+                            self.cfcx
+                                .tcx
+                                .type_of(param.def_id)
+                                .instantiate(self.cfcx.tcx, preceding_args),
                         )
                         .into(),
                     (GenericParamDefKind::Const { .. }, GenericArg::Infer(inf)) => {
@@ -709,7 +712,7 @@ impl<'a, 'tcx> ConfirmContext<'a, 'tcx> {
         };
 
         self.tcx.emit_node_span_lint(
-            SUPERTRAIT_ITEM_SHADOWING_USAGE,
+            RESOLVING_TO_ITEMS_SHADOWING_SUPERTRAIT_ITEMS,
             segment.hir_id,
             segment.ident.span,
             SupertraitItemShadowing { shadower, shadowee, item: segment.ident.name, subtrait },

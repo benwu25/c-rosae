@@ -59,7 +59,7 @@ fn check_validity_requirement_strict<'tcx>(
     if kind == ValidityRequirement::Zero {
         cx.write_bytes_ptr(
             allocated.ptr(),
-            std::iter::repeat(0_u8).take(ty.layout.size().bytes_usize()),
+            std::iter::repeat_n(0_u8, ty.layout.size().bytes_usize()),
         )
         .expect("failed to write bytes for zero valid check");
     }
@@ -119,7 +119,9 @@ fn check_validity_requirement_lax<'tcx>(
             }
             BackendRepr::SimdVector { element: s, count } => count == 0 || scalar_allows_raw_init(s),
             BackendRepr::Memory { .. } => true, // Fields are checked below.
+            BackendRepr::ScalableVector { element, .. } => scalar_allows_raw_init(element),
         };
+
     if !valid {
         // This is definitely not okay.
         return Ok(false);

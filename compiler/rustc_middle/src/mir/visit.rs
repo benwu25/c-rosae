@@ -445,13 +445,6 @@ macro_rules! make_mir_visitor {
                             location
                         );
                     }
-                    StatementKind::Deinit(place) => {
-                        self.visit_place(
-                            place,
-                            PlaceContext::MutatingUse(MutatingUseContext::Deinit),
-                            location
-                        )
-                    }
                     StatementKind::StorageLive(local) => {
                         self.visit_local(
                             $(& $mutability)? *local,
@@ -782,10 +775,6 @@ macro_rules! make_mir_visitor {
                         );
                     }
 
-                    Rvalue::NullaryOp(_op, ty) => {
-                        self.visit_ty($(& $mutability)? *ty, TyContext::Location(location));
-                    }
-
                     Rvalue::Aggregate(kind, operands) => {
                         let kind = &$($mutability)? **kind;
                         match kind {
@@ -856,6 +845,7 @@ macro_rules! make_mir_visitor {
                     Operand::Constant(constant) => {
                         self.visit_const_operand(constant, location);
                     }
+                    Operand::RuntimeChecks(_) => {}
                 }
             }
 
@@ -981,10 +971,7 @@ macro_rules! make_mir_visitor {
                 self.visit_span($(& $mutability)? *span);
                 match const_ {
                     Const::Ty(_, ct) => self.visit_ty_const($(&$mutability)? *ct, location),
-                    Const::Val(_, ty) => {
-                        self.visit_ty($(& $mutability)? *ty, TyContext::Location(location));
-                    }
-                    Const::Unevaluated(_, ty) => {
+                    Const::Val(_, ty) | Const::Unevaluated(_, ty) => {
                         self.visit_ty($(& $mutability)? *ty, TyContext::Location(location));
                     }
                 }
@@ -1098,6 +1085,10 @@ macro_rules! super_body {
             }
         }
 
+        for var_debug_info in &$($mutability)? $body.var_debug_info {
+            $self.visit_var_debug_info(var_debug_info);
+        }
+
         for (bb, data) in basic_blocks_iter!($body, $($mutability, $invalidate)?) {
             $self.visit_basic_block_data(bb, data);
         }
@@ -1125,10 +1116,6 @@ macro_rules! super_body {
             $self.visit_user_type_annotation(
                 index, annotation
             );
-        }
-
-        for var_debug_info in &$($mutability)? $body.var_debug_info {
-            $self.visit_var_debug_info(var_debug_info);
         }
 
         $self.visit_span($(& $mutability)? $body.span);
@@ -1372,8 +1359,6 @@ pub enum MutatingUseContext {
     Store,
     /// Appears on `SetDiscriminant`
     SetDiscriminant,
-    /// Appears on `Deinit`
-    Deinit,
     /// Output operand of an inline assembly block.
     AsmOutput,
     /// Destination of a call.

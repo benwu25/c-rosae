@@ -32,7 +32,7 @@ pub(crate) struct LoweredConstraints<'tcx> {
     pub(crate) type_tests: Vec<TypeTest<'tcx>>,
     pub(crate) liveness_constraints: LivenessValues,
     pub(crate) universe_causes: FxIndexMap<UniverseIndex, UniverseInfo<'tcx>>,
-    pub(crate) placeholder_indices: PlaceholderIndices,
+    pub(crate) placeholder_indices: PlaceholderIndices<'tcx>,
 }
 
 impl<'d, 'tcx, A: scc::Annotation> SccAnnotations<'d, 'tcx, A> {
@@ -344,7 +344,7 @@ pub(crate) fn compute_sccs_applying_placeholder_outlives_constraints<'tcx>(
     }
 }
 
-fn rewrite_placeholder_outlives<'tcx>(
+pub(crate) fn rewrite_placeholder_outlives<'tcx>(
     sccs: &Sccs<RegionVid, ConstraintSccIndex>,
     annotations: &SccAnnotations<'_, '_, RegionTracker>,
     fr_static: RegionVid,

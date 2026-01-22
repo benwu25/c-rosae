@@ -7,6 +7,7 @@ use llvm::prebuilt_llvm_config;
 use super::*;
 use crate::Flags;
 use crate::core::build_steps::doc::DocumentationFormat;
+use crate::core::builder::cli_paths::PATH_REMAP;
 use crate::core::config::Config;
 use crate::utils::cache::ExecutedStep;
 use crate::utils::helpers::get_host_target;
@@ -345,7 +346,7 @@ fn test_test_coverage() {
         let mut cache = run_build(&config.paths.clone(), config);
 
         let modes =
-            cache.all::<test::Coverage>().iter().map(|(step, ())| step.mode).collect::<Vec<_>>();
+            cache.inspect_all_steps_of_type::<test::Coverage, _>(|step, ()| step.mode.as_str());
         assert_eq!(modes, expected);
     }
 }
@@ -514,7 +515,9 @@ mod snapshot {
     };
     use crate::core::builder::{Builder, Kind, StepDescription, StepMetadata};
     use crate::core::config::TargetSelection;
-    use crate::core::config::toml::rust::with_lld_opt_in_targets;
+    use crate::core::config::toml::target::{
+        DefaultLinuxLinkerOverride, with_default_linux_linker_overrides,
+    };
     use crate::utils::cache::Cache;
     use crate::utils::helpers::get_host_target;
     use crate::utils::tests::{ConfigBuilder, TestCtx};
@@ -782,9 +785,11 @@ mod snapshot {
 
     #[test]
     fn build_compiler_lld_opt_in() {
-        with_lld_opt_in_targets(vec![host_target()], || {
-            let ctx = TestCtx::new();
-            insta::assert_snapshot!(
+        with_default_linux_linker_overrides(
+            [(host_target(), DefaultLinuxLinkerOverride::SelfContainedLldCc)].into(),
+            || {
+                let ctx = TestCtx::new();
+                insta::assert_snapshot!(
                 ctx.config("build")
                     .path("compiler")
                     .render_steps(), @r"
@@ -792,7 +797,26 @@ mod snapshot {
             [build] rustc 0 <host> -> rustc 1 <host>
             [build] rustc 0 <host> -> LldWrapper 1 <host>
             ");
-        });
+            },
+        );
+    }
+
+    #[test]
+    fn build_compiler_lld_opt_in_lld_disabled() {
+        with_default_linux_linker_overrides(
+            [(host_target(), DefaultLinuxLinkerOverride::SelfContainedLldCc)].into(),
+            || {
+                let ctx = TestCtx::new();
+                insta::assert_snapshot!(
+                ctx.config("build")
+                    .path("compiler")
+                    .args(&["--set", "rust.lld=false"])
+                    .render_steps(), @r"
+                [build] llvm <host>
+                [build] rustc 0 <host> -> rustc 1 <host>
+                ");
+            },
+        );
     }
 
     #[test]
@@ -2075,7 +2099,7 @@ mod snapshot {
         [test] compiletest-debuginfo 1 <host>
         [test] compiletest-ui-fulldeps 1 <host>
         [build] rustdoc 1 <host>
-        [test] compiletest-rustdoc 1 <host>
+        [test] compiletest-rustdoc-html 1 <host>
         [test] compiletest-coverage-run-rustdoc 1 <host>
         [test] compiletest-pretty 1 <host>
         [build] rustc 1 <host> -> std 1 <host>
@@ -2145,7 +2169,7 @@ mod snapshot {
         let ctx = TestCtx::new();
         insta::assert_snapshot!(
             ctx.config("test")
-                .args(&["ui", "ui-fulldeps", "run-make", "rustdoc", "rustdoc-gui", "incremental"])
+                .args(&["ui", "ui-fulldeps", "run-make", "rustdoc-html", "rustdoc-gui", "incremental"])
                 .render_steps(), @r"
         [build] llvm <host>
         [build] rustc 0 <host> -> rustc 1 <host>
@@ -2156,11 +2180,10 @@ mod snapshot {
         [build] rustc 0 <host> -> RunMakeSupport 1 <host>
         [build] rustdoc 1 <host>
         [test] compiletest-run-make 1 <host>
-        [test] compiletest-rustdoc 1 <host>
+        [test] compiletest-rustdoc-html 1 <host>
         [build] rustc 0 <host> -> RustdocGUITest 1 <host>
         [test] rustdoc-gui 1 <host>
         [test] compiletest-incremental 1 <host>
-        [build] rustc 1 <host> -> rustc 2 <host>
         ");
     }
 
@@ -2169,7 +2192,7 @@ mod snapshot {
         let ctx = TestCtx::new();
         insta::assert_snapshot!(
             ctx.config("test")
-                .args(&["ui", "ui-fulldeps", "run-make", "rustdoc", "rustdoc-gui", "incremental"])
+                .args(&["ui", "ui-fulldeps", "run-make", "rustdoc-html", "rustdoc-gui", "incremental"])
                 .stage(2)
                 .render_steps(), @r"
         [build] llvm <host>
@@ -2184,11 +2207,10 @@ mod snapshot {
         [build] rustc 0 <host> -> RunMakeSupport 1 <host>
         [build] rustdoc 2 <host>
         [test] compiletest-run-make 2 <host>
-        [test] compiletest-rustdoc 2 <host>
+        [test] compiletest-rustdoc-html 2 <host>
         [build] rustc 0 <host> -> RustdocGUITest 1 <host>
         [test] rustdoc-gui 2 <host>
         [test] compiletest-incremental 2 <host>
-        [build] rustdoc 1 <host>
         ");
     }
 
@@ -2217,12 +2239,11 @@ mod snapshot {
         [build] rustc 0 <host> -> RunMakeSupport 1 <host>
         [build] rustdoc 2 <host>
         [test] compiletest-run-make 2 <target1>
-        [test] compiletest-rustdoc 2 <target1>
+        [build] rustc 1 <host> -> rustc 2 <target1>
+        [build] rustdoc 1 <host>
         [build] rustc 0 <host> -> RustdocGUITest 1 <host>
         [test] rustdoc-gui 2 <target1>
         [test] compiletest-incremental 2 <target1>
-        [build] rustc 1 <host> -> rustc 2 <target1>
-        [build] rustdoc 1 <host>
         [build] rustc 2 <target1> -> std 2 <target1>
         [build] rustdoc 2 <target1>
         ");
@@ -2259,7 +2280,7 @@ mod snapshot {
         [build] rustc 2 <host> -> rustc 3 <host>
         [test] compiletest-ui-fulldeps 2 <host>
         [build] rustdoc 2 <host>
-        [test] compiletest-rustdoc 2 <host>
+        [test] compiletest-rustdoc-html 2 <host>
         [test] compiletest-coverage-run-rustdoc 2 <host>
         [test] compiletest-pretty 2 <host>
         [build] rustc 2 <host> -> std 2 <host>
@@ -2888,6 +2909,7 @@ mod snapshot {
         [build] rustc 1 <x86_64-unknown-linux-gnu> -> rust-analyzer-proc-macro-srv 2 <x86_64-unknown-linux-gnu>
         [build] rustc 0 <x86_64-unknown-linux-gnu> -> GenerateCopyright 1 <x86_64-unknown-linux-gnu>
         [dist] rustc <x86_64-unknown-linux-gnu>
+        [dist] rustc 1 <x86_64-unknown-linux-gnu> -> rustc-dev 2 <x86_64-unknown-linux-gnu>
         [build] rustc 1 <x86_64-unknown-linux-gnu> -> cargo 2 <x86_64-unknown-linux-gnu>
         [dist] rustc 1 <x86_64-unknown-linux-gnu> -> cargo 2 <x86_64-unknown-linux-gnu>
         [build] rustc 1 <x86_64-unknown-linux-gnu> -> rust-analyzer 2 <x86_64-unknown-linux-gnu>

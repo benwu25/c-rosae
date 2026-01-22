@@ -17,14 +17,14 @@ use rustc_middle::ty::layout::{HasTypingEnv, LayoutOf};
 use rustc_middle::ty::{self, Instance};
 use rustc_middle::{bug, span_bug};
 use rustc_span::Symbol;
+use rustc_target::spec::Arch;
 use tracing::{debug, instrument, trace};
 
 use crate::common::CodegenCx;
 use crate::errors::SymbolAlreadyDefined;
-use crate::type_::Type;
+use crate::llvm::{self, Type, Value};
 use crate::type_of::LayoutLlvmExt;
-use crate::value::Value;
-use crate::{base, debuginfo, llvm};
+use crate::{base, debuginfo};
 
 pub(crate) fn const_alloc_to_llvm<'ll>(
     cx: &CodegenCx<'ll, '_>,
@@ -187,6 +187,10 @@ fn check_and_apply_linkage<'ll, 'tcx>(
         };
         llvm::set_linkage(g1, base::linkage_to_llvm(linkage));
 
+        // Normally this is done in `get_static_inner`, but when as we generate an internal global,
+        // it will apply the dso_local to the internal global instead, so do it here, too.
+        cx.assume_dso_local(g1, true);
+
         // Declare an internal global `extern_with_linkage_foo` which
         // is initialized with the address of `foo`. If `foo` is
         // discarded during linking (for example, if `foo` has weak
@@ -204,7 +208,7 @@ fn check_and_apply_linkage<'ll, 'tcx>(
         llvm::set_linkage(g2, llvm::Linkage::InternalLinkage);
         llvm::set_initializer(g2, g1);
         g2
-    } else if cx.tcx.sess.target.arch == "x86"
+    } else if cx.tcx.sess.target.arch == Arch::X86
         && common::is_mingw_gnu_toolchain(&cx.tcx.sess.target)
         && let Some(dllimport) = crate::common::get_dllimport(cx.tcx, def_id, sym)
     {
@@ -241,11 +245,13 @@ impl<'ll> CodegenCx<'ll, '_> {
                 let gv = self.define_global(&name, self.val_ty(cv)).unwrap_or_else(|| {
                     bug!("symbol `{}` is already defined", name);
                 });
-                llvm::set_linkage(gv, llvm::Linkage::PrivateLinkage);
                 gv
             }
-            _ => self.define_private_global(self.val_ty(cv)),
+            _ => self.define_global("", self.val_ty(cv)).unwrap_or_else(|| {
+                bug!("anonymous global symbol is already defined");
+            }),
         };
+        llvm::set_linkage(gv, llvm::Linkage::PrivateLinkage);
         llvm::set_initializer(gv, cv);
         set_global_alignment(self, gv, align);
         llvm::set_unnamed_address(gv, llvm::UnnamedAddr::Global);

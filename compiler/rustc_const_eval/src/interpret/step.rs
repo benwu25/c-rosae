@@ -98,11 +98,6 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                 self.write_discriminant(*variant_index, &dest)?;
             }
 
-            Deinit(place) => {
-                let dest = self.eval_place(**place)?;
-                self.write_uninit(&dest)?;
-            }
-
             // Mark locals as alive
             StorageLive(local) => {
                 self.storage_live(*local)?;
@@ -188,10 +183,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                 self.copy_op(&op, &dest)?;
             }
 
-            CopyForDeref(place) => {
-                let op = self.eval_place_to_op(place, Some(dest.layout))?;
-                self.copy_op(&op, &dest)?;
-            }
+            CopyForDeref(_) => bug!("`CopyForDeref` in runtime MIR"),
 
             BinaryOp(bin_op, box (ref left, ref right)) => {
                 let layout = util::binop_left_homogeneous(bin_op).then_some(dest.layout);
@@ -209,12 +201,6 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                 let result = self.unary_op(un_op, &val)?;
                 assert_eq!(result.layout, dest.layout, "layout mismatch for result of {un_op:?}");
                 self.write_immediate(*result, &dest)?;
-            }
-
-            NullaryOp(null_op, ty) => {
-                let ty = self.instantiate_from_current_frame_and_normalize_erasing_regions(ty)?;
-                let val = self.nullary_op(null_op, ty)?;
-                self.write_immediate(*val, &dest)?;
             }
 
             Aggregate(box ref kind, ref operands) => {
@@ -401,7 +387,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
         move_definitely_disjoint: bool,
     ) -> InterpResult<'tcx, FnArg<'tcx, M::Provenance>> {
         interp_ok(match op {
-            mir::Operand::Copy(_) | mir::Operand::Constant(_) => {
+            mir::Operand::Copy(_) | mir::Operand::Constant(_) | mir::Operand::RuntimeChecks(_) => {
                 // Make a regular copy.
                 let op = self.eval_operand(op, None)?;
                 FnArg::Copy(op)
@@ -570,8 +556,11 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                     if fn_abi.can_unwind { unwind } else { mir::UnwindAction::Unreachable },
                 )?;
                 // Sanity-check that `eval_fn_call` either pushed a new frame or
-                // did a jump to another block.
-                if self.frame_idx() == old_stack && self.frame().loc == old_loc {
+                // did a jump to another block. We disable the sanity check for functions that
+                // can't return, since Miri sometimes does have to keep the location the same
+                // for those (which is fine since execution will continue on a different thread).
+                if target.is_some() && self.frame_idx() == old_stack && self.frame().loc == old_loc
+                {
                     span_bug!(terminator.source_info.span, "evaluating this call made no progress");
                 }
             }

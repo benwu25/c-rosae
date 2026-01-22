@@ -25,7 +25,7 @@ impl<'tcx> Statement<'tcx> {
     /// Changes a statement to a nop. This is both faster than deleting instructions and avoids
     /// invalidating statement indices in `Location`s.
     pub fn make_nop(&mut self, drop_debuginfo: bool) {
-        if matches!(self.kind, StatementKind::Nop) {
+        if self.kind == StatementKind::Nop {
             return;
         }
         let replaced_stmt = std::mem::replace(&mut self.kind, StatementKind::Nop);
@@ -50,7 +50,6 @@ impl<'tcx> StatementKind<'tcx> {
             StatementKind::Assign(..) => "Assign",
             StatementKind::FakeRead(..) => "FakeRead",
             StatementKind::SetDiscriminant { .. } => "SetDiscriminant",
-            StatementKind::Deinit(..) => "Deinit",
             StatementKind::StorageLive(..) => "StorageLive",
             StatementKind::StorageDead(..) => "StorageDead",
             StatementKind::Retag(..) => "Retag",
@@ -260,7 +259,7 @@ impl<'tcx> PlaceTy<'tcx> {
 impl<V, T> ProjectionElem<V, T> {
     /// Returns `true` if the target of this projection may refer to a different region of memory
     /// than the base.
-    fn is_indirect(&self) -> bool {
+    pub fn is_indirect(&self) -> bool {
         match self {
             Self::Deref => true,
 
@@ -598,6 +597,18 @@ impl<'tcx> Operand<'tcx> {
         }))
     }
 
+    /// Convenience helper to make a constant that refers to the given `DefId` and args. Since this
+    /// is used to synthesize MIR, assumes `user_ty` is None.
+    pub fn unevaluated_constant(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        args: &[GenericArg<'tcx>],
+        span: Span,
+    ) -> Self {
+        let const_ = Const::from_unevaluated(tcx, def_id).instantiate(tcx, args);
+        Operand::Constant(Box::new(ConstOperand { span, user_ty: None, const_ }))
+    }
+
     pub fn is_move(&self) -> bool {
         matches!(self, Operand::Move(..))
     }
@@ -631,7 +642,7 @@ impl<'tcx> Operand<'tcx> {
 
     pub fn to_copy(&self) -> Self {
         match *self {
-            Operand::Copy(_) | Operand::Constant(_) => self.clone(),
+            Operand::Copy(_) | Operand::Constant(_) | Operand::RuntimeChecks(_) => self.clone(),
             Operand::Move(place) => Operand::Copy(place),
         }
     }
@@ -641,7 +652,7 @@ impl<'tcx> Operand<'tcx> {
     pub fn place(&self) -> Option<Place<'tcx>> {
         match self {
             Operand::Copy(place) | Operand::Move(place) => Some(*place),
-            Operand::Constant(_) => None,
+            Operand::Constant(_) | Operand::RuntimeChecks(_) => None,
         }
     }
 
@@ -650,7 +661,7 @@ impl<'tcx> Operand<'tcx> {
     pub fn constant(&self) -> Option<&ConstOperand<'tcx>> {
         match self {
             Operand::Constant(x) => Some(&**x),
-            Operand::Copy(_) | Operand::Move(_) => None,
+            Operand::Copy(_) | Operand::Move(_) | Operand::RuntimeChecks(_) => None,
         }
     }
 
@@ -670,6 +681,7 @@ impl<'tcx> Operand<'tcx> {
         match self {
             &Operand::Copy(ref l) | &Operand::Move(ref l) => l.ty(local_decls, tcx).ty,
             Operand::Constant(c) => c.const_.ty(),
+            Operand::RuntimeChecks(_) => tcx.types.bool,
         }
     }
 
@@ -682,6 +694,8 @@ impl<'tcx> Operand<'tcx> {
                 local_decls.local_decls()[l.local].source_info.span
             }
             Operand::Constant(c) => c.span,
+            // User code should not contain this operand, so we should not need this span.
+            Operand::RuntimeChecks(_) => DUMMY_SP,
         }
     }
 }
@@ -745,7 +759,6 @@ impl<'tcx> Rvalue<'tcx> {
                 _,
             )
             | Rvalue::BinaryOp(_, _)
-            | Rvalue::NullaryOp(_, _)
             | Rvalue::UnaryOp(_, _)
             | Rvalue::Discriminant(_)
             | Rvalue::Aggregate(_, _)
@@ -783,11 +796,6 @@ impl<'tcx> Rvalue<'tcx> {
                 op.ty(tcx, arg_ty)
             }
             Rvalue::Discriminant(ref place) => place.ty(local_decls, tcx).ty.discriminant_ty(tcx),
-            Rvalue::NullaryOp(NullOp::SizeOf | NullOp::AlignOf | NullOp::OffsetOf(..), _) => {
-                tcx.types.usize
-            }
-            Rvalue::NullaryOp(NullOp::ContractChecks, _)
-            | Rvalue::NullaryOp(NullOp::UbChecks, _) => tcx.types.bool,
             Rvalue::Aggregate(ref ak, ref ops) => match **ak {
                 AggregateKind::Array(ty) => Ty::new_array(tcx, ty, ops.len() as u64),
                 AggregateKind::Tuple => {
@@ -847,15 +855,6 @@ impl BorrowKind {
             // We have no type corresponding to a shallow borrow, so use
             // `&` as an approximation.
             BorrowKind::Fake(_) => hir::Mutability::Not,
-        }
-    }
-}
-
-impl<'tcx> NullOp<'tcx> {
-    pub fn ty(&self, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
-        match self {
-            NullOp::SizeOf | NullOp::AlignOf | NullOp::OffsetOf(_) => tcx.types.usize,
-            NullOp::UbChecks | NullOp::ContractChecks => tcx.types.bool,
         }
     }
 }

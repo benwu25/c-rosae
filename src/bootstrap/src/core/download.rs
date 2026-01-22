@@ -17,6 +17,26 @@ use crate::{Config, t};
 
 static SHOULD_FIX_BINS_AND_DYLIBS: OnceLock<bool> = OnceLock::new();
 
+fn get_bors_hash() -> String {
+    use std::process::*;
+
+    let git = Command::new("git")
+        .args(["ls-remote", "https://github.com/rust-lang/rust.git"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("Failed to ls-remote");
+
+    let head = Command::new("head")
+        .args(["-1"])
+        .stdin(git.stdout.unwrap())
+        .output()
+        .expect("Failed to head -1");
+
+    let s = String::from(String::from_utf8_lossy(&head.stdout));
+    let v: Vec<&str> = s.split("\t").collect();
+    String::from(v[0])
+}
+
 fn extract_curl_version(out: String) -> semver::Version {
     // The output should look like this: "curl <major>.<minor>.<patch> ..."
     out.lines()
@@ -364,7 +384,12 @@ impl Config {
     [llvm]
     download-ci-llvm = false
     ";
-            self.download_file(&format!("{base}/{llvm_sha}/{filename}"), &tarball, help_on_error);
+            let crosae_llvm_download_sha = get_bors_hash();
+            self.download_file(
+                &format!("{base}/{crosae_llvm_download_sha}/{filename}"),
+                &tarball,
+                help_on_error,
+            );
         }
         let llvm_root = self.ci_llvm_root();
         self.unpack(&tarball, &llvm_root, "rust-dev");
@@ -381,7 +406,7 @@ impl Config {
         }
         let base = &self.stage0_metadata.config.artifacts_server;
         let version = self.artifact_version_part(gcc_sha);
-        let filename = format!("gcc-{version}-{}.tar.xz", self.host_target.triple);
+        let filename = format!("gcc-dev-{version}-{}.tar.xz", self.host_target.triple);
         let tarball = gcc_cache.join(&filename);
         if !tarball.exists() {
             let help_on_error = "ERROR: failed to download gcc from ci
@@ -396,7 +421,7 @@ impl Config {
     ";
             self.download_file(&format!("{base}/{gcc_sha}/{filename}"), &tarball, help_on_error);
         }
-        self.unpack(&tarball, root_dir, "gcc");
+        self.unpack(&tarball, root_dir, "gcc-dev");
     }
 }
 
@@ -447,6 +472,7 @@ pub(crate) fn is_download_ci_available(target_triple: &str, llvm_assertions: boo
     // All tier 1 targets and tier 2 targets with host tools.
     const SUPPORTED_PLATFORMS: &[&str] = &[
         "aarch64-apple-darwin",
+        "aarch64-pc-windows-gnullvm",
         "aarch64-pc-windows-msvc",
         "aarch64-unknown-linux-gnu",
         "aarch64-unknown-linux-musl",
@@ -465,6 +491,7 @@ pub(crate) fn is_download_ci_available(target_triple: &str, llvm_assertions: boo
         "s390x-unknown-linux-gnu",
         "x86_64-apple-darwin",
         "x86_64-pc-windows-gnu",
+        "x86_64-pc-windows-gnullvm",
         "x86_64-pc-windows-msvc",
         "x86_64-unknown-freebsd",
         "x86_64-unknown-illumos",

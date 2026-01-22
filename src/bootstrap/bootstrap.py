@@ -1113,6 +1113,19 @@ class RustBuild(object):
         else:
             env["RUSTFLAGS"] = "-Zallow-features="
 
+        if not os.path.isfile(self.cargo()):
+            raise Exception("no cargo executable found at `{}`".format(self.cargo()))
+        args = [
+            self.cargo(),
+            "build",
+            "--jobs=" + self.jobs,
+            "--manifest-path",
+            os.path.join(self.rust_root, "src/bootstrap/Cargo.toml"),
+            "-Zroot-dir=" + self.rust_root,
+        ]
+        # verbose cargo output is very noisy, so only enable it with -vv
+        args.extend("--verbose" for _ in range(self.verbose - 1))
+
         target_features = []
         if self.get_toml("crt-static", build_section) == "true":
             target_features += ["+crt-static"]
@@ -1131,27 +1144,14 @@ class RustBuild(object):
         else:
             deny_warnings = self.warnings == "deny"
         if deny_warnings:
-            env["RUSTFLAGS"] += " -Dwarnings"
+            args += ["-Zwarnings"]
+            env["CARGO_BUILD_WARNINGS"] = "deny"
 
         # Add RUSTFLAGS_BOOTSTRAP to RUSTFLAGS for bootstrap compilation.
         # Note that RUSTFLAGS_BOOTSTRAP should always be added to the end of
-        # RUSTFLAGS to be actually effective (e.g., if we have `-Dwarnings` in
-        # RUSTFLAGS, passing `-Awarnings` from RUSTFLAGS_BOOTSTRAP should override it).
+        # RUSTFLAGS, since that causes RUSTFLAGS_BOOTSTRAP to override RUSTFLAGS.
         if "RUSTFLAGS_BOOTSTRAP" in env:
             env["RUSTFLAGS"] += " " + env["RUSTFLAGS_BOOTSTRAP"]
-
-        if not os.path.isfile(self.cargo()):
-            raise Exception("no cargo executable found at `{}`".format(self.cargo()))
-        args = [
-            self.cargo(),
-            "build",
-            "--jobs=" + self.jobs,
-            "--manifest-path",
-            os.path.join(self.rust_root, "src/bootstrap/Cargo.toml"),
-            "-Zroot-dir=" + self.rust_root,
-        ]
-        # verbose cargo output is very noisy, so only enable it with -vv
-        args.extend("--verbose" for _ in range(self.verbose - 1))
 
         if "BOOTSTRAP_TRACING" in env:
             args.append("--features=tracing")
@@ -1379,11 +1379,26 @@ def main():
         sys.argv[1] = "-h"
 
     args = parse_args(sys.argv)
-    help_triggered = args.help or len(sys.argv) == 1
 
-    # If the user is asking for help, let them know that the whole download-and-build
+    # Root help (e.g., x.py --help) prints help from the saved file to save the time
+    if len(sys.argv) == 1 or sys.argv[1] in ["-h", "--help"]:
+        try:
+            with open(
+                os.path.join(os.path.dirname(__file__), "../etc/xhelp"), "r"
+            ) as f:
+                # The file from bootstrap func already has newline.
+                print(f.read(), end="")
+                sys.exit(0)
+        except Exception as error:
+            eprint(
+                f"ERROR: unable to run help: {error}\n",
+                "x.py run generate-help may solve the problem.",
+            )
+            sys.exit(1)
+
+    # If the user is asking for other helps, let them know that the whole download-and-build
     # process has to happen before anything is printed out.
-    if help_triggered:
+    if args.help:
         eprint(
             "INFO: Downloading and building bootstrap before processing --help command.\n"
             "      See src/bootstrap/README.md for help with common commands."
@@ -1401,13 +1416,14 @@ def main():
             eprint(error)
         success_word = "unsuccessfully"
 
-    if not help_triggered:
+    if not args.help:
         eprint(
             "Build completed",
             success_word,
             "in",
             format_build_time(time() - start_time),
         )
+
     sys.exit(exit_code)
 
 

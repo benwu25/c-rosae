@@ -41,7 +41,7 @@ impl<'tcx> Analysis<'tcx> for MaybeLiveLocals {
     }
 
     fn apply_primary_statement_effect(
-        &mut self,
+        &self,
         state: &mut Self::Domain,
         statement: &mir::Statement<'tcx>,
         location: Location,
@@ -50,7 +50,7 @@ impl<'tcx> Analysis<'tcx> for MaybeLiveLocals {
     }
 
     fn apply_primary_terminator_effect<'mir>(
-        &mut self,
+        &self,
         state: &mut Self::Domain,
         terminator: &'mir mir::Terminator<'tcx>,
         location: Location,
@@ -60,7 +60,7 @@ impl<'tcx> Analysis<'tcx> for MaybeLiveLocals {
     }
 
     fn apply_call_return_effect(
-        &mut self,
+        &self,
         state: &mut Self::Domain,
         _block: mir::BasicBlock,
         return_places: CallReturnPlaces<'_, 'tcx>,
@@ -159,8 +159,7 @@ impl DefUse {
                 MutatingUseContext::Call
                 | MutatingUseContext::Yield
                 | MutatingUseContext::AsmOutput
-                | MutatingUseContext::Store
-                | MutatingUseContext::Deinit,
+                | MutatingUseContext::Store,
             ) => {
                 // Treat derefs as a use of the base local. `*p = 4` is not a def of `p` but a use.
                 if place.is_indirect() {
@@ -238,7 +237,7 @@ impl<'a> MaybeTransitiveLiveLocals<'a> {
                 && (!debuginfo_locals.contains(place.local)
                     || (place.as_local().is_some() && stmt_kind.as_debuginfo().is_some())))
             .then_some(*place),
-            StatementKind::SetDiscriminant { place, .. } | StatementKind::Deinit(place) => {
+            StatementKind::SetDiscriminant { place, .. } => {
                 (!debuginfo_locals.contains(place.local)).then_some(**place)
             }
             StatementKind::FakeRead(_)
@@ -279,7 +278,7 @@ impl<'a, 'tcx> Analysis<'tcx> for MaybeTransitiveLiveLocals<'a> {
     }
 
     fn apply_primary_statement_effect(
-        &mut self,
+        &self,
         state: &mut Self::Domain,
         statement: &mir::Statement<'tcx>,
         location: Location,
@@ -295,7 +294,7 @@ impl<'a, 'tcx> Analysis<'tcx> for MaybeTransitiveLiveLocals<'a> {
     }
 
     fn apply_primary_terminator_effect<'mir>(
-        &mut self,
+        &self,
         state: &mut Self::Domain,
         terminator: &'mir mir::Terminator<'tcx>,
         location: Location,
@@ -305,7 +304,7 @@ impl<'a, 'tcx> Analysis<'tcx> for MaybeTransitiveLiveLocals<'a> {
     }
 
     fn apply_call_return_effect(
-        &mut self,
+        &self,
         state: &mut Self::Domain,
         _block: mir::BasicBlock,
         return_places: CallReturnPlaces<'_, 'tcx>,

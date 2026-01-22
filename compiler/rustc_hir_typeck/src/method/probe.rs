@@ -3,13 +3,12 @@ use std::cell::{Cell, RefCell};
 use std::cmp::max;
 use std::ops::Deref;
 
-use rustc_attr_parsing::is_doc_alias_attrs_contain_symbol;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::sso::SsoHashSet;
 use rustc_errors::Applicability;
-use rustc_hir as hir;
-use rustc_hir::HirId;
+use rustc_hir::attrs::AttributeKind;
 use rustc_hir::def::DefKind;
+use rustc_hir::{self as hir, ExprKind, HirId, Node, find_attr};
 use rustc_hir_analysis::autoderef::{self, Autoderef};
 use rustc_infer::infer::canonical::{Canonical, OriginalQueryValues, QueryResponse};
 use rustc_infer::infer::{BoundRegionConversionTime, DefineOpaqueTypes, InferOk, TyCtxtInferExt};
@@ -166,12 +165,11 @@ struct PickDiagHints<'a, 'tcx> {
 
     /// Collects near misses when trait bounds for type parameters are unsatisfied and is only used
     /// for error reporting
-    unsatisfied_predicates: &'a mut Vec<(
-        ty::Predicate<'tcx>,
-        Option<ty::Predicate<'tcx>>,
-        Option<ObligationCause<'tcx>>,
-    )>,
+    unsatisfied_predicates: &'a mut UnsatisfiedPredicates<'tcx>,
 }
+
+pub(crate) type UnsatisfiedPredicates<'tcx> =
+    Vec<(ty::Predicate<'tcx>, Option<ty::Predicate<'tcx>>, Option<ObligationCause<'tcx>>)>;
 
 /// Criteria to apply when searching for a given Pick. This is used during
 /// the search for potentially shadowed methods to ensure we don't search
@@ -192,8 +190,8 @@ impl PickConstraintsForShadowed {
         // An item never shadows itself
         candidate.item.def_id != self.def_id
             // and we're only concerned about inherent impls doing the shadowing.
-            // Shadowing can only occur if the shadowed is further along
-            // the Receiver dereferencing chain than the shadowed.
+            // Shadowing can only occur if the impl being shadowed is further along
+            // the Receiver dereferencing chain than the impl doing the shadowing.
             && match candidate.kind {
                 CandidateKind::InherentImplCandidate { receiver_steps, .. } => match self.receiver_steps {
                     Some(shadowed_receiver_steps) => receiver_steps > shadowed_receiver_steps,
@@ -486,13 +484,25 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 let ty = self.resolve_vars_if_possible(ty.value);
                 let guar = match *ty.kind() {
                     ty::Infer(ty::TyVar(_)) => {
+                        // We want to get the variable name that the method
+                        // is being called on. If it is a method call.
+                        let err_span = match (mode, self.tcx.hir_node(scope_expr_id)) {
+                            (
+                                Mode::MethodCall,
+                                Node::Expr(hir::Expr {
+                                    kind: ExprKind::MethodCall(_, recv, ..),
+                                    ..
+                                }),
+                            ) => recv.span,
+                            _ => span,
+                        };
+
                         let raw_ptr_call = bad_ty.reached_raw_pointer
                             && !self.tcx.features().arbitrary_self_types();
-                        // FIXME: Ideally we'd use the span of the self-expr here,
-                        // not of the method path.
+
                         let mut err = self.err_ctxt().emit_inference_failure_err(
                             self.body_id,
-                            span,
+                            err_span,
                             ty.into(),
                             TypeAnnotationNeeded::E0282,
                             !raw_ptr_call,
@@ -574,8 +584,8 @@ pub(crate) fn method_autoderef_steps<'tcx>(
         value: query::MethodAutoderefSteps { predefined_opaques_in_body, self_ty },
     } = goal;
     for (key, ty) in predefined_opaques_in_body {
-        let prev =
-            infcx.register_hidden_type_in_storage(key, ty::OpaqueHiddenType { span: DUMMY_SP, ty });
+        let prev = infcx
+            .register_hidden_type_in_storage(key, ty::ProvisionalHiddenType { span: DUMMY_SP, ty });
         // It may be possible that two entries in the opaque type storage end up
         // with the same key after resolving contained inference variables.
         //
@@ -1165,9 +1175,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         // things failed, so lets look at all traits, for diagnostic purposes now:
         self.reset();
 
-        let span = self.span;
-        let tcx = self.tcx;
-
         self.assemble_extension_candidates_for_all_traits();
 
         let out_of_scope_traits = match self.pick_core(&mut Vec::new()) {
@@ -1176,10 +1183,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
                 .into_iter()
                 .map(|source| match source {
                     CandidateSource::Trait(id) => id,
-                    CandidateSource::Impl(impl_id) => match tcx.trait_id_of_impl(impl_id) {
-                        Some(id) => id,
-                        None => span_bug!(span, "found inherent method when looking at traits"),
-                    },
+                    CandidateSource::Impl(impl_id) => self.tcx.impl_trait_id(impl_id),
                 })
                 .collect(),
             Some(Err(MethodError::NoMatch(NoMatchData {
@@ -1207,11 +1211,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
 
     fn pick_core(
         &self,
-        unsatisfied_predicates: &mut Vec<(
-            ty::Predicate<'tcx>,
-            Option<ty::Predicate<'tcx>>,
-            Option<ObligationCause<'tcx>>,
-        )>,
+        unsatisfied_predicates: &mut UnsatisfiedPredicates<'tcx>,
     ) -> Option<PickResult<'tcx>> {
         // Pick stable methods only first, and consider unstable candidates if not found.
         self.pick_all_method(&mut PickDiagHints {
@@ -1884,11 +1884,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         self_ty: Ty<'tcx>,
         instantiate_self_ty_obligations: &[PredicateObligation<'tcx>],
         probe: &Candidate<'tcx>,
-        possibly_unsatisfied_predicates: &mut Vec<(
-            ty::Predicate<'tcx>,
-            Option<ty::Predicate<'tcx>>,
-            Option<ObligationCause<'tcx>>,
-        )>,
+        possibly_unsatisfied_predicates: &mut UnsatisfiedPredicates<'tcx>,
     ) -> ProbeResult {
         self.probe(|snapshot| {
             let outer_universe = self.universe();
@@ -1906,7 +1902,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
             // them to deal with defining uses in `method_autoderef_steps`.
             if self.next_trait_solver() {
                 ocx.register_obligations(instantiate_self_ty_obligations.iter().cloned());
-                let errors = ocx.select_where_possible();
+                let errors = ocx.try_evaluate_obligations();
                 if !errors.is_empty() {
                     unreachable!("unexpected autoderef error {errors:?}");
                 }
@@ -2103,7 +2099,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
             }
 
             // Evaluate those obligations to see if they might possibly hold.
-            for error in ocx.select_where_possible() {
+            for error in ocx.try_evaluate_obligations() {
                 result = ProbeResult::NoMatch;
                 let nested_predicate = self.resolve_vars_if_possible(error.obligation.predicate);
                 if let Some(trait_predicate) = trait_predicate
@@ -2143,7 +2139,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
                 }
 
                 // Evaluate those obligations to see if they might possibly hold.
-                for error in ocx.select_where_possible() {
+                for error in ocx.try_evaluate_obligations() {
                     result = ProbeResult::NoMatch;
                     possibly_unsatisfied_predicates.push((
                         error.obligation.predicate,
@@ -2230,7 +2226,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
                     };
                     let ocx = ObligationCtxt::new(self);
                     let self_ty = ocx.register_infer_ok_obligations(ok);
-                    if !ocx.select_where_possible().is_empty() {
+                    if !ocx.try_evaluate_obligations().is_empty() {
                         debug!("failed to prove instantiate self_ty obligations");
                         return false;
                     }
@@ -2539,7 +2535,9 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         let hir_id = self.fcx.tcx.local_def_id_to_hir_id(local_def_id);
         let attrs = self.fcx.tcx.hir_attrs(hir_id);
 
-        if is_doc_alias_attrs_contain_symbol(attrs.into_iter(), method.name) {
+        if let Some(d) = find_attr!(attrs, AttributeKind::Doc(d) => d)
+            && d.aliases.contains_key(&method.name)
+        {
             return true;
         }
 
