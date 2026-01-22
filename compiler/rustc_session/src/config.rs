@@ -196,6 +196,8 @@ pub enum Offload {
     Device,
     /// Second step in the offload pipeline, generates the host code to call kernels.
     Host(String),
+    /// Test is similar to Host, but allows testing without a device artifact.
+    Test,
 }
 
 /// The different settings that the `-Z autodiff` flag can have.
@@ -1376,7 +1378,6 @@ impl Default for Options {
             crate_types: Vec::new(),
             optimize: OptLevel::No,
             debuginfo: DebugInfo::None,
-            debuginfo_compression: DebugInfoCompression::None,
             lint_opts: Vec::new(),
             lint_cap: None,
             describe_lints: false,
@@ -1588,8 +1589,9 @@ pub fn build_target_config(
     early_dcx: &EarlyDiagCtxt,
     target: &TargetTuple,
     sysroot: &Path,
+    unstable_options: bool,
 ) -> Target {
-    match Target::search(target, sysroot) {
+    match Target::search(target, sysroot, unstable_options) {
         Ok((target, warnings)) => {
             for warning in warnings.warning_messages() {
                 early_dcx.early_warn(warning)
@@ -1798,7 +1800,7 @@ pub fn rustc_optgroups() -> Vec<RustcOptGroup> {
             "<OPT>",
         ),
         opt(Stable, Flag, "", "test", "Build a test harness", ""),
-        opt(Stable, Opt, "", "target", "Target triple for which the code is compiled", "<TARGET>"),
+        opt(Stable, Opt, "", "target", "Target tuple for which the code is compiled", "<TARGET>"),
         opt(Stable, Multi, "A", "allow", "Set lint allowed", "<LINT>"),
         opt(Stable, Multi, "W", "warn", "Set lint warnings", "<LINT>"),
         opt(Stable, Multi, "", "force-warn", "Set lint force-warn", "<LINT>"),
@@ -2639,7 +2641,6 @@ pub fn build_session_options(early_dcx: &mut EarlyDiagCtxt, matches: &getopts::M
     // for more details.
     let debug_assertions = cg.debug_assertions.unwrap_or(opt_level == OptLevel::No);
     let debuginfo = select_debuginfo(matches, &cg);
-    let debuginfo_compression = unstable_opts.debuginfo_compression;
 
     if !unstable_options_enabled {
         if let Err(error) = cg.linker_features.check_unstable_variants(&target_triple) {
@@ -2747,7 +2748,6 @@ pub fn build_session_options(early_dcx: &mut EarlyDiagCtxt, matches: &getopts::M
         crate_types,
         optimize: opt_level,
         debuginfo,
-        debuginfo_compression,
         lint_opts,
         lint_cap,
         describe_lints,
@@ -3066,6 +3066,7 @@ pub(crate) mod dep_tracking {
     use rustc_errors::LanguageIdentifier;
     use rustc_feature::UnstableFeatures;
     use rustc_hashes::Hash64;
+    use rustc_hir::attrs::CollapseMacroDebuginfo;
     use rustc_span::edition::Edition;
     use rustc_span::{RealFileName, RemapPathScopeComponents};
     use rustc_target::spec::{
@@ -3075,13 +3076,12 @@ pub(crate) mod dep_tracking {
     };
 
     use super::{
-        AnnotateMoves, AutoDiff, BranchProtection, CFGuard, CFProtection, CollapseMacroDebuginfo,
-        CoverageOptions, CrateType, DebugInfo, DebugInfoCompression, ErrorOutputType, FmtDebug,
-        FunctionReturn, InliningThreshold, InstrumentCoverage, InstrumentXRay, LinkerPluginLto,
-        LocationDetail, LtoCli, MirStripDebugInfo, NextSolverConfig, Offload, OptLevel,
-        OutFileName, OutputType, OutputTypes, PatchableFunctionEntry, Polonius, ResolveDocLinks,
-        SourceFileHashAlgorithm, SplitDwarfKind, SwitchWithOptPath, SymbolManglingVersion,
-        WasiExecModel,
+        AnnotateMoves, AutoDiff, BranchProtection, CFGuard, CFProtection, CoverageOptions,
+        CrateType, DebugInfo, DebugInfoCompression, ErrorOutputType, FmtDebug, FunctionReturn,
+        InliningThreshold, InstrumentCoverage, InstrumentXRay, LinkerPluginLto, LocationDetail,
+        LtoCli, MirStripDebugInfo, NextSolverConfig, Offload, OptLevel, OutFileName, OutputType,
+        OutputTypes, PatchableFunctionEntry, Polonius, ResolveDocLinks, SourceFileHashAlgorithm,
+        SplitDwarfKind, SwitchWithOptPath, SymbolManglingVersion, WasiExecModel,
     };
     use crate::lint;
     use crate::utils::NativeLib;
@@ -3298,25 +3298,6 @@ pub enum ProcMacroExecutionStrategy {
 
     /// Run the proc-macro code on a different thread.
     CrossThread,
-}
-
-/// How to perform collapse macros debug info
-/// if-ext - if macro from different crate (related to callsite code)
-/// | cmd \ attr    | no  | (unspecified) | external | yes |
-/// | no            | no  | no            | no       | no  |
-/// | (unspecified) | no  | no            | if-ext   | yes |
-/// | external      | no  | if-ext        | if-ext   | yes |
-/// | yes           | yes | yes           | yes      | yes |
-#[derive(Clone, Copy, PartialEq, Hash, Debug)]
-pub enum CollapseMacroDebuginfo {
-    /// Don't collapse debuginfo for the macro
-    No = 0,
-    /// Unspecified value
-    Unspecified = 1,
-    /// Collapse debuginfo if the macro comes from a different crate
-    External = 2,
-    /// Collapse debuginfo for the macro
-    Yes = 3,
 }
 
 /// Which format to use for `-Z dump-mono-stats`
