@@ -2162,7 +2162,10 @@ impl<'a> Parser<'a> {
     // Convert String to items. We create a new file dtrace_parserX each time we want to
     // parse some new items vec. Diagnostics sometimes point to these files for unknown
     // reasons.
-    pub fn parse_items_from_source_string(&self, source: String) -> PResult<'a, ThinVec<Box<Item>>> {
+    pub fn parse_items_from_source_string(
+        &self,
+        source: String,
+    ) -> PResult<'a, ThinVec<Box<Item>>> {
         let count = *PARSER_COUNTER.lock().unwrap();
         let mut tmp_parser = unwrap_or_emit_fatal(new_parser_from_source_str(
             &self.psess,
