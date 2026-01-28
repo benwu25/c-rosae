@@ -435,6 +435,7 @@ const PERMITTED_RUSTC_DEPENDENCIES: &[&str] = &[
     "stacker",
     "static_assertions",
     "strsim",
+    "subst",
     "syn",
     "synstructure",
     "tempfile",
