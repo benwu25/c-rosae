@@ -45,6 +45,7 @@ const LICENSES: &[&str] = &[
     "Apache-2.0 OR MIT",
     "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT", // wasi license
     "Apache-2.0/MIT",
+    "BSD-2-Clause OR Apache-2.0",
     "BSD-2-Clause OR Apache-2.0 OR MIT",                   // zerocopy
     "BSD-2-Clause OR MIT OR Apache-2.0",
     "BSD-3-Clause/MIT",
