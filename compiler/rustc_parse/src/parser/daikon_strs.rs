@@ -117,12 +117,14 @@ pub(crate) static DTRACE_PRIM_REF_STRUCT: &str = "dtrace_print_prim::<$1>($2::fr
 // $3: $1.
 // $4: Depth counter.
 // $5: $1.
-pub(crate) static DTRACE_USERDEF: &str = "fn main() { dtrace_print_pointer($1 as *const _ as usize, String::from(\"$2\"));
+pub(crate) static DTRACE_USERDEF: &str =
+    "fn main() { dtrace_print_pointer($1 as *const _ as usize, String::from(\"$2\"));
  $3.dtrace_print_fields($4, String::from(\"$5\")); }";
 
 // Build log stmt for struct variable, syntax difference.
 // Args: See DTRACE_USERDEF.
-pub(crate) static DTRACE_USERDEF_AMPERSAND: &str = "fn main() { dtrace_print_pointer(&$1 as *const _ as usize, String::from(\"$2\"));
+pub(crate) static DTRACE_USERDEF_AMPERSAND: &str =
+    "fn main() { dtrace_print_pointer(&$1 as *const _ as usize, String::from(\"$2\"));
  $3.dtrace_print_fields($4, String::from(\"$5\")); }";
 
 pub(crate) static DTRACE_USERDEF_RET: [&str; 2] = [
