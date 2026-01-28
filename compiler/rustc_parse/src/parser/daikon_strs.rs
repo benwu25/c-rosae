@@ -46,7 +46,12 @@ pub(crate) fn build_instrument_code(replacements: Vec<String>, source_str: &str)
 
 // Initialize a function-local nonce counter.
 // (no arguments)
-pub(crate) static INIT_NONCE: &str = "fn main() { let mut __daikon_nonce = 0;\nlet mut __unwrap_nonce = NONCE_COUNTER.lock().unwrap();\n__daikon_nonce = *__unwrap_nonce;\n*__unwrap_nonce += 1;\ndrop(__unwrap_nonce);\n }";
+pub(crate) static INIT_NONCE: &str = "fn main() { let mut __daikon_nonce = 0;
+let mut __unwrap_nonce = NONCE_COUNTER.lock().unwrap();
+__daikon_nonce = *__unwrap_nonce;
+*__unwrap_nonce += 1;
+drop(__unwrap_nonce);
+ }";
 
 // Build dtrace entry call for each ppt-enter.
 // $1: ppt-name (e.g. MAIN, FOO)
@@ -112,14 +117,19 @@ pub(crate) static DTRACE_PRIM_REF_STRUCT: &str = "dtrace_print_prim::<$1>($2::fr
 // $3: $1.
 // $4: Depth counter.
 // $5: $1.
-pub(crate) static DTRACE_USERDEF: &str = "fn main() { dtrace_print_pointer($1 as *const _ as usize, String::from(\"$2\"));\n $3.dtrace_print_fields($4, String::from(\"$5\")); }";
+pub(crate) static DTRACE_USERDEF: &str =
+    "fn main() { dtrace_print_pointer($1 as *const _ as usize, String::from(\"$2\"));
+ $3.dtrace_print_fields($4, String::from(\"$5\")); }";
 
 // Build log stmt for struct variable, syntax difference.
 // Args: See DTRACE_USERDEF.
-pub(crate) static DTRACE_USERDEF_AMPERSAND: &str = "fn main() { dtrace_print_pointer(&$1 as *const _ as usize, String::from(\"$2\"));\n $3.dtrace_print_fields($4, String::from(\"$5\")); }";
+pub(crate) static DTRACE_USERDEF_AMPERSAND: &str =
+    "fn main() { dtrace_print_pointer(&$1 as *const _ as usize, String::from(\"$2\"));
+ $3.dtrace_print_fields($4, String::from(\"$5\")); }";
 
 pub(crate) static DTRACE_USERDEF_RET: [&str; 2] = [
-    "fn __skip() { dtrace_print_pointer(__daikon_ret as *const _ as usize, String::from(\"return\"));\n__daikon_ret.dtrace_print_fields(",
+    "fn __skip() { dtrace_print_pointer(__daikon_ret as *const _ as usize, String::from(\"return\"));
+__daikon_ret.dtrace_print_fields(",
     ", String::from(\"return\")); }",
 ];
 pub(crate) fn build_userdef_ret(depth_arg: i32) -> String {
@@ -130,7 +140,8 @@ pub(crate) fn build_userdef_ret(depth_arg: i32) -> String {
 }
 
 pub(crate) static DTRACE_USERDEF_RET_AMPERSAND: [&str; 2] = [
-    "fn __skip() { dtrace_print_pointer(&__daikon_ret as *const _ as usize, String::from(\"return\"));\n__daikon_ret.dtrace_print_fields(",
+    "fn __skip() { dtrace_print_pointer(&__daikon_ret as *const _ as usize, String::from(\"return\"));
+__daikon_ret.dtrace_print_fields(",
     ", String::from(\"return\")); }",
 ];
 pub(crate) fn build_userdef_ret_ampersand(depth_arg: i32) -> String {
@@ -143,7 +154,8 @@ pub(crate) fn build_userdef_ret_ampersand(depth_arg: i32) -> String {
 pub(crate) static DTRACE_USERDEF_STRUCT: [&str; 5] = [
     "dtrace_print_pointer(self.",
     " as *const _ as usize, format!(\"{}{}\", prefix, \".",
-    "\"));\nself.",
+    "\"));
+self.",
     ".dtrace_print_fields(depth - 1, format!(\"{}{}\", prefix, \".",
     "\"));",
 ];
@@ -163,7 +175,8 @@ pub(crate) fn build_field_userdef(field_name: String) -> String {
 pub(crate) static DTRACE_USERDEF_STRUCT_AMPERSAND: [&str; 5] = [
     "dtrace_print_pointer(&self.",
     " as *const _ as usize, format!(\"{}{}\", prefix, \".",
-    "\"));\nself.",
+    "\"));
+self.",
     ".dtrace_print_fields(depth - 1, format!(\"{}{}\", prefix, \".",
     "\"));",
 ];
@@ -982,7 +995,11 @@ pub(crate) fn dtrace_newline() -> String {
 
 // this NONCE_COUNTER per-file is broken for multi-file non-concurrent programs. It has to be a single counter shared between all the files.
 // Difficult in Rust as there is no easy extern escape like in C. Maybe unsafe.
-pub(crate) static IMPORTS: &str = "use std::fs::File;\nuse std::io::prelude::*;\nuse std::sync::{LazyLock, Mutex};\nuse std::str::FromStr;\nstatic NONCE_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));";
+pub(crate) static IMPORTS: &str = "use std::fs::File;
+use std::io::prelude::*;
+use std::sync::{LazyLock, Mutex};
+use std::str::FromStr;
+static NONCE_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));";
 pub(crate) fn build_imports() -> String {
     String::from(IMPORTS)
 }
