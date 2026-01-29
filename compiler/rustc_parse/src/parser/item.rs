@@ -50,7 +50,7 @@ pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false
 static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 
 /*
-   Primary visitor pass for dtrace instrumentation.
+Primary visitor pass for dtrace instrumentation.
 */
 struct DaikonDtraceVisitor<'a> {
     // For parsing string fragments.

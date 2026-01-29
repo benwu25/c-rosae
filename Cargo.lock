@@ -4414,6 +4414,7 @@ name = "rustc_parse"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "rustc-hash 2.1.1",
  "rustc-literal-escaper",
  "rustc_ast",
  "rustc_ast_pretty",
@@ -4426,6 +4427,7 @@ dependencies = [
  "rustc_macros",
  "rustc_session",
  "rustc_span",
+ "subst",
  "thin-vec",
  "tracing",
  "unicode-normalization",
@@ -5401,6 +5403,16 @@ dependencies = [
  "quote",
  "rustversion",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "subst"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a9a86e5144f63c2d18334698269a8bfae6eece345c70b64821ea5b35054ec99"
+dependencies = [
+ "memchr",
+ "unicode-width 0.1.14",
 ]
 
 [[package]]
