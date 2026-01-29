@@ -484,9 +484,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
             }
             RustType::PrimVec(p_type) => {
-                let first_tmp = daikon_tmp_counter.to_string();
+                let first_tmp: &str = &daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
-                let next_tmp = daikon_tmp_counter.to_string();
+                let next_tmp = &daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let print_vec = if p_type == "String" || p_type == "str" {
                     build_print_string_vec(
@@ -514,9 +514,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 *i = self.insert_into_block(*i, &prim_vec_record_ret, body);
             }
             RustType::UserDefVec(basic_type) => {
-                let first_tmp = daikon_tmp_counter.to_string();
+                let first_tmp = &daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
-                let next_tmp = daikon_tmp_counter.to_string();
+                let next_tmp = &daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let userdef_vec_record_ret = format!(
                     "{}\n{}\n{}\n{}",
@@ -541,9 +541,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 *i = self.insert_into_block(*i, &userdef_vec_record_ret, body);
             }
             RustType::PrimArray(p_type) => {
-                let first_tmp = daikon_tmp_counter.to_string();
+                let first_tmp = &daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
-                let next_tmp = daikon_tmp_counter.to_string();
+                let next_tmp = &daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let print_vec = if p_type == "String" || p_type == "str" {
                     build_print_string_vec(
@@ -571,9 +571,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 *i = self.insert_into_block(*i, &prim_vec_record_ret, body);
             }
             RustType::UserDefArray(basic_type) => {
-                let first_tmp = daikon_tmp_counter.to_string();
+                let first_tmp = &daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
-                let next_tmp = daikon_tmp_counter.to_string();
+                let next_tmp = &daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let userdef_vec_record_ret = format!(
                     "{}\n{}\n{}\n{}",
@@ -967,9 +967,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 //            build_print_prim_vec_for_field(),
                 //            build_dtrace_print_xfield_epilogue()
                 RustType::PrimVec(p_type) => {
-                    let first_tmp = daikon_tmp_counter.to_string();
+                    let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp = daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let print_vec = if p_type == "String" || p_type == "str" {
                         build_print_string_vec_for_field(
@@ -1011,9 +1011,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 //            build_print_vec_fields_for_field() (for contents),
                 //            build_dtrace_print_xfield_epilogue() (closing brace)
                 RustType::UserDefVec(basic_struct) => {
-                    let first_tmp = daikon_tmp_counter.to_string();
+                    let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp = daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     // We maintain that is_ref represents Vec/array args in this case.
                     let tmp_vec = if is_ref {
@@ -1056,9 +1056,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 // Except pointer is diff, as_ptr() as usize vs as *const _ as *const () as usize...
                 RustType::PrimArray(p_type) => {
                     // UNTRUSTED:
-                    let first_tmp = daikon_tmp_counter.to_string();
+                    let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp = daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let print_vec = if p_type == "String" || p_type == "str" {
                         build_print_string_vec_for_field(
@@ -1092,9 +1092,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 RustType::UserDefArray(basic_struct) => {
                     // UNTRUSTED:
-                    let first_tmp = daikon_tmp_counter.to_string();
+                    let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp = daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     // We maintain that is_ref represents Vec/array args in this case.
                     let tmp_vec = if is_ref {
@@ -1161,9 +1161,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
             let dtrace_field_vec_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
                 // don't need p_type because we just call dtrace_print_xfield which handles the type.
                 RustType::Prim(_) => {
-                    let first_tmp = daikon_tmp_counter.to_string();
+                    let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp = daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
@@ -1180,9 +1180,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     )
                 }
                 RustType::UserDef(field_type) => {
-                    let first_tmp = daikon_tmp_counter.to_string();
+                    let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp = daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let tmp_vec = if !is_ref {
                         build_daikon_tmp_vec_field_userdef_ampersand(
@@ -1216,9 +1216,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 // call X::dtrace_print_<field>_vec since it will be implemented to only print pointers. NOT TRUSTED CODE:
                 RustType::PrimVec(_) => {
-                    let first_tmp = daikon_tmp_counter.to_string();
+                    let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp = daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
@@ -1235,9 +1235,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     )
                 }
                 RustType::UserDefVec(_) => {
-                    let first_tmp = daikon_tmp_counter.to_string();
+                    let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp = daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
@@ -1255,9 +1255,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 RustType::PrimArray(_) => {
                     // UNTRUSTED: is this exactly the same?
-                    let first_tmp = daikon_tmp_counter.to_string();
+                    let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp = daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
@@ -1275,9 +1275,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 RustType::UserDefArray(_) => {
                     // UNTRUSTED: is this exactly the same?
-                    let first_tmp = daikon_tmp_counter.to_string();
+                    let first_tmp: &str = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
-                    let next_tmp = daikon_tmp_counter.to_string();
+                    let next_tmp = &daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
@@ -1453,9 +1453,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         }
                     }
                     RustType::PrimVec(p_type) => {
-                        let first_tmp = daikon_tmp_counter.to_string();
+                        let first_tmp: &str = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
+                        let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let print_vec = if p_type == "String" || p_type == "str" {
                             build_print_string_vec(
@@ -1482,9 +1482,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     }
                     RustType::UserDefVec(basic_type) => {
-                        let first_tmp = daikon_tmp_counter.to_string();
+                        let first_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
+                        let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let var_name = get_param_ident(&decl.inputs[i].pat);
                         // We maintain that is_ref represents Vec/array argument in this case.
@@ -1521,9 +1521,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         res
                     }
                     RustType::PrimArray(p_type) => {
-                        let first_tmp = daikon_tmp_counter.to_string();
+                        let first_tmp: &str = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
+                        let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let print_vec = if p_type == "String" || p_type == "str" {
                             build_print_string_vec(
@@ -1550,9 +1550,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     }
                     RustType::UserDefArray(basic_type) => {
-                        let first_tmp = daikon_tmp_counter.to_string();
+                        let first_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
+                        let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let var_name = get_param_ident(&decl.inputs[i].pat);
                         // We maintain that is_ref represents Vec/array argument in this case.
