@@ -944,7 +944,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut daikon_tmp_counter = 0;
         for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
-                Some(field_ident) => String::from(field_ident.as_str()),
+                Some(field_ident) => field_ident.as_str(),
                 None => panic!("Field has no identifier"),
             };
 
@@ -1153,7 +1153,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut daikon_tmp_counter = 0;
         for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
-                Some(field_ident) => String::from(field_ident.as_str()),
+                Some(field_ident) => field_ident.as_str(),
                 None => panic!("Field has no identifier"),
             };
 
@@ -1315,7 +1315,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             fields[i].vis.kind = VisibilityKind::Public;
 
             let field_name = match &fields[i].ident {
-                Some(field_ident) => String::from(field_ident.as_str()),
+                Some(field_ident) => field_ident.as_str(),
                 None => panic!("Field has no identifier"),
             };
 
