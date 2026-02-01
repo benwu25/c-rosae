@@ -440,14 +440,6 @@ pub(crate) static DAIKON_LIB: &str =
     writeln!(&mut traces, \"{}\", arr).ok();
     writeln!(&mut traces, \"0\").ok();
 }
-pub(crate) fn daikon_lib() -> String {
-    let mut res = String::from(DAIKON_LIB[0]);
-    for i in 1..DAIKON_LIB.len() {
-        res.push_str(&*OUTPUT_PREFIX.lock().unwrap());
-        res.push_str(DAIKON_LIB[i]);
-    }
-    res
-}
 
 pub fn dtrace_print_pointer_vec<T>(v: &Vec<&T>, var_name: String) {
     let mut traces = match File::options().append(true).open(\"${output_prefix}.dtrace\") {
