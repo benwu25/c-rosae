@@ -2312,9 +2312,14 @@ impl<'a> Parser<'a> {
                 }
             }
 
+            let daikon_lib = substitute(
+                DAIKON_LIB,
+                &FxHashMap::from_iter([("output_prefix", &*OUTPUT_PREFIX.lock().unwrap())]),
+            )
+            .unwrap();
             // add daikon library.
-            match &self.parse_items_from_source_str(DAIKON_LIB) {
-                Err(_why) => panic!("Can't parse daikon lib"),
+            match &self.parse_items_from_source_str(&daikon_lib) {
+                Err(_why) => panic!("Can't parse DAIKON_LIB"),
                 Ok(lib_items) => {
                     for item in lib_items {
                         items.push(item.clone());
