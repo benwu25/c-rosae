@@ -457,7 +457,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // Process return expr
         let expr = pprust::expr_to_string(&ret_expr);
         let ret_let = substitute(
-            DTRACE_CALL_PRINT_FIELD,
+            LET_RET,
             &FxHashMap::from_iter([("type", pprust::ty_to_string(&pr_ty)), ("expr", expr)]),
         )
         .unwrap();
@@ -553,7 +553,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         DAIKON_TMP_VEC,
                         &FxHashMap::from_iter([
                             ("first_tmp", String::from(first_tmp)),
-                            ("basic_type", String::from(basic_type)),
+                            ("type", String::from(basic_type)),
                             ("next_tmp", String::from(next_tmp)),
                             ("var_name", String::from("__daikon_ret"))
                         ])
@@ -573,7 +573,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         DTRACE_VEC_FIELDS,
                         &FxHashMap::from_iter([
                             ("plain_struct", String::from(basic_type)),
-                            ("tmp_vec_name", String::from(first_tmp)),
+                            ("tmp_vec_name", format!("__daikon_tmp{}", first_tmp)),
                             ("var_name", String::from("return"))
                         ])
                     )
@@ -634,7 +634,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         DAIKON_TMP_VEC,
                         &FxHashMap::from_iter([
                             ("first_tmp", String::from(first_tmp)),
-                            ("basic_type", String::from(basic_type)),
+                            ("type", String::from(basic_type)),
                             ("next_tmp", String::from(next_tmp)),
                             ("var_name", String::from("__daikon_ret"))
                         ])
@@ -653,8 +653,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     substitute(
                         DTRACE_VEC_FIELDS,
                         &FxHashMap::from_iter([
-                            ("type", String::from(basic_type)),
-                            ("tmp_uuid", String::from(first_tmp)),
+                            ("plain_struct", String::from(basic_type)),
+                            ("tmp_vec_name", format!("__daikon_tmp{}", first_tmp)),
                             ("var_name", String::from("return"))
                         ])
                     )
@@ -1060,7 +1060,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             DTRACE_PRINT_PRIM_VEC_FOR_FIELD,
                             &FxHashMap::from_iter([
-                                ("p_type", p_type.as_str()),
+                                ("type", p_type.as_str()),
                                 ("tmp_uuid", first_tmp),
                                 ("field_name", field_name),
                             ]),
@@ -1095,7 +1095,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
                     let f2 = substitute(
                         DTRACE_PRINT_FIELDS_FOR_FIELD,
-                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct)]),
+                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct), ("tmp_uuid", first_tmp)]),
                     )
                     .unwrap();
                     format!("{}\n{}", f1, f2)
@@ -1165,7 +1165,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
                     let f2 = substitute(
                         DTRACE_PRINT_FIELDS_FOR_FIELD,
-                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct)]),
+                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct), ("tmp_uuid", first_tmp)]),
                     )
                     .unwrap();
                     format!("{}\n{}", f1, f2)
@@ -1191,7 +1191,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             DTRACE_PRINT_PRIM_VEC_FOR_FIELD,
                             &FxHashMap::from_iter([
-                                ("p_type", p_type.as_str()),
+                                ("type", p_type.as_str()),
                                 ("tmp_uuid", first_tmp),
                                 ("field_name", field_name),
                             ]),
@@ -1226,7 +1226,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
                     let f2 = substitute(
                         DTRACE_PRINT_FIELDS_FOR_FIELD,
-                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct)]),
+                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct), ("tmp_uuid", first_tmp)]),
                     )
                     .unwrap();
                     format!("{}\n{}", f1, f2)
@@ -1297,7 +1297,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
                     let f2 = substitute(
                         DTRACE_PRINT_FIELDS_FOR_FIELD,
-                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct)]),
+                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct), ("tmp_uuid", first_tmp)]),
                     )
                     .unwrap();
                     format!("{}\n{}", f1, f2)
@@ -1343,19 +1343,22 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             DAIKON_TMP_VEC_USERDEF,
                             &FxHashMap::from_iter([
                                 ("first_tmp", first_tmp),
-                                ("plain_struct", plain_struct.as_str()),
+                                ("type", plain_struct.as_str()),
                                 ("next_tmp", next_tmp)
                             ])
                         )
                         .unwrap(),
-                        substitute(
-                            DTRACE_PRINT_XFIELD_VEC,
-                            &FxHashMap::from_iter([
-                                ("plain_struct", plain_struct.as_str()),
-                                ("field_name", field_name),
-                                ("tmp_vec_name", first_tmp)
-                            ])
-                        )
+                        {
+                            let tmp_var_name = format!("__daikon_tmp{}", first_tmp);
+                            substitute(
+                                DTRACE_PRINT_XFIELD_VEC,
+                                &FxHashMap::from_iter([
+                                    ("plain_struct", plain_struct.as_str()),
+                                    ("field_name", field_name),
+                                    ("var_name", tmp_var_name.as_str())
+                                ])
+                            )
+                        }
                         .unwrap()
                     )
                 }
@@ -1369,7 +1372,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             DAIKON_TMP_VEC_USERDEF_FIELD_AMPERSAND,
                             &FxHashMap::from_iter([
                                 ("first_tmp", first_tmp),
-                                ("field_type", &field_type),
+                                ("type", &field_type),
                                 ("next_tmp", next_tmp),
                                 ("field_name", &field_name),
                             ]),
@@ -1380,35 +1383,38 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             DAIKON_TMP_VEC_USERDEF_FIELD,
                             &FxHashMap::from_iter([
                                 ("first_tmp", first_tmp),
-                                ("field_type", &field_type),
+                                ("type", &field_type),
                                 ("next_tmp", next_tmp),
                                 ("field_name", &field_name),
                             ]),
                         )
                         .unwrap()
                     };
-                    format!(
-                        "{}\n{}\n{}",
-                        tmp_vec,
-                        substitute(
-                            DTRACE_PRINT_POINTER_VEC_USERDEF,
-                            &FxHashMap::from_iter([
-                                ("plain_struct", field_type.as_str()),
-                                ("tmp_vec_name", first_tmp),
-                                ("field_name", &field_name)
-                            ])
+                    {
+                        let tmp_vec_name_str = format!("__daikon_tmp{}", first_tmp);
+                        format!(
+                            "{}\n{}\n{}",
+                            tmp_vec,
+                            substitute(
+                                DTRACE_PRINT_POINTER_VEC_USERDEF,
+                                &FxHashMap::from_iter([
+                                    ("plain_struct", field_type.as_str()),
+                                    ("tmp_vec_name", tmp_vec_name_str.as_str()),
+                                    ("field_name", field_name)
+                                ])
+                            )
+                            .unwrap(),
+                            substitute(
+                                DTRACE_USERDEF_VEC_FIELDS,
+                                &FxHashMap::from_iter([
+                                    ("plain_struct", field_type.as_str()),
+                                    ("tmp_vec_name", tmp_vec_name_str.as_str()),
+                                    ("field_name", field_name)
+                                ])
+                            )
+                            .unwrap()
                         )
-                        .unwrap(),
-                        substitute(
-                            DTRACE_USERDEF_VEC_FIELDS,
-                            &FxHashMap::from_iter([
-                                ("plain_struct", field_type.as_str()),
-                                ("tmp_vec_name", first_tmp),
-                                ("field_name", &field_name)
-                            ])
-                        )
-                        .unwrap()
-                    )
+                    }
                 }
                 // call X::dtrace_print_<field>_vec since it will be implemented to only print pointers. NOT TRUSTED CODE:
                 RustType::PrimVec(_) => {
@@ -1427,14 +1433,17 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             ])
                         )
                         .unwrap(),
-                        substitute(
-                            DTRACE_PRINT_XFIELD_VEC,
-                            &FxHashMap::from_iter([
-                                ("plain_struct", plain_struct.as_str()),
-                                ("field_name", field_name),
-                                ("tmp_vec_name", first_tmp)
-                            ])
-                        )
+                        {
+                            let tmp_var_name = format!("__daikon_tmp{}", first_tmp);
+                            substitute(
+                                DTRACE_PRINT_XFIELD_VEC,
+                                &FxHashMap::from_iter([
+                                    ("plain_struct", plain_struct.as_str()),
+                                    ("field_name", field_name),
+                                    ("var_name", tmp_var_name.as_str())
+                                ])
+                            )
+                        }
                         .unwrap()
                     )
                 }
@@ -1449,19 +1458,22 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             DAIKON_TMP_VEC_USERDEF,
                             &FxHashMap::from_iter([
                                 ("first_tmp", first_tmp),
-                                ("plain_struct", plain_struct.as_str()),
+                                ("type", plain_struct.as_str()),
                                 ("next_tmp", next_tmp)
                             ])
                         )
                         .unwrap(),
-                        substitute(
-                            DTRACE_PRINT_XFIELD_VEC,
-                            &FxHashMap::from_iter([
-                                ("plain_struct", plain_struct.as_str()),
-                                ("field_name", field_name),
-                                ("tmp_vec_name", first_tmp)
-                            ])
-                        )
+                        {
+                            let tmp_var_name = format!("__daikon_tmp{}", first_tmp);
+                            substitute(
+                                DTRACE_PRINT_XFIELD_VEC,
+                                &FxHashMap::from_iter([
+                                    ("plain_struct", plain_struct.as_str()),
+                                    ("field_name", field_name),
+                                    ("var_name", tmp_var_name.as_str())
+                                ])
+                            )
+                        }
                         .unwrap()
                     )
                 }
@@ -1477,19 +1489,22 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             DAIKON_TMP_VEC_USERDEF,
                             &FxHashMap::from_iter([
                                 ("first_tmp", first_tmp),
-                                ("plain_struct", plain_struct.as_str()),
+                                ("type", plain_struct.as_str()),
                                 ("next_tmp", next_tmp)
                             ])
                         )
                         .unwrap(),
-                        substitute(
-                            DTRACE_PRINT_XFIELD_VEC,
-                            &FxHashMap::from_iter([
-                                ("plain_struct", plain_struct.as_str()),
-                                ("field_name", field_name),
-                                ("tmp_vec_name", first_tmp)
-                            ])
-                        )
+                        {
+                            let tmp_var_name = format!("__daikon_tmp{}", first_tmp);
+                            substitute(
+                                DTRACE_PRINT_XFIELD_VEC,
+                                &FxHashMap::from_iter([
+                                    ("plain_struct", plain_struct.as_str()),
+                                    ("field_name", field_name),
+                                    ("var_name", tmp_var_name.as_str())
+                                ])
+                            )
+                        }
                         .unwrap()
                     )
                 }
@@ -1505,19 +1520,22 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             DAIKON_TMP_VEC_USERDEF,
                             &FxHashMap::from_iter([
                                 ("first_tmp", first_tmp),
-                                ("plain_struct", plain_struct.as_str()),
+                                ("type", plain_struct.as_str()),
                                 ("next_tmp", next_tmp)
                             ])
                         )
                         .unwrap(),
-                        substitute(
-                            DTRACE_PRINT_XFIELD_VEC,
-                            &FxHashMap::from_iter([
-                                ("plain_struct", plain_struct.as_str()),
-                                ("field_name", field_name),
-                                ("tmp_vec_name", first_tmp)
-                            ])
-                        )
+                        {
+                            let tmp_var_name = format!("__daikon_tmp{}", first_tmp);
+                            substitute(
+                                DTRACE_PRINT_XFIELD_VEC,
+                                &FxHashMap::from_iter([
+                                    ("plain_struct", plain_struct.as_str()),
+                                    ("field_name", field_name),
+                                    ("var_name", tmp_var_name.as_str())
+                                ])
+                            )
+                        }
                         .unwrap()
                     )
                 }
@@ -1754,13 +1772,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let var_name = &get_param_ident(&decl.inputs[i].pat);
+                        let tmp_vec_name_str = format!("__daikon_tmp{}", first_tmp);
                         // We maintain that is_ref represents Vec/array argument in this case.
                         let tmp_vec = if is_ref {
                             substitute(
                                 DAIKON_TMP_VEC,
                                 &FxHashMap::from_iter([
                                     ("first_tmp", first_tmp),
-                                    ("basic_type", basic_type),
+                                    ("type", basic_type),
                                     ("next_tmp", next_tmp),
                                     ("var_name", var_name),
                                 ]),
@@ -1771,7 +1790,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 DAIKON_TMP_VEC_AMPERSAND,
                                 &FxHashMap::from_iter([
                                     ("first_tmp", first_tmp),
-                                    ("basic_type", basic_type),
+                                    ("type", basic_type),
                                     ("next_tmp", next_tmp),
                                     ("var_name", var_name),
                                 ]),
@@ -1798,9 +1817,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             substitute(
                                 DTRACE_VEC_FIELDS,
                                 &FxHashMap::from_iter([
-                                    ("type", basic_type.as_str()),
-                                    ("tmp_uuid", first_tmp),
-                                    ("var_name", "return")
+                                    ("plain_struct", basic_type.as_str()),
+                                    ("tmp_vec_name", tmp_vec_name_str.as_str()),
+                                    ("var_name", var_name)
                                 ])
                             )
                             .unwrap(),
@@ -1861,13 +1880,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let var_name = &get_param_ident(&decl.inputs[i].pat);
+                        let tmp_vec_name_str = format!("__daikon_tmp{}", first_tmp);
                         // We maintain that is_ref represents Vec/array argument in this case.
                         let tmp_vec = if is_ref {
                             substitute(
                                 DAIKON_TMP_VEC,
                                 &FxHashMap::from_iter([
                                     ("first_tmp", first_tmp),
-                                    ("basic_type", basic_type),
+                                    ("type", basic_type),
                                     ("next_tmp", next_tmp),
                                     ("var_name", var_name),
                                 ]),
@@ -1878,7 +1898,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 DAIKON_TMP_VEC_AMPERSAND,
                                 &FxHashMap::from_iter([
                                     ("first_tmp", first_tmp),
-                                    ("basic_type", basic_type),
+                                    ("type", basic_type),
                                     ("next_tmp", next_tmp),
                                     ("var_name", var_name),
                                 ]),
@@ -1905,9 +1925,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             substitute(
                                 DTRACE_VEC_FIELDS,
                                 &FxHashMap::from_iter([
-                                    ("type", basic_type.as_str()),
-                                    ("tmp_uuid", first_tmp),
-                                    ("var_name", &String::from("return"))
+                                    ("plain_struct", basic_type.as_str()),
+                                    ("tmp_vec_name", tmp_vec_name_str.as_str()),
+                                    ("var_name", var_name)
                                 ])
                             )
                             .unwrap(),

@@ -179,7 +179,7 @@ pub(crate) static DAIKON_TMP_VEC_USERDEF_FIELD: &str =
     "let mut __daikon_tmp${first_tmp}: Vec<&${type}> = Vec::new();
 let mut __daikon_tmp${next_tmp} = 0;
 while __daikon_tmp${next_tmp} < v.len() {
-    __daikon_tmp${first_tmp}.push(v[__daikon_tmp${next_tmp}].${next_tmp});
+    __daikon_tmp${first_tmp}.push(v[__daikon_tmp${next_tmp}].${field_name});
     __daikon_tmp${next_tmp} += 1;
 }";
 
@@ -302,10 +302,10 @@ pub fn dtrace_print_${field_name}_vec(v: &Vec<&${type}>, var_name: String) {
     writeln!(&mut traces, \"{}\", arr).ok();
     writeln!(traces, \"0\").ok(); }";
 
-// pub(crate) static LET_RET: &str = "
-// fn __skip() {
-//     let __daikon_ret: ${type} = ${expr};
-// }";
+pub(crate) static LET_RET: &str = "
+fn __skip() {
+    let __daikon_ret: ${type} = ${expr};
+}";
 
 pub(crate) static RET: &str = "
 fn __skip() {
