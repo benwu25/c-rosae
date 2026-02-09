@@ -61,7 +61,7 @@ fn main() {
 // $2: var identifier.
 pub(crate) static DTRACE_PRIM: &str = "
 fn main() {
-    dtrace_print_prim::<${type}>(${var_name}, String::from(\"${name}\"));
+    dtrace_print_prim::<${type}>(${var_name}, String::from(\"${var_name}\"));
 }";
 
 // Build a log statement for a primitive return value.
