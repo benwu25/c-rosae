@@ -1095,7 +1095,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
                     let f2 = substitute(
                         DTRACE_PRINT_FIELDS_FOR_FIELD,
-                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct), ("tmp_uuid", first_tmp)]),
+                        &FxHashMap::from_iter([
+                            ("field_name", field_name),
+                            ("type", plain_struct),
+                            ("tmp_uuid", first_tmp),
+                        ]),
                     )
                     .unwrap();
                     format!("{}\n{}", f1, f2)
@@ -1165,7 +1169,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
                     let f2 = substitute(
                         DTRACE_PRINT_FIELDS_FOR_FIELD,
-                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct), ("tmp_uuid", first_tmp)]),
+                        &FxHashMap::from_iter([
+                            ("field_name", field_name),
+                            ("type", plain_struct),
+                            ("tmp_uuid", first_tmp),
+                        ]),
                     )
                     .unwrap();
                     format!("{}\n{}", f1, f2)
@@ -1226,7 +1234,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
                     let f2 = substitute(
                         DTRACE_PRINT_FIELDS_FOR_FIELD,
-                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct), ("tmp_uuid", first_tmp)]),
+                        &FxHashMap::from_iter([
+                            ("field_name", field_name),
+                            ("type", plain_struct),
+                            ("tmp_uuid", first_tmp),
+                        ]),
                     )
                     .unwrap();
                     format!("{}\n{}", f1, f2)
@@ -1297,7 +1309,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
                     let f2 = substitute(
                         DTRACE_PRINT_FIELDS_FOR_FIELD,
-                        &FxHashMap::from_iter([("field_name", field_name), ("type", plain_struct), ("tmp_uuid", first_tmp)]),
+                        &FxHashMap::from_iter([
+                            ("field_name", field_name),
+                            ("type", plain_struct),
+                            ("tmp_uuid", first_tmp),
+                        ]),
                     )
                     .unwrap();
                     format!("{}\n{}", f1, f2)
@@ -1355,8 +1371,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 &FxHashMap::from_iter([
                                     ("plain_struct", plain_struct.as_str()),
                                     ("field_name", field_name),
-                                    ("var_name", tmp_var_name.as_str())
-                                ])
+                                    ("var_name", tmp_var_name.as_str()),
+                                ]),
                             )
                         }
                         .unwrap()
@@ -1440,8 +1456,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 &FxHashMap::from_iter([
                                     ("plain_struct", plain_struct.as_str()),
                                     ("field_name", field_name),
-                                    ("var_name", tmp_var_name.as_str())
-                                ])
+                                    ("var_name", tmp_var_name.as_str()),
+                                ]),
                             )
                         }
                         .unwrap()
@@ -1470,8 +1486,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 &FxHashMap::from_iter([
                                     ("plain_struct", plain_struct.as_str()),
                                     ("field_name", field_name),
-                                    ("var_name", tmp_var_name.as_str())
-                                ])
+                                    ("var_name", tmp_var_name.as_str()),
+                                ]),
                             )
                         }
                         .unwrap()
@@ -1501,8 +1517,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 &FxHashMap::from_iter([
                                     ("plain_struct", plain_struct.as_str()),
                                     ("field_name", field_name),
-                                    ("var_name", tmp_var_name.as_str())
-                                ])
+                                    ("var_name", tmp_var_name.as_str()),
+                                ]),
                             )
                         }
                         .unwrap()
@@ -1532,8 +1548,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 &FxHashMap::from_iter([
                                     ("plain_struct", plain_struct.as_str()),
                                     ("field_name", field_name),
-                                    ("var_name", tmp_var_name.as_str())
-                                ])
+                                    ("var_name", tmp_var_name.as_str()),
+                                ]),
                             )
                         }
                         .unwrap()
