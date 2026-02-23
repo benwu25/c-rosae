@@ -413,6 +413,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // dtrace_param_blocks: Vec of logging code stored in Strings.
     // ret_ty: return type of the function.
     // daikon_tmp_counter: label for the next temporary variable.
+    #[allow(rustc::default_hash_types)]
     fn insert_return(
         &mut self,
         i: &mut usize,
@@ -424,10 +425,16 @@ impl<'a> DaikonDtraceVisitor<'a> {
         ret_ty: &FnRetTy,
         daikon_tmp_counter: &mut u32,
     ) {
-        let exit = build_instrument_code(
-            vec![String::from(ppt_name), String::from(&*exit_counter.to_string())],
+        // ${program_point} -> ppt_name
+        // ${exit_num} -> exit_counter
+        let exit = substitute(
+            HashMap::from([
+                ("${program_point}", ppt_name),
+                ("${exit_num}", &*exit_counter.to_string()),
+            ]),
             DTRACE_EXIT,
         );
+
         *exit_counter += 1;
         // FIXME: create overloads of build_instrument_code specialized for
         // common tasks like creating exit ppts, which may also do operations
@@ -450,36 +457,35 @@ impl<'a> DaikonDtraceVisitor<'a> {
         };
         // Process return expr
         let expr = pprust::expr_to_string(&ret_expr);
-        let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
+        let ret_let = substitute(
+            HashMap::from([
+                ("${ret_ty}", pprust::ty_to_string(&pr_ty).as_str()),
+                ("${ret_expr}", expr.as_str()),
+            ]),
+            DTRACE_LET_RET,
+        );
+
         *i = self.insert_into_block(*i, &ret_let, body);
         match &r_ty {
             RustType::Prim(p_type) => {
                 let prim_record_ret = if p_type == "String" || p_type == "str" {
-                    build_instrument_code(
-                        vec![String::from("__daikon_ret"), String::from("return")],
-                        DTRACE_PRIM_TOSTRING,
-                    )
+                    String::from(DTRACE_PRIM_TOSTRING_RET)
                 } else if ret_is_ref {
-                    build_instrument_code(
-                        vec![
-                            p_type.clone(),
-                            p_type.clone(),
-                            String::from("__daikon_ret"),
-                            String::from("return"),
-                        ],
-                        DTRACE_PRIM_REF,
+                    substitute(
+                        HashMap::from([("${prim_type}", p_type.as_str())]),
+                        DTRACE_PRIM_REF_RET,
                     )
                 } else {
-                    build_instrument_code(vec![p_type.clone()], DTRACE_PRIM_RET)
+                    substitute(HashMap::from([("${prim_type}", p_type.as_str())]), DTRACE_PRIM_RET)
                 };
                 *i = self.insert_into_block(*i, &prim_record_ret, body);
             }
             RustType::UserDef(_) => {
                 if ret_is_ref == false {
-                    let userdef_record_ret = build_userdef_ret_ampersand(3);
+                    let userdef_record_ret = String::from(DTRACE_USERDEF_RET_AMPERSAND);
                     *i = self.insert_into_block(*i, &userdef_record_ret, body);
                 } else {
-                    let userdef_record_ret = build_userdef_ret(3);
+                    let userdef_record_ret = String::from(DTRACE_USERDEF_RET);
                     *i = self.insert_into_block(*i, &userdef_record_ret, body);
                 }
             }
@@ -489,26 +495,35 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 let next_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let print_vec = if p_type == "String" || p_type == "str" {
-                    build_print_string_vec(
-                        format!("__daikon_tmp{}", first_tmp),
-                        String::from("return"),
+                    substitute(
+                        HashMap::from([
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                            ("${variable_name}", "return"),
+                        ]),
+                        DTRACE_PRINT_STRING_VEC,
                     )
                 } else {
-                    build_print_prim_vec(
-                        p_type.clone(),
-                        format!("__daikon_tmp{}", first_tmp),
-                        String::from("return"),
+                    substitute(
+                        HashMap::from([
+                            ("${prim_type}", p_type.as_str()),
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                            ("${variable_name}", "return"),
+                        ]),
+                        DTRACE_PRINT_PRIM_VEC,
                     )
                 };
                 let prim_vec_record_ret = format!(
                     "{}\n{}\n{}",
-                    build_tmp_vec_prim(
-                        first_tmp.clone(),
-                        p_type.to_string(),
-                        next_tmp.clone(),
-                        String::from("__daikon_ret")
+                    substitute(
+                        HashMap::from([
+                            ("${prim_type}", p_type.as_str()),
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                            ("${counter_name}", &format!("__daikon_tmp{}", next_tmp)),
+                            ("${variable_name}", "__daikon_ret")
+                        ]),
+                        DTRACE_TMP_VEC_PRIM
                     ),
-                    build_pointer_vec_ret(),
+                    String::from(DTRACE_VEC_POINTER_RET),
                     print_vec.clone()
                 );
                 *i = self.insert_into_block(*i, &prim_vec_record_ret, body);
@@ -520,22 +535,31 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 *daikon_tmp_counter += 1;
                 let userdef_vec_record_ret = format!(
                     "{}\n{}\n{}\n{}",
-                    build_daikon_tmp_vec(
-                        first_tmp.clone(),
-                        basic_type.to_string(),
-                        next_tmp.clone(),
-                        String::from("__daikon_ret")
+                    substitute(
+                        HashMap::from([
+                            ("${type}", basic_type.as_str()),
+                            ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                            ("${variable_name}", "__daikon_ret")
+                        ]),
+                        DTRACE_TMP_VEC
                     ),
-                    build_pointer_vec_ret(),
-                    build_print_pointer_vec(
-                        basic_type.to_string(),
-                        format!("__daikon_tmp{}", first_tmp),
-                        String::from("return")
-                    ), // ?
-                    build_print_vec_fields(
-                        basic_type.to_string(),
-                        format!("__daikon_tmp{}", first_tmp),
-                        String::from("return")
+                    String::from(DTRACE_VEC_POINTER_RET),
+                    substitute(
+                        HashMap::from([
+                            ("${type}", basic_type.as_str()),
+                            ("${variable_name}", "return"),
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                        ]),
+                        DTRACE_PRINT_POINTER_VEC
+                    ),
+                    substitute(
+                        HashMap::from([
+                            ("${type}", basic_type.as_str()),
+                            ("${variable_name}", "return"),
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                        ]),
+                        DTRACE_VEC_FIELDS
                     )
                 );
                 *i = self.insert_into_block(*i, &userdef_vec_record_ret, body);
@@ -546,26 +570,35 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 let next_tmp = daikon_tmp_counter.to_string();
                 *daikon_tmp_counter += 1;
                 let print_vec = if p_type == "String" || p_type == "str" {
-                    build_print_string_vec(
-                        format!("__daikon_tmp{}", first_tmp),
-                        String::from("return"),
+                    substitute(
+                        HashMap::from([
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                            ("${variable_name}", "return"),
+                        ]),
+                        DTRACE_PRINT_STRING_VEC,
                     )
                 } else {
-                    build_print_prim_vec(
-                        p_type.clone(),
-                        format!("__daikon_tmp{}", first_tmp),
-                        String::from("return"),
+                    substitute(
+                        HashMap::from([
+                            ("${prim_type}", p_type.as_str()),
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                            ("${variable_name}", "return"),
+                        ]),
+                        DTRACE_PRINT_PRIM_VEC,
                     )
                 };
                 let prim_vec_record_ret = format!(
                     "{}\n{}\n{}",
-                    build_tmp_vec_prim(
-                        first_tmp.clone(),
-                        p_type.to_string(),
-                        next_tmp.clone(),
-                        String::from("__daikon_ret")
+                    substitute(
+                        HashMap::from([
+                            ("${prim_type}", p_type.as_str()),
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                            ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                            ("${variable_name}", "__daikon_ret")
+                        ]),
+                        DTRACE_TMP_VEC_PRIM
                     ),
-                    build_pointer_arr_ret(),
+                    String::from(DTRACE_BUILD_POINTER_ARR_RET),
                     print_vec.clone()
                 );
                 *i = self.insert_into_block(*i, &prim_vec_record_ret, body);
@@ -577,22 +610,31 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 *daikon_tmp_counter += 1;
                 let userdef_vec_record_ret = format!(
                     "{}\n{}\n{}\n{}",
-                    build_daikon_tmp_vec(
-                        first_tmp.clone(),
-                        basic_type.to_string(),
-                        next_tmp.clone(),
-                        String::from("__daikon_ret")
+                    substitute(
+                        HashMap::from([
+                            ("${type}", basic_type.as_str()),
+                            ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                            ("${variable_name}", "__daikon_ret")
+                        ]),
+                        DTRACE_TMP_VEC
                     ),
-                    build_pointer_arr_ret(),
-                    build_print_pointer_vec(
-                        basic_type.to_string(),
-                        format!("__daikon_tmp{}", first_tmp),
-                        String::from("return")
+                    String::from(DTRACE_BUILD_POINTER_ARR_RET),
+                    substitute(
+                        HashMap::from([
+                            ("${type}", basic_type.as_str()),
+                            ("${variable_name}", "return"),
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                        ]),
+                        DTRACE_PRINT_POINTER_VEC
                     ),
-                    build_print_vec_fields(
-                        basic_type.to_string(),
-                        format!("__daikon_tmp{}", first_tmp),
-                        String::from("return")
+                    substitute(
+                        HashMap::from([
+                            ("${type}", basic_type.as_str()),
+                            ("${variable_name}", "return"),
+                            ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                        ]),
+                        DTRACE_VEC_FIELDS
                     )
                 );
                 *i = self.insert_into_block(*i, &userdef_vec_record_ret, body);
@@ -601,9 +643,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
             RustType::Error => panic!("ret_ty is RustType::Error"),
         }
 
-        *i = self.insert_into_block(*i, &dtrace_newline(), body);
+        *i = self.insert_into_block(*i, &String::from(DTRACE_NEWLINE), body);
 
-        let ret = build_ret();
+        let ret = String::from(DTRACE_RET);
         *i = self.insert_into_block(*i, &ret, body);
 
         // remove old return stmt
@@ -771,10 +813,16 @@ impl<'a> DaikonDtraceVisitor<'a> {
         match &stmt.kind {
             StmtKind::Semi(semi) => match &semi.kind {
                 ExprKind::Ret(None) => {
-                    let exit = build_instrument_code(
-                        vec![String::from(ppt_name), String::from(&*exit_counter.to_string())],
+                    // ${program_point} -> ppt_name
+                    // ${exit_num} -> exit_counter
+                    let exit = substitute(
+                        HashMap::from([
+                            ("${program_point}", ppt_name),
+                            ("${exit_num}", &*exit_counter.to_string()),
+                        ]),
                         DTRACE_EXIT,
                     );
+
                     *exit_counter += 1;
                     i = self.insert_into_block(i, &exit, body);
                     for param_block in &mut *dtrace_param_blocks {
@@ -784,7 +832,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         i = self.insert_into_block(i, &param_block, body);
                     }
 
-                    i = self.insert_into_block(i, &dtrace_newline(), body);
+                    i = self.insert_into_block(i, &String::from(DTRACE_NEWLINE), body);
 
                     // we're sitting on the void return we just processed, so inc
                     // to move on.
@@ -834,8 +882,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // Get 'impl X { }' as an Item struct.
     // This will be transformed into a new impl with dtrace routines.
+    #[allow(rustc::default_hash_types)]
     fn base_impl_item(&mut self) -> Box<Item> {
-        let base_impl = base_impl();
+        let base_impl = String::from(DTRACE_BUILD_AN_IMPL_BLOCK);
         let base_impl_item = self.parser.parse_items_from_source_string(base_impl);
         match &base_impl_item {
             Err(_why) => panic!("Parsing base impl failed"),
@@ -930,6 +979,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // Additionally, for any Vec or array fields, adds a function
     // which is responsible for logging the field in pointer format.
     // FIXME: write a small example input/output.
+    #[allow(rustc::default_hash_types)]
     fn build_dtrace_print_xfield_vec(
         &mut self,
         plain_struct: String,
@@ -937,7 +987,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     ) -> String {
         // WARNING: also building dtrace_print_xfield here... be careful about different issues.
         // dtrace_print_xfield_vec prints scalar fields out of a Vec<Me>, and dtrace_print_xfield takes one Me and prints Me.f which is a Vec.
-        let mut dtrace_print_xfields_vec = dtrace_print_xfields_vec_prologue();
+        let mut dtrace_print_xfields_vec = String::from(DTRACE_PRINT_XFIELDS_VEC_PROLOGUE);
 
         // not important for this to be here, each function is self-contained so
         // the names don't matter.
@@ -953,103 +1003,147 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 RustType::Prim(p_type) => {
                     // We have a vec of ourselves, and the field is
                     if p_type == "String" || p_type == "str" {
-                        build_print_xfield_string(field_name.clone(), plain_struct.clone())
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${field_name}", field_name.as_str()),
+                                ("${file_name}", &*OUTPUT_PREFIX.lock().unwrap()),
+                            ]),
+                            DTRACE_PRINT_XFIELDS_STRING,
+                        )
                     } else {
-                        build_print_xfield(field_name.clone(), plain_struct.clone()) // FIXME: change this name to involve vec to be clear.
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${field_name}", field_name.as_str()),
+                                ("${file_name}", &*OUTPUT_PREFIX.lock().unwrap()),
+                            ]),
+                            DTRACE_PRINT_XFIELDS,
+                        )
                     }
                 }
-                // FIXME: remove this
-                // mash:
-                //            build_dtrace_print_xfield_prologue(),
-                //            build_tmp_prim_vec_for_field(),
-                //            build_pointer_vec_userdef(),
-                //            build_dtrace_print_xfield_middle(),
-                //            build_print_prim_vec_for_field(),
-                //            build_dtrace_print_xfield_epilogue()
                 RustType::PrimVec(p_type) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let print_vec = if p_type == "String" || p_type == "str" {
-                        build_print_string_vec_for_field(
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone(),
+                        substitute(
+                            HashMap::from([
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
+                            DTRACE_PRINT_STRING_VEC_FOR_FIELD,
                         )
                     } else {
-                        build_print_prim_vec_for_field(
-                            p_type.to_string(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone(),
+                        substitute(
+                            HashMap::from([
+                                ("${prim_type}", p_type.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
+                            DTRACE_PRINT_PRIM_VEC_FOR_FIELD,
                         )
                     };
                     let f1 = format!(
                         "{}\n{}\n{}\n{}\n{}\n{}",
-                        build_dtrace_print_xfield_prologue(field_name.clone()),
-                        build_tmp_prim_vec_for_field(
-                            first_tmp.clone(),
-                            p_type.to_string(),
-                            next_tmp.clone(),
-                            field_name.clone()
+                        substitute(
+                            HashMap::from([("${field_name}", field_name.as_str())]),
+                            DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE
                         ),
-                        build_pointer_vec_userdef(field_name.clone()),
-                        build_dtrace_print_xfield_middle(),
+                        substitute(
+                            HashMap::from([
+                                ("${prim_type}", p_type.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${field_name}", field_name.as_str())
+                            ]),
+                            DTRACE_TMP_PRIM_VEC_FOR_FIELD
+                        ),
+                        substitute(
+                            HashMap::from([("${field_name}", field_name.as_str())]),
+                            DTRACE_POINTER_VEC_USERDEF
+                        ),
+                        String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_MID),
                         print_vec.clone(),
-                        build_dtrace_print_xfield_epilogue()
+                        String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE)
                     );
-                    let f2 =
-                        build_print_xfield_for_vec(field_name.clone(), plain_struct.to_string());
+                    let f2 = substitute(
+                        HashMap::from([
+                            ("${type}", plain_struct.as_str()),
+                            ("${field_name}", field_name.as_str()),
+                            ("${file_name}", &*OUTPUT_PREFIX.lock().unwrap()),
+                        ]),
+                        DTRACE_PRINT_XFIELDS_VEC,
+                    );
                     format!("{}\n{}", f1, f2)
                 }
-                // FIXME: remove this.
-                // mash:
-                //            build_dtrace_print_xfield_prologue(),
-                //            build_tmp_vec_for_field(),
-                //            build_pointer_vec_userdef() (for single pointer),
-                //            build_pointers_vec_userdef() (for pointers),
-                //            build_dtrace_print_xfield_middle() (depth check),
-                //            build_print_vec_fields_for_field() (for contents),
-                //            build_dtrace_print_xfield_epilogue() (closing brace)
                 RustType::UserDefVec(basic_struct) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let next_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     // We maintain that is_ref represents Vec/array args in this case.
+                    // NOTE: are these swapped?
                     let tmp_vec = if is_ref {
-                        build_tmp_vec_for_field(
-                            first_tmp.clone(),
-                            basic_struct.to_string(),
-                            next_tmp.clone(),
-                            field_name.clone(),
+                        substitute(
+                            HashMap::from([
+                                ("${type}", basic_struct.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
+                            DTRACE_TMP_VEC_FOR_FIELD,
                         )
                     } else {
-                        build_tmp_vec_for_field_ampersand(
-                            first_tmp.clone(),
-                            basic_struct.to_string(),
-                            next_tmp.clone(),
-                            field_name.clone(),
+                        substitute(
+                            HashMap::from([
+                                ("${type}", basic_struct.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
+                            DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND,
                         )
                     };
                     let f1 = format!(
                         "{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                        build_dtrace_print_xfield_prologue(field_name.clone()),
+                        substitute(
+                            HashMap::from([("${field_name}", field_name.as_str())]),
+                            DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE
+                        ),
                         tmp_vec.clone(),
-                        build_pointer_vec_userdef(field_name.clone()),
-                        build_pointers_vec_userdef(
-                            basic_struct.to_string(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone()
+                        substitute(
+                            HashMap::from([("${field_name}", field_name.as_str())]),
+                            DTRACE_POINTER_VEC_USERDEF
                         ),
-                        build_dtrace_print_xfield_middle(),
-                        build_print_vec_fields_for_field(
-                            basic_struct.to_string(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone()
+                        substitute(
+                            HashMap::from([
+                                ("${type}", basic_struct.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${field_name}", field_name.as_str())
+                            ]),
+                            DTRACE_POINTERS_VEC_USERDEF
                         ),
-                        build_dtrace_print_xfield_epilogue()
+                        String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_MID),
+                        substitute(
+                            HashMap::from([
+                                ("${type}", basic_struct.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${field_name}", field_name.as_str())
+                            ]),
+                            DTRACE_PRINT_FIELDS_FOR_FIELD
+                        ),
+                        String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE)
                     );
-                    let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.clone());
+                    let f2 = substitute(
+                        HashMap::from([
+                            ("${type}", plain_struct.as_str()),
+                            ("${field_name}", field_name.as_str()),
+                            ("${file_name}", &*OUTPUT_PREFIX.lock().unwrap()),
+                        ]),
+                        DTRACE_PRINT_XFIELDS_VEC,
+                    );
                     format!("{}\n{}", f1, f2)
                 }
                 // FIXME: arrays, mighty similar to vec. Maybe you can cheat and just do the exact same thing... use | in pattern matching.
@@ -1061,33 +1155,54 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     let next_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let print_vec = if p_type == "String" || p_type == "str" {
-                        build_print_string_vec_for_field(
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone(),
+                        substitute(
+                            HashMap::from([
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
+                            DTRACE_PRINT_STRING_VEC_FOR_FIELD,
                         )
                     } else {
-                        build_print_prim_vec_for_field(
-                            p_type.to_string(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone(),
+                        substitute(
+                            HashMap::from([
+                                ("${prim_type}", p_type.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
+                            DTRACE_PRINT_PRIM_VEC_FOR_FIELD,
                         )
                     };
                     let f1 = format!(
                         "{}\n{}\n{}\n{}\n{}\n{}",
-                        build_dtrace_print_xfield_prologue(field_name.clone()),
-                        build_tmp_prim_vec_for_field(
-                            first_tmp.clone(),
-                            p_type.to_string(),
-                            next_tmp.clone(),
-                            field_name.clone()
+                        substitute(
+                            HashMap::from([("${field_name}", field_name.as_str())]),
+                            DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE
                         ),
-                        build_pointer_arr_userdef(field_name.clone()),
-                        build_dtrace_print_xfield_middle(),
+                        substitute(
+                            HashMap::from([
+                                ("${prim_type}", p_type.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${field_name}", field_name.as_str())
+                            ]),
+                            DTRACE_TMP_PRIM_VEC_FOR_FIELD
+                        ),
+                        substitute(
+                            HashMap::from([("${field_name}", field_name.as_str())]),
+                            DTRACE_POINTER_ARR_USERDEF
+                        ),
+                        String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_MID),
                         print_vec.clone(),
-                        build_dtrace_print_xfield_epilogue()
+                        String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE)
                     );
-                    let f2 =
-                        build_print_xfield_for_vec(field_name.clone(), plain_struct.to_string());
+                    let f2 = substitute(
+                        HashMap::from([
+                            ("${type}", plain_struct.as_str()),
+                            ("${field_name}", field_name.as_str()),
+                            ("${file_name}", &*OUTPUT_PREFIX.lock().unwrap()),
+                        ]),
+                        DTRACE_PRINT_XFIELDS_VEC,
+                    );
                     format!("{}\n{}", f1, f2)
                 }
                 RustType::UserDefArray(basic_struct) => {
@@ -1097,40 +1212,66 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     let next_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     // We maintain that is_ref represents Vec/array args in this case.
+                    // NOTE: are these swapped?
                     let tmp_vec = if is_ref {
-                        build_tmp_vec_for_field(
-                            first_tmp.clone(),
-                            basic_struct.to_string(),
-                            next_tmp.clone(),
-                            field_name.clone(),
+                        substitute(
+                            HashMap::from([
+                                ("${type}", basic_struct.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
+                            DTRACE_TMP_VEC_FOR_FIELD,
                         )
                     } else {
-                        build_tmp_vec_for_field_ampersand(
-                            first_tmp.clone(),
-                            basic_struct.to_string(),
-                            next_tmp.clone(),
-                            field_name.clone(),
+                        substitute(
+                            HashMap::from([
+                                ("${type}", basic_struct.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
+                            DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND,
                         )
                     };
                     let f1 = format!(
                         "{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                        build_dtrace_print_xfield_prologue(field_name.clone()),
+                        substitute(
+                            HashMap::from([("${field_name}", field_name.as_str())]),
+                            DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE
+                        ),
                         tmp_vec.clone(),
-                        build_pointer_arr_userdef(field_name.clone()),
-                        build_pointers_vec_userdef(
-                            basic_struct.to_string(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone()
+                        substitute(
+                            HashMap::from([("${field_name}", field_name.as_str())]),
+                            DTRACE_POINTER_ARR_USERDEF
                         ),
-                        build_dtrace_print_xfield_middle(),
-                        build_print_vec_fields_for_field(
-                            basic_struct.to_string(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone()
+                        substitute(
+                            HashMap::from([
+                                ("${type}", basic_struct.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${field_name}", field_name.as_str())
+                            ]),
+                            DTRACE_POINTERS_VEC_USERDEF
                         ),
-                        build_dtrace_print_xfield_epilogue()
+                        String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_MID),
+                        substitute(
+                            HashMap::from([
+                                ("${type}", basic_struct.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${field_name}", field_name.as_str())
+                            ]),
+                            DTRACE_PRINT_FIELDS_FOR_FIELD
+                        ),
+                        String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE)
                     );
-                    let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.clone());
+                    let f2 = substitute(
+                        HashMap::from([
+                            ("${type}", plain_struct.as_str()),
+                            ("${field_name}", field_name.as_str()),
+                            ("${file_name}", &*OUTPUT_PREFIX.lock().unwrap()),
+                        ]),
+                        DTRACE_PRINT_XFIELDS_VEC,
+                    );
                     format!("{}\n{}", f1, f2)
                 }
                 _ => String::from(""),
@@ -1138,17 +1279,25 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
             dtrace_print_xfields_vec.push_str(&dtrace_print_xfield);
         }
-        let res = format!("{}{}", dtrace_print_xfields_vec, dtrace_print_xfields_vec_epilogue());
+        let res = format!(
+            "{}{}",
+            dtrace_print_xfields_vec,
+            String::from(DTRACE_PRINT_XFIELDS_VEC_EPILOGUE)
+        );
         res
     }
 
     // Builds the top-level function which is called to log a Vec or array of a given struct.
+    #[allow(rustc::default_hash_types)]
     fn build_dtrace_print_fields_vec(
         &mut self,
         plain_struct: String,
         fields: &ThinVec<FieldDef>,
     ) -> String {
-        let mut dtrace_print_fields_vec = dtrace_print_fields_vec_prologue(plain_struct.clone());
+        let mut dtrace_print_fields_vec = substitute(
+            HashMap::from([("${type}", plain_struct.as_str())]),
+            DTRACE_PRINT_FIELDS_VEC_PROLOGUE,
+        );
 
         let mut daikon_tmp_counter = 0;
         for i in 0..fields.len() {
@@ -1167,15 +1316,21 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
-                        build_daikon_tmp_vec_userdef(
-                            first_tmp.clone(),
-                            plain_struct.clone(),
-                            next_tmp
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                            ]),
+                            DTRACE_TMP_VEC_USERDEF
                         ),
-                        build_print_xfield_vec(
-                            plain_struct.clone(),
-                            field_name.clone(),
-                            format!("__daikon_tmp{}", first_tmp)
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${field_name}", field_name.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                            ]),
+                            DTRACE_PRINT_XFIELD_VEC
                         )
                     )
                 }
@@ -1185,32 +1340,44 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     let next_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
                     let tmp_vec = if !is_ref {
-                        build_daikon_tmp_vec_field_userdef_ampersand(
-                            first_tmp.clone(),
-                            field_type.clone(),
-                            next_tmp.clone(),
-                            field_name.clone(),
+                        substitute(
+                            HashMap::from([
+                                ("${type}", field_type.as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
+                            DTRACE_TMP_VEC_USERDEF_FIELD_AMPERSAND,
                         )
                     } else {
-                        build_daikon_tmp_vec_field_userdef(
-                            first_tmp.clone(),
-                            field_type.clone(),
-                            next_tmp.clone(),
-                            field_name.clone(),
+                        substitute(
+                            HashMap::from([
+                                ("${type}", field_type.as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
+                            DTRACE_TMP_VEC_USERDEF_FIELD,
                         )
                     };
                     format!(
                         "{}\n{}\n{}",
                         tmp_vec,
-                        build_print_pointer_vec_userdef(
-                            field_type.clone(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone()
+                        substitute(
+                            HashMap::from([
+                                ("${type}", field_type.as_str()),
+                                ("${field_name}", field_name.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                            ]),
+                            DTRACE_PRINT_POINTER_VEC_USERDEF
                         ),
-                        build_print_vec_fields_userdef(
-                            field_type.clone(),
-                            format!("__daikon_tmp{}", first_tmp),
-                            field_name.clone()
+                        substitute(
+                            HashMap::from([
+                                ("${type}", field_type.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${field_name}", field_name.as_str())
+                            ]),
+                            DTRACE_USERDEF_VEC_FIELDS
                         )
                     )
                 }
@@ -1222,15 +1389,21 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
-                        build_daikon_tmp_vec_userdef(
-                            first_tmp.clone(),
-                            plain_struct.clone(),
-                            next_tmp
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                            ]),
+                            DTRACE_TMP_VEC_USERDEF
                         ),
-                        build_print_xfield_vec(
-                            plain_struct.clone(),
-                            field_name.clone(),
-                            format!("__daikon_tmp{}", first_tmp)
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${field_name}", field_name.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                            ]),
+                            DTRACE_PRINT_XFIELD_VEC
                         )
                     )
                 }
@@ -1241,15 +1414,21 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
-                        build_daikon_tmp_vec_userdef(
-                            first_tmp.clone(),
-                            plain_struct.clone(),
-                            next_tmp
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                            ]),
+                            DTRACE_TMP_VEC_USERDEF
                         ),
-                        build_print_xfield_vec(
-                            plain_struct.clone(),
-                            field_name.clone(),
-                            format!("__daikon_tmp{}", first_tmp)
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${field_name}", field_name.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                            ]),
+                            DTRACE_PRINT_XFIELD_VEC
                         )
                     )
                 }
@@ -1261,15 +1440,21 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
-                        build_daikon_tmp_vec_userdef(
-                            first_tmp.clone(),
-                            plain_struct.clone(),
-                            next_tmp
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                            ]),
+                            DTRACE_TMP_VEC_USERDEF
                         ),
-                        build_print_xfield_vec(
-                            plain_struct.clone(),
-                            field_name.clone(),
-                            format!("__daikon_tmp{}", first_tmp)
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${field_name}", field_name.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                            ]),
+                            DTRACE_PRINT_XFIELD_VEC
                         )
                     )
                 }
@@ -1281,15 +1466,21 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter += 1;
                     format!(
                         "{}\n{}",
-                        build_daikon_tmp_vec_userdef(
-                            first_tmp.clone(),
-                            plain_struct.clone(),
-                            next_tmp
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                            ]),
+                            DTRACE_TMP_VEC_USERDEF
                         ),
-                        build_print_xfield_vec(
-                            plain_struct.clone(),
-                            field_name.clone(),
-                            format!("__daikon_tmp{}", first_tmp)
+                        substitute(
+                            HashMap::from([
+                                ("${type}", plain_struct.as_str()),
+                                ("${field_name}", field_name.as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                            ]),
+                            DTRACE_PRINT_XFIELD_VEC
                         )
                     )
                 }
@@ -1300,14 +1491,19 @@ impl<'a> DaikonDtraceVisitor<'a> {
             dtrace_print_fields_vec.push_str(&dtrace_field_vec_rec); // don't think a newline here would matter? Parsing doesn't care.
         }
 
-        let res = format!("{}{}", dtrace_print_fields_vec, dtrace_print_fields_vec_epilogue());
+        let res = format!(
+            "{}{}",
+            dtrace_print_fields_vec,
+            String::from(DTRACE_PRINT_FIELDS_VEC_EPILOGUE)
+        );
         res
     }
 
     // Given a struct's field declarations, generate the function dtrace_print_fields(self)
     // to be added to the synthesized impl block.
+    #[allow(rustc::default_hash_types)]
     fn build_dtrace_print_fields(&mut self, fields: &mut ThinVec<FieldDef>) -> String {
-        let mut dtrace_print_fields: String = dtrace_print_fields_prologue();
+        let mut dtrace_print_fields: String = String::from(DTRACE_PRINT_FIELDS_PROLOGUE);
 
         for i in 0..fields.len() {
             // FIXME: remove and add tests for private fields.
@@ -1323,45 +1519,49 @@ impl<'a> DaikonDtraceVisitor<'a> {
             let mut dtrace_field_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
                 RustType::Prim(p_type) => {
                     if p_type == "String" || p_type == "str" {
-                        build_instrument_code(
-                            vec![field_name.clone(), field_name.clone()],
+                        substitute(
+                            HashMap::from([("${field_name}", field_name.as_str())]),
                             DTRACE_PRIM_FIELD_TOSTRING,
                         )
                     } else if is_ref {
-                        build_instrument_code(
-                            vec![
-                                p_type.clone(),
-                                p_type.clone(),
-                                field_name.clone(),
-                                field_name.clone(),
-                            ],
+                        substitute(
+                            HashMap::from([
+                                ("${prim_type}", p_type.as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
                             DTRACE_PRIM_REF_STRUCT,
                         )
                     } else {
-                        build_instrument_code(
-                            vec![p_type.clone(), field_name.clone(), field_name.clone()],
+                        substitute(
+                            HashMap::from([
+                                ("${prim_type}", p_type.as_str()),
+                                ("${field_name}", field_name.as_str()),
+                            ]),
                             DTRACE_PRIM_STRUCT,
                         )
                     }
                 }
                 RustType::UserDef(_) => {
                     if !is_ref {
-                        build_field_userdef_with_ampersand_access(field_name.clone())
+                        substitute(
+                            HashMap::from([("${field_name}", field_name.as_str())]),
+                            DTRACE_USERDEF_STRUCT_AMPERSAND,
+                        )
                     } else {
-                        build_field_userdef(field_name.clone())
+                        substitute(
+                            HashMap::from([("${field_name}", field_name.as_str())]),
+                            DTRACE_USERDEF_STRUCT,
+                        )
                     }
                 }
                 // FIXME: use the | operator here.
-                RustType::PrimVec(_) => build_call_print_field(field_name.clone()),
-                RustType::UserDefVec(_) => build_call_print_field(field_name.clone()),
-                RustType::PrimArray(_p_type) => {
-                    // UNTRUSTED:
-                    build_call_print_field(field_name.clone())
-                }
-                RustType::UserDefArray(_) => {
-                    // UNTRUSTED:
-                    build_call_print_field(field_name.clone())
-                }
+                RustType::PrimVec(_)
+                | RustType::UserDefVec(_)
+                | RustType::PrimArray(_)
+                | RustType::UserDefArray(_) => substitute(
+                    HashMap::from([("${field_name}", field_name.as_str())]),
+                    DTRACE_CALL_PRINT_FIELD,
+                ),
                 RustType::NoRet => String::from(""),
                 RustType::Error => panic!("Field type not handled"),
             };
@@ -1370,7 +1570,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             dtrace_print_fields.push_str(&format!("{}{}", dtrace_field_rec, "\n"));
         }
 
-        format!("{}{}", dtrace_print_fields, dtrace_print_fields_epilogue())
+        format!("{}{}", dtrace_print_fields, String::from(DTRACE_PRINT_FIELDS_EPILOGUE))
     }
 
     // FIXME: dtrace calls should be represented with a better data structures rather than
@@ -1378,6 +1578,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // Given a function signature, generate a set of dtrace calls for each parameter,
     // such as logging a pointer value and logging contents for structs. These
     // will be reused at the function entry and each exit ppt.
+    #[allow(rustc::default_hash_types)]
     fn grok_fn_sig(&mut self, decl: &Box<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
         // grok params.
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
@@ -1385,69 +1586,51 @@ impl<'a> DaikonDtraceVisitor<'a> {
             let mut is_ref = false;
             let var_name = get_param_ident(&decl.inputs[i].pat);
             let mut dtrace_rec = if get_param_ident(&decl.inputs[i].pat) == "self" {
-                build_instrument_code(
-                    vec![
-                        var_name.clone(),
-                        var_name.clone(),
-                        var_name.clone(),
-                        String::from("3"), /* depth_arg */
-                        var_name.clone(),
-                    ],
-                    DTRACE_USERDEF,
-                )
+                substitute(HashMap::from([("${variable_name}", var_name.as_str())]), DTRACE_USERDEF)
             } else {
                 match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
                     RustType::Prim(p_type) => {
                         if p_type == "String" || p_type == "str" {
-                            build_instrument_code(
-                                vec![
-                                    get_param_ident(&decl.inputs[i].pat),
-                                    get_param_ident(&decl.inputs[i].pat),
-                                ],
+                            substitute(
+                                HashMap::from([(
+                                    "${variable_name}",
+                                    get_param_ident(&decl.inputs[i].pat).as_str(),
+                                )]),
                                 DTRACE_PRIM_TOSTRING,
                             )
                         } else if is_ref {
-                            build_instrument_code(
-                                vec![
-                                    p_type.clone(),
-                                    p_type.clone(),
-                                    get_param_ident(&decl.inputs[i].pat),
-                                    get_param_ident(&decl.inputs[i].pat),
-                                ],
+                            substitute(
+                                HashMap::from([
+                                    ("${prim_type}", p_type.as_str()),
+                                    (
+                                        "${variable_name}",
+                                        get_param_ident(&decl.inputs[i].pat).as_str(),
+                                    ),
+                                ]),
                                 DTRACE_PRIM_REF,
                             )
                         } else {
-                            build_instrument_code(
-                                vec![
-                                    p_type.clone(),
-                                    get_param_ident(&decl.inputs[i].pat),
-                                    get_param_ident(&decl.inputs[i].pat),
-                                ],
+                            substitute(
+                                HashMap::from([
+                                    ("${prim_type}", p_type.as_str()),
+                                    (
+                                        "${variable_name}",
+                                        get_param_ident(&decl.inputs[i].pat).as_str(),
+                                    ),
+                                ]),
                                 DTRACE_PRIM,
                             )
                         }
                     }
                     RustType::UserDef(_) => {
                         if !is_ref {
-                            build_instrument_code(
-                                vec![
-                                    var_name.clone(),
-                                    var_name.clone(),
-                                    var_name.clone(),
-                                    String::from("3"), /* depth_arg */
-                                    var_name.clone(),
-                                ],
+                            substitute(
+                                HashMap::from([("${variable_name}", var_name.as_str())]),
                                 DTRACE_USERDEF_AMPERSAND,
                             )
                         } else {
-                            build_instrument_code(
-                                vec![
-                                    var_name.clone(),
-                                    var_name.clone(),
-                                    var_name.clone(),
-                                    String::from("3"), /* depth_arg */
-                                    var_name.clone(),
-                                ],
+                            substitute(
+                                HashMap::from([("${variable_name}", var_name.as_str())]),
                                 DTRACE_USERDEF,
                             )
                         }
@@ -1458,26 +1641,50 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let next_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let print_vec = if p_type == "String" || p_type == "str" {
-                            build_print_string_vec(
-                                format!("__daikon_tmp{}", first_tmp),
-                                get_param_ident(&decl.inputs[i].pat),
+                            substitute(
+                                HashMap::from([
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                    (
+                                        "${variable_name}",
+                                        get_param_ident(&decl.inputs[i].pat).as_str(),
+                                    ),
+                                ]),
+                                DTRACE_PRINT_STRING_VEC,
                             )
                         } else {
-                            build_print_prim_vec(
-                                p_type.clone(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                get_param_ident(&decl.inputs[i].pat),
+                            substitute(
+                                HashMap::from([
+                                    ("${prim_type}", p_type.as_str()),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                    ("${variable_name}", &get_param_ident(&decl.inputs[i].pat)),
+                                ]),
+                                DTRACE_PRINT_PRIM_VEC,
                             )
                         };
                         format!(
                             "{}\n{}\n{}",
-                            build_tmp_vec_prim(
-                                first_tmp.clone(),
-                                p_type.to_string(),
-                                next_tmp.clone(),
-                                get_param_ident(&decl.inputs[i].pat)
+                            substitute(
+                                HashMap::from([
+                                    ("${prim_type}", p_type.as_str()),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                    (
+                                        "${counter_name}",
+                                        format!("__daikon_tmp{}", next_tmp).as_str()
+                                    ),
+                                    (
+                                        "${variable_name}",
+                                        get_param_ident(&decl.inputs[i].pat).as_str()
+                                    )
+                                ]),
+                                DTRACE_TMP_VEC_PRIM
                             ),
-                            build_pointer_vec(get_param_ident(&decl.inputs[i].pat)),
+                            substitute(
+                                HashMap::from([(
+                                    "${variable_name}",
+                                    get_param_ident(&decl.inputs[i].pat).as_str()
+                                )]),
+                                DTRACE_VEC_POINTER
+                            ),
                             print_vec.clone()
                         )
                     }
@@ -1489,33 +1696,57 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let var_name = get_param_ident(&decl.inputs[i].pat);
                         // We maintain that is_ref represents Vec/array argument in this case.
                         let tmp_vec = if is_ref {
-                            build_daikon_tmp_vec(
-                                first_tmp.clone(),
-                                basic_type.to_string(),
-                                next_tmp.clone(),
-                                var_name.clone(),
+                            substitute(
+                                HashMap::from([
+                                    ("${type}", basic_type.as_str()),
+                                    (
+                                        "${counter_name}",
+                                        format!("__daikon_tmp{}", next_tmp).as_str(),
+                                    ),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                    ("${variable_name}", var_name.as_str()),
+                                ]),
+                                DTRACE_TMP_VEC,
                             )
                         } else {
-                            build_daikon_tmp_vec_ampersand(
-                                first_tmp.clone(),
-                                basic_type.to_string(),
-                                next_tmp.clone(),
-                                var_name.clone(),
+                            substitute(
+                                HashMap::from([
+                                    ("${type}", basic_type.as_str()),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                    (
+                                        "${counter_name}",
+                                        format!("__daikon_tmp{}", next_tmp).as_str(),
+                                    ),
+                                    ("${variable_name}", var_name.as_str()),
+                                ]),
+                                DTRACE_TMP_VEC_AMPERSAND,
                             )
                         };
                         let res = format!(
                             "{}\n{}\n{}\n{}",
                             tmp_vec.clone(),
-                            build_pointer_vec(var_name.clone()),
-                            build_print_pointer_vec(
-                                basic_type.to_string(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                var_name.clone()
+                            substitute(
+                                HashMap::from([(
+                                    "${variable_name}",
+                                    get_param_ident(&decl.inputs[i].pat).as_str()
+                                )]),
+                                DTRACE_VEC_POINTER
                             ),
-                            build_print_vec_fields(
-                                basic_type.to_string(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                var_name.clone()
+                            substitute(
+                                HashMap::from([
+                                    ("${type}", basic_type.as_str()),
+                                    ("${variable_name}", var_name.as_str()),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                                ]),
+                                DTRACE_PRINT_POINTER_VEC
+                            ),
+                            substitute(
+                                HashMap::from([
+                                    ("${type}", basic_type.as_str()),
+                                    ("${variable_name}", var_name.as_str()),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                                ]),
+                                DTRACE_VEC_FIELDS
                             )
                         );
                         res
@@ -1526,26 +1757,53 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let next_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
                         let print_vec = if p_type == "String" || p_type == "str" {
-                            build_print_string_vec(
-                                format!("__daikon_tmp{}", first_tmp),
-                                get_param_ident(&decl.inputs[i].pat),
+                            substitute(
+                                HashMap::from([
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                    (
+                                        "${variable_name}",
+                                        get_param_ident(&decl.inputs[i].pat).as_str(),
+                                    ),
+                                ]),
+                                DTRACE_PRINT_STRING_VEC,
                             )
                         } else {
-                            build_print_prim_vec(
-                                p_type.clone(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                get_param_ident(&decl.inputs[i].pat),
+                            substitute(
+                                HashMap::from([
+                                    ("${prim_type}", p_type.as_str()),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                    (
+                                        "${variable_name}",
+                                        get_param_ident(&decl.inputs[i].pat).as_str(),
+                                    ),
+                                ]),
+                                DTRACE_PRINT_PRIM_VEC,
                             )
                         };
                         format!(
                             "{}\n{}\n{}",
-                            build_tmp_vec_prim(
-                                first_tmp.clone(),
-                                p_type.to_string(),
-                                next_tmp.clone(),
-                                get_param_ident(&decl.inputs[i].pat)
+                            substitute(
+                                HashMap::from([
+                                    ("${prim_type}", p_type.as_str()),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                    (
+                                        "${counter_name}",
+                                        format!("__daikon_tmp{}", next_tmp).as_str()
+                                    ),
+                                    (
+                                        "${variable_name}",
+                                        get_param_ident(&decl.inputs[i].pat).as_str()
+                                    )
+                                ]),
+                                DTRACE_TMP_VEC_PRIM
                             ),
-                            build_pointer_arr(get_param_ident(&decl.inputs[i].pat)),
+                            substitute(
+                                HashMap::from([(
+                                    "${variable_name}",
+                                    get_param_ident(&decl.inputs[i].pat).as_str()
+                                )]),
+                                DTRACE_BUILD_POINTER_ARR
+                            ),
                             print_vec.clone()
                         )
                     }
@@ -1557,33 +1815,54 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let var_name = get_param_ident(&decl.inputs[i].pat);
                         // We maintain that is_ref represents Vec/array argument in this case.
                         let tmp_vec = if is_ref {
-                            build_daikon_tmp_vec(
-                                first_tmp.clone(),
-                                basic_type.to_string(),
-                                next_tmp.clone(),
-                                var_name.clone(),
+                            substitute(
+                                HashMap::from([
+                                    ("${type}", basic_type.as_str()),
+                                    (
+                                        "${counter_name}",
+                                        format!("__daikon_tmp{}", next_tmp).as_str(),
+                                    ),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                    ("${variable_name}", var_name.as_str()),
+                                ]),
+                                DTRACE_TMP_VEC,
                             )
                         } else {
-                            build_daikon_tmp_vec_ampersand(
-                                first_tmp.clone(),
-                                basic_type.to_string(),
-                                next_tmp.clone(),
-                                var_name.clone(),
+                            substitute(
+                                HashMap::from([
+                                    ("${type}", basic_type.as_str()),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
+                                    (
+                                        "${counter_name}",
+                                        format!("__daikon_tmp{}", next_tmp).as_str(),
+                                    ),
+                                    ("${variable_name}", var_name.as_str()),
+                                ]),
+                                DTRACE_TMP_VEC_AMPERSAND,
                             )
                         };
                         let res = format!(
                             "{}\n{}\n{}\n{}",
                             tmp_vec.clone(),
-                            build_pointer_arr(var_name.clone()),
-                            build_print_pointer_vec(
-                                basic_type.to_string(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                var_name.clone()
+                            substitute(
+                                HashMap::from([("${variable_name}", var_name.as_str())]),
+                                DTRACE_BUILD_POINTER_ARR
                             ),
-                            build_print_vec_fields(
-                                basic_type.to_string(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                var_name.clone()
+                            substitute(
+                                HashMap::from([
+                                    ("${type}", basic_type.as_str()),
+                                    ("${variable_name}", var_name.as_str()),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                                ]),
+                                DTRACE_PRINT_POINTER_VEC
+                            ),
+                            substitute(
+                                HashMap::from([
+                                    ("${type}", basic_type.as_str()),
+                                    ("${variable_name}", var_name.as_str()),
+                                    ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str())
+                                ]),
+                                DTRACE_VEC_FIELDS
                             )
                         );
                         res
@@ -1662,14 +1941,17 @@ impl<'a> DaikonDtraceVisitor<'a> {
         //   unlock
         //   use the stored value at all exit points in this function
         // Currently there is a nonce counter per file which is not correct.
-        i = self.insert_into_block(i, &build_instrument_code(vec![], INIT_NONCE), body);
+        i = self.insert_into_block(i, &String::from(DTRACE_INIT_NONCE), body);
 
-        let entry = build_instrument_code(vec![String::from(ppt_name)], DTRACE_ENTRY);
+        // ${program_point} -> ppt_name
+        let entry = substitute(HashMap::from([("${program_point}", ppt_name)]), DTRACE_ENTRY);
+
         i = self.insert_into_block(i, &entry, body);
         for param_block in &mut *dtrace_param_blocks {
             i = self.insert_into_block(i, &param_block, body);
         }
-        i = self.insert_into_block(i, &dtrace_newline(), body);
+
+        i = self.insert_into_block(i, &String::from(DTRACE_NEWLINE), body);
 
         // Before grokking fn body, turn implicit void return into "return;".
         // This may be unreachable in some situations like
@@ -1680,7 +1962,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         match &ret_ty {
             FnRetTy::Default(_) => {
                 if body.stmts.len() == 0 || !last_stmt_is_void_return(body) {
-                    self.append_to_block(&build_void_return(), body);
+                    self.append_to_block(&String::from(DTRACE_VOID_RETURN), body);
                 }
             }
             _ => {}
@@ -1864,6 +2146,7 @@ impl<'a> Parser<'a> {
     /// We exit once we hit `term` which can be either
     /// - EOF (for files)
     /// - `}` for mod items
+    #[allow(rustc::default_hash_types)]
     pub fn parse_mod(
         &mut self,
         term: ExpTokenPair,
@@ -1973,7 +2256,7 @@ impl<'a> Parser<'a> {
 
             // add imports.
             // FIXME: you should check if these imports are already included.
-            match &self.parse_items_from_source_string(build_imports()) {
+            match &self.parse_items_from_source_string(String::from(DTRACE_IMPORTS)) {
                 Err(_why) => panic!("Can't parse imports"),
                 Ok(prepend_items) => {
                     for item in prepend_items {
