@@ -482,8 +482,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             }
             RustType::UserDef(_) => {
                 if ret_is_ref == false {
-                    let userdef_record_ret =
-                        String::from(DTRACE_USERDEF_RET_AMPERSAND);
+                    let userdef_record_ret = String::from(DTRACE_USERDEF_RET_AMPERSAND);
                     *i = self.insert_into_block(*i, &userdef_record_ret, body);
                 } else {
                     let userdef_record_ret = String::from(DTRACE_USERDEF_RET);
@@ -833,11 +832,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         i = self.insert_into_block(i, &param_block, body);
                     }
 
-                    i = self.insert_into_block(
-                        i,
-                        &String::from(DTRACE_NEWLINE),
-                        body,
-                    );
+                    i = self.insert_into_block(i, &String::from(DTRACE_NEWLINE), body);
 
                     // we're sitting on the void return we just processed, so inc
                     // to move on.
@@ -992,8 +987,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     ) -> String {
         // WARNING: also building dtrace_print_xfield here... be careful about different issues.
         // dtrace_print_xfield_vec prints scalar fields out of a Vec<Me>, and dtrace_print_xfield takes one Me and prints Me.f which is a Vec.
-        let mut dtrace_print_xfields_vec =
-            String::from(DTRACE_PRINT_XFIELDS_VEC_PROLOGUE);
+        let mut dtrace_print_xfields_vec = String::from(DTRACE_PRINT_XFIELDS_VEC_PROLOGUE);
 
         // not important for this to be here, each function is self-contained so
         // the names don't matter.
@@ -1509,8 +1503,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // to be added to the synthesized impl block.
     #[allow(rustc::default_hash_types)]
     fn build_dtrace_print_fields(&mut self, fields: &mut ThinVec<FieldDef>) -> String {
-        let mut dtrace_print_fields: String =
-            String::from(DTRACE_PRINT_FIELDS_PROLOGUE);
+        let mut dtrace_print_fields: String = String::from(DTRACE_PRINT_FIELDS_PROLOGUE);
 
         for i in 0..fields.len() {
             // FIXME: remove and add tests for private fields.
@@ -1577,11 +1570,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             dtrace_print_fields.push_str(&format!("{}{}", dtrace_field_rec, "\n"));
         }
 
-        format!(
-            "{}{}",
-            dtrace_print_fields,
-            String::from(DTRACE_PRINT_FIELDS_EPILOGUE)
-        )
+        format!("{}{}", dtrace_print_fields, String::from(DTRACE_PRINT_FIELDS_EPILOGUE))
     }
 
     // FIXME: dtrace calls should be represented with a better data structures rather than
