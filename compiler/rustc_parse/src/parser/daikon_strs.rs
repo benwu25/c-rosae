@@ -1,6 +1,6 @@
 // FIXME: add one test for each String.
 
-use std::collections::HashMap;
+use rustc_data_structures::fx::FxHashMap;
 
 use crate::parser::item::OUTPUT_PREFIX;
 
@@ -36,10 +36,11 @@ pub static STR: &str = "str";
 pub static STRING: &str = "String";
 pub static VEC: &str = "Vec";
 
-#[allow(rustc::potential_query_instability, rustc::default_hash_types)]
-pub(crate) fn substitute(replacements: HashMap<&str, &str>, string: &str) -> String {
+// Iteration order is irrelevant, we can substitute in any order.
+#[allow(rustc::potential_query_instability)]
+pub(crate) fn substitute(replacements: FxHashMap<&str, &str>, string: &str) -> String {
     let mut finished = String::from(string);
-    for (key, value) in replacements.into_iter() {
+    for (key, value) in replacements.iter() {
         finished = finished.replace(key, value);
     }
 
