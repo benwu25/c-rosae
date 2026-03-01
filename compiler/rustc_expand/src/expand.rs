@@ -1,7 +1,5 @@
 // ignore-tidy-filelength
 
-use rustc_data_structures::fx::FxHashMap;
-
 use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -28,6 +26,7 @@ use rustc_attr_parsing::{
     parse_cfg, validate_attr,
 };
 use rustc_data_structures::flat_map_in_place::FlatMapInPlace;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_errors::PResult;
 use rustc_feature::Features;
@@ -678,7 +677,7 @@ struct FieldDecl<'a> {
 // sub_contents: If the top-level variable is an array of structs, we need ArrayContents for each field.
 // See TopLevlDecl for other fields.
 struct ArrayContents<'a> {
-/*    pub map: &'a FxHashMap<String, Box<Item>>, pub var_name: String,
+    /*    pub map: &'a FxHashMap<String, Box<Item>>, pub var_name: String,
     pub dec_type: String,
     pub rep_type: String,
     pub struct_name: Option<String>, */
@@ -777,7 +776,7 @@ impl<'a> ArrayContents<'a> {
                         rep_type: format!("{}[]", p_type),
                         struct_name: None,
                         field_decls: Vec::new(),
-                        contents: None
+                        contents: None,
                     }),
                     enclosing_var: self.decl.var_name.clone(),
                     sub_contents: None,
@@ -791,7 +790,7 @@ impl<'a> ArrayContents<'a> {
                             rep_type: String::from("hashcode[]"),
                             struct_name: Some(ty_string.clone()),
                             field_decls: Vec::new(),
-                            contents: None
+                            contents: None,
                         }),
                         enclosing_var: self.decl.var_name.clone(),
                         sub_contents: Some(Vec::new()),
@@ -826,7 +825,7 @@ impl<'a> ArrayContents<'a> {
                             rep_type: String::from("hashcode[]"),
                             struct_name: None, // we shouldn't be using this in write.
                             field_decls: Vec::new(),
-                            contents: None
+                            contents: None,
                         }),
                         enclosing_var: self.decl.var_name.clone(),
                         sub_contents: None,
@@ -842,7 +841,7 @@ impl<'a> ArrayContents<'a> {
                             rep_type: String::from("hashcode[]"),
                             struct_name: None,
                             field_decls: Vec::new(),
-                            contents: None
+                            contents: None,
                         }),
                         enclosing_var: self.decl.var_name.clone(),
                         sub_contents: None,
@@ -917,7 +916,6 @@ impl<'a> TopLevlDecl<'a> {
                 writeln!(decls, "  comparability -1").ok();
             }
         }
-
 
         match &mut self.contents {
             None => {
@@ -996,9 +994,8 @@ impl<'a> TopLevlDecl<'a> {
                                 for j in 0..tmp.decl.field_decls.len() {
                                     tmp.decl.field_decls[j].decl.var_name = String::from("false");
                                 }
-
-                            },
-                            Some(_) => panic!("Expected some field_decls 2")
+                            }
+                            Some(_) => panic!("Expected some field_decls 2"),
                         }
                     }
                     if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
@@ -1023,7 +1020,7 @@ impl<'a> TopLevlDecl<'a> {
                                 rep_type: format!("{}[]", p_type),
                                 struct_name: None,
                                 field_decls: Vec::new(),
-                                contents: None
+                                contents: None,
                             }),
                             enclosing_var: var_name.clone(),
                             sub_contents: None,
@@ -1051,7 +1048,7 @@ impl<'a> TopLevlDecl<'a> {
                                 rep_type: String::from("hashcode[]"),
                                 struct_name: Some(ty_string.clone()),
                                 field_decls: Vec::new(),
-                                contents: None
+                                contents: None,
                             }),
                             enclosing_var: var_name.clone(),
                             sub_contents: Some(Vec::new()),
@@ -1092,8 +1089,8 @@ impl<'a> TopLevlDecl<'a> {
             match &self.contents {
                 None => {
                     self.field_decls.push(var_decl);
-                },
-                Some(_) => panic!("No field_decls in construct_field_decls")
+                }
+                Some(_) => panic!("No field_decls in construct_field_decls"),
             }
         }
     }
@@ -1214,16 +1211,6 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     }
                     None => {}
                 }
-                /*if let elif_block = Some(elif_block) {
-                    self.grok_expr_for_if(
-                        elif_block,
-                        exit_counter,
-                        ppt_name,
-                        param_decls,
-                        &param_to_block_idx,
-                        &ret_ty,
-                    );
-                } */
             }
             // See
             // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_ast/ast/enum.ExprKind.html.
@@ -1232,7 +1219,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
         }
     }
 
-    // Process an entire stmt to find an exit point to write an exit-ppt declaration 
+    // Process an entire stmt to find an exit point to write an exit-ppt declaration
     // or recurse on block stmts.
     // See rustc_parse::parser::item::grok_stmt.
     fn grok_stmt(
@@ -1404,8 +1391,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                     tmp.field_decls[j].decl.var_name =
                                                         String::from("false");
                                                 }
-                                            },
-                                            Some(_) => panic!("Expected some field_decls")
+                                            }
+                                            Some(_) => panic!("Expected some field_decls"),
                                         }
                                     }
                                     if ty_string.starts_with("Option")
@@ -1432,7 +1419,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 rep_type: format!("{}[]", p_type),
                                                 struct_name: None,
                                                 field_decls: Vec::new(),
-                                                contents: None
+                                                contents: None,
                                             }),
                                             enclosing_var: var_name.clone(),
                                             sub_contents: None,
@@ -1455,7 +1442,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 rep_type: String::from("hashcode[]"),
                                                 struct_name: Some(ty_string.clone()),
                                                 field_decls: Vec::new(),
-                                                contents: None
+                                                contents: None,
                                             }),
                                             enclosing_var: var_name.clone(),
                                             sub_contents: Some(Vec::new()),
@@ -1464,10 +1451,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                     match &mut tmp.contents {
                                         None => panic!("Missing contents in HashCodeArray"),
                                         Some(contents) => {
-                                            contents.build_contents(
-                                                self.depth_limit - 1,
-                                                &mut write_p,
-                                            );
+                                            contents
+                                                .build_contents(self.depth_limit - 1, &mut write_p);
 
                                             // Error checking.
                                             if !write_p {
@@ -1638,8 +1623,8 @@ fn grok_fn_sig<'a>(
                             for j in 0..decl.field_decls.len() {
                                 decl.field_decls[j].decl.var_name = String::from("false");
                             }
-                        },
-                        Some (_) => panic!("Expected some field_decls")
+                        }
+                        Some(_) => panic!("Expected some field_decls"),
                     }
                 }
                 if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
@@ -1664,7 +1649,7 @@ fn grok_fn_sig<'a>(
                             rep_type: format!("{}[]", p_type),
                             struct_name: None,
                             field_decls: Vec::new(),
-                            contents: None
+                            contents: None,
                         }),
                         enclosing_var: var_name.clone(),
                         sub_contents: None,
@@ -1687,7 +1672,7 @@ fn grok_fn_sig<'a>(
                             rep_type: String::from("hashcode[]"),
                             struct_name: Some(ty_string.clone()),
                             field_decls: Vec::new(),
-                            contents: None
+                            contents: None,
                         }),
                         enclosing_var: var_name.clone(),
                         sub_contents: Some(Vec::new()),

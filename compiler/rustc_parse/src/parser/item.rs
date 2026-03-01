@@ -32,6 +32,7 @@ use super::{
 };
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::parser::daikon_strs::*;
+use crate::parser::dtrace_routine_builders::*;
 use crate::{
     StripTokens, exp, fluent_generated as fluent, new_parser_from_source_str, unwrap_or_emit_fatal,
 };
@@ -360,38 +361,32 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter,
                 );
             }
-            ExprKind::If(_, if_block, None) => {
+            ExprKind::If(_, then_block, elif_block) => {
                 self.grok_block(
                     ppt_name,
-                    if_block,
+                    then_block,
                     dtrace_param_blocks,
                     &param_to_block_idx,
                     &ret_ty,
                     exit_counter,
                     daikon_tmp_counter,
                 );
+                match elif_block {
+                    Some(elif_block) => {
+                        self.grok_expr_for_if(
+                            elif_block,
+                            exit_counter,
+                            ppt_name,
+                            dtrace_param_blocks,
+                            &param_to_block_idx,
+                            &ret_ty,
+                            daikon_tmp_counter,
+                        );
+                    }
+                    None => {}
+                }
             }
-            ExprKind::If(_, if_block, Some(another_expr)) => {
-                self.grok_block(
-                    ppt_name,
-                    if_block,
-                    dtrace_param_blocks,
-                    &param_to_block_idx,
-                    &ret_ty,
-                    exit_counter,
-                    daikon_tmp_counter,
-                );
-                self.grok_expr_for_if(
-                    another_expr,
-                    exit_counter,
-                    ppt_name,
-                    dtrace_param_blocks,
-                    &param_to_block_idx,
-                    &ret_ty,
-                    daikon_tmp_counter,
-                );
-            }
-            _ => panic!("Internal error handling if stmt with else!"),
+            _ => panic!("Internal error handling if stmt!"),
         }
     }
 
