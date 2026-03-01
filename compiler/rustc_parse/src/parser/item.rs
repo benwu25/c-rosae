@@ -65,6 +65,11 @@ struct DaikonDtraceVisitor<'a> {
 }
 
 // Represents a Rust type.
+// If it is a reference, note this with is_ref in get_basic_type.
+// For Vec/array, is_ref indicates whether the contents of the
+// container are references or not rather than the container
+// itself. It does not matter if the container is_ref or not,
+// since we always make a copy Vec with references to contents.
 // E.g.,
 // i32 -> Prim("i32")
 // Vec<char> -> PrimVec("char")
@@ -148,7 +153,8 @@ fn as_primitive(ty_str: &str) -> RustType {
 }
 
 // Given the type of the object contained in a Vec,
-// return a RustType representing the Vec.
+// represented as a Path struct, return a RustType representing
+// the Vec.
 // is_ref is set to true if the Vec contains references.
 // Vec<X> -> UserDefVec("X")
 // &'a Vec<X> -> UserDefVec("X")
@@ -201,12 +207,7 @@ pub fn set_output_prefix(input_name: String) {
     *OUTPUT_PREFIX.lock().unwrap() = String::from(res);
 }
 
-// Create a RustType for the given Rust type. If it is a reference,
-// note this with is_ref.
-// For Vec/array, is_ref indicates whether the contents of the
-// container are references or not rather than the container
-// itself. It does not matter if the container is_ref or not,
-// since we always make a copy Vec with references to contents.
+// Create a RustType for the given Rust type.
 fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
     match &kind {
         TyKind::Array(arr_type, _anon_const) => match &get_basic_type(&arr_type.kind, is_ref) {
@@ -227,7 +228,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
             get_basic_type(&mut_ty.ty.kind, is_ref)
         }
         TyKind::Path(_, path) => {
-            if path.segments.len() == 0 {
+            if path.segments.is_empty() {
                 panic!("Path has no type");
             }
             let ty_string = path.segments[path.segments.len() - 1].ident.as_str();
@@ -270,7 +271,7 @@ if cond { return; } else { return; }
 // FIXME: handle checking for exhaustive control flow with
 // explicit void returns.
 fn last_stmt_is_void_return(block: &Box<Block>) -> bool {
-    if block.stmts.len() == 0 {
+    if block.stmts.is_empty() {
         panic!("no stmts to check");
     }
     match &block.stmts[block.stmts.len() - 1].kind {
@@ -396,8 +397,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // FIXME: noted elsewhere, but also here: implement data structures
     // to store exit ppt information rather than in dtrace_param_blocks
-    // as a string. This allows for much greater flexibility, and avoids
-    // parse errors deep in the instrumentation pipeline.
+    // as a string. This allows for much greater flexibility, and detects
+    // parse errors earlier in the dtrace pass.
 
     // Given a ret_expr from an explicit return stmt or a non-semi
     // trailing return, insert code into body at index i to log the
@@ -430,11 +431,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             ]),
             DTRACE_EXIT,
         );
-
         *exit_counter += 1;
-        // FIXME: create overloads of build_instrument_code specialized for
-        // common tasks like creating exit ppts, which may also do operations
-        // like increment exit_counter.
 
         *i = self.insert_into_block(*i, &exit, body);
 
@@ -654,7 +651,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // Given a block body and an index i, check the stmt
     // body.stmts[i] for a return stmt, a new block to walk,
     // or a stmt which invalidates one of the parameters such
-    // as drop(param).
+    // as drop(param), and perform an appropriate action.
     // Returns the index to the next stmt in the block to process. If this
     // method adds stmts immediately after the given index, returns the next
     // stmt after all inserted stmts.
@@ -969,7 +966,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         self.mod_items.push(impl_item.clone());
     }
 
-    // Given a struct with fields ``fields``, returns a String with code
+    // Given a struct with fields `fields', returns a String with code
     // containing a function to log each field of the struct given a vec of
     // such a struct. String is sufficient, since no further modifications
     // or mutations will be done to this generated code.
@@ -985,8 +982,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // dtrace_print_xfield_vec prints scalar fields out of a Vec<Me>, and dtrace_print_xfield takes one Me and prints Me.f which is a Vec.
         let mut dtrace_print_xfields_vec = String::from(DTRACE_PRINT_XFIELDS_VEC_PROLOGUE);
 
-        // not important for this to be here, each function is self-contained so
-        // the names don't matter.
+        // Not important for this to be here, name clashes are not a concern since
+        // this function is synthesized by the dtrace pass.
         let mut daikon_tmp_counter = 0;
         for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
@@ -1500,10 +1497,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut dtrace_print_fields: String = String::from(DTRACE_PRINT_FIELDS_PROLOGUE);
 
         for i in 0..fields.len() {
-            // FIXME: remove and add tests for private fields.
-            // Make all fields public for access in dtrace routines.
-            fields[i].vis.kind = VisibilityKind::Public;
-
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
@@ -1569,9 +1562,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // FIXME: dtrace calls should be represented with a better data structures rather than
     // Strings.
-    // Given a function signature, generate a set of dtrace calls for each parameter,
-    // such as logging a pointer value and logging contents for structs. These
-    // will be reused at the function entry and each exit ppt.
+    // Given a function signature, generate a dtrace call for each parameter including
+    // necessary setup library calls,
+    // These will be used at the function entry and each exit ppt, potentially updating
+    // names of synthesized/injected variables to avoid name conflicts (this should become
+    // easy with better data structures generated by this function).
     fn grok_fn_sig(&mut self, decl: &Box<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
         // grok params.
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
@@ -1952,11 +1947,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // This may be unreachable in some situations like
         // fn foo(t: bool) { if t { return; } else { return; } }.
         // In this situation we should not add a return stmt, but
-        // I cannot detect this yet, maybe there is a better solution
+        // we do not detect this yet. Maybe there is a better solution
         // to detecting the end of a function that returns void.
         match &ret_ty {
             FnRetTy::Default(_) => {
-                if body.stmts.len() == 0 || !last_stmt_is_void_return(body) {
+                if body.stmts.is_empty() || !last_stmt_is_void_return(body) {
                     self.append_to_block(&String::from(DTRACE_VOID_RETURN), body);
                 }
             }
