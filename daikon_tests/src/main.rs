@@ -33,7 +33,6 @@ fn run_daikon_rustc_pp_tests() {
 
     let test_path = std::fs::canonicalize(std::path::Path::new(&test_path_str)).unwrap();
 
-    // how to make each one of these a test w/o a new function?
     for entry in std::fs::read_dir(test_path.clone()).unwrap() {
         let entry = entry.unwrap();
         let path = std::fs::canonicalize(entry.path()).unwrap();
@@ -68,18 +67,42 @@ fn run_daikon_rustc_pp_tests() {
                 let pp_expected_as_path_buf = std::fs::canonicalize(pp_expected_as_path).unwrap();
                 let expected = std::fs::read_to_string(&pp_expected_as_path_buf).unwrap();
 
-                // remove junk
-                let exec_path = format!("{test_path_str}{}", output_name);
-                std::fs::remove_file(std::path::Path::new(&exec_path)).unwrap();
+                // run the instrumented code
+                // FIXME: run with multiple inputs on non-deterministic programs
+                let instrumented_program = format!("{test_path_str}{}", output_name);
+                std::process::Command::new(&instrumented_program)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .expect("failed to run instrumented program");
+
+                // FIXME: document perl dependency
+                // run dtrace-diff.pl
                 let decls_path = format!("{test_path_str}{}.decls", output_name);
-                std::fs::remove_file(std::path::Path::new(&decls_path)).unwrap();
                 let dtrace_path = format!("{test_path_str}{}.dtrace", output_name);
+                let dtrace_expected_path = format!("{test_path_str}{}-expected.dtrace", output_name);
+                let dtrace_diff =
+                    std::process::Command::new("perl")
+                        .arg(&decls_path)
+                        .arg(dtrace_expected_path)
+                        .arg(&dtrace_path)
+                        .output()
+                        .expect("failed to run dtrace-diff").stdout;
+
+                // remove junk
+                std::fs::remove_file(std::path::Path::new(&instrumented_program)).unwrap();
+                std::fs::remove_file(std::path::Path::new(&decls_path)).unwrap();
                 std::fs::remove_file(std::path::Path::new(&dtrace_path)).unwrap();
                 let pp_path = format!("{test_path_str}{}.pp", output_name);
                 std::fs::remove_file(std::path::Path::new(&pp_path)).unwrap();
 
-                // check
+                // check pretty-print diff
                 assert_eq!(expected, actual);
+
+                // check dtrace diff
+                assert_eq!("", String::from_utf8_lossy(&dtrace_diff));
+
                 println!("{}", "Pass".green());
             }
         }
