@@ -52,14 +52,14 @@
                       in the rest of the standard library",
     issue = "none"
 )]
-#![allow(missing_docs)]
 
 use crate::ffi::va_list::{VaArgSafe, VaList};
-use crate::marker::{ConstParamTy, Destruct, DiscriminantKind, PointeeSized, Tuple};
+use crate::marker::{ConstParamTy, DiscriminantKind, PointeeSized, Tuple};
 use crate::{mem, ptr};
 
 mod bounds;
 pub mod fallback;
+pub mod gpu;
 pub mod mir;
 pub mod simd;
 
@@ -71,6 +71,7 @@ use crate::sync::atomic::{self, AtomicBool, AtomicI32, AtomicIsize, AtomicU32, O
 /// A type for atomic ordering parameters for intrinsics. This is a separate type from
 /// `atomic::Ordering` so that we can make it `ConstParamTy` and fix the values used here without a
 /// risk of leaking that to stable code.
+#[allow(missing_docs)]
 #[derive(Debug, ConstParamTy, PartialEq, Eq)]
 pub enum AtomicOrdering {
     // These values must match the compiler's `AtomicOrdering` defined in
@@ -408,8 +409,7 @@ pub const unsafe fn assume(b: bool) {
 /// Therefore, implementations must not require the user to uphold
 /// any safety invariants.
 ///
-/// This intrinsic does not have a stable counterpart.
-#[unstable(feature = "core_intrinsics", issue = "none")]
+/// The stabilized version of this intrinsic is [`core::hint::cold_path`].
 #[rustc_intrinsic]
 #[rustc_nounwind]
 #[miri::intrinsic_fallback_is_spec]
@@ -482,11 +482,14 @@ pub const fn unlikely(b: bool) -> bool {
 #[rustc_nounwind]
 #[miri::intrinsic_fallback_is_spec]
 #[inline]
-pub const fn select_unpredictable<T>(b: bool, true_val: T, false_val: T) -> T
-where
-    T: [const] Destruct,
-{
-    if b { true_val } else { false_val }
+pub const fn select_unpredictable<T>(b: bool, true_val: T, false_val: T) -> T {
+    if b {
+        forget(false_val);
+        true_val
+    } else {
+        forget(true_val);
+        false_val
+    }
 }
 
 /// A guard for unsafe functions that cannot ever be executed if `T` is uninhabited:
@@ -2175,6 +2178,19 @@ pub const unsafe fn unchecked_funnel_shr<T: [const] fallback::FunnelShift>(
     unsafe { a.unchecked_funnel_shr(b, shift) }
 }
 
+/// Carryless multiply.
+///
+/// Safe versions of this intrinsic are available on the integer primitives
+/// via the `carryless_mul` method. For example, [`u32::carryless_mul`].
+#[rustc_intrinsic]
+#[rustc_nounwind]
+#[rustc_const_unstable(feature = "uint_carryless_mul", issue = "152080")]
+#[unstable(feature = "uint_carryless_mul", issue = "152080")]
+#[miri::intrinsic_fallback_is_spec]
+pub const fn carryless_mul<T: [const] fallback::CarrylessMul>(a: T, b: T) -> T {
+    a.carryless_mul(b)
+}
+
 /// This is an implementation detail of [`crate::ptr::read`] and should
 /// not be used anywhere else.  See its comments for why this exists.
 ///
@@ -2618,7 +2634,7 @@ pub const unsafe fn const_allocate(_size: usize, _align: usize) -> *mut u8 {
 }
 
 /// Deallocates a memory which allocated by `intrinsics::const_allocate` at compile time.
-/// At runtime, does nothing.
+/// At runtime, it does nothing.
 ///
 /// # Safety
 ///
@@ -2636,6 +2652,9 @@ pub const unsafe fn const_deallocate(_ptr: *mut u8, _size: usize, _align: usize)
     // Runtime NOP
 }
 
+/// Convert the allocation this pointer points to into immutable global memory.
+/// The pointer must point to the beginning of a heap allocation.
+/// This operation only makes sense during compile time. At runtime, it does nothing.
 #[rustc_const_unstable(feature = "const_heap", issue = "79597")]
 #[rustc_nounwind]
 #[rustc_intrinsic]
@@ -2732,18 +2751,6 @@ pub unsafe fn vtable_size(ptr: *const ()) -> usize;
 #[rustc_intrinsic]
 pub unsafe fn vtable_align(ptr: *const ()) -> usize;
 
-/// The intrinsic returns the `U` vtable for `T` if `T` can be coerced to the trait object type `U`.
-///
-/// # Compile-time failures
-/// Determining whether `T` can be coerced to the trait object type `U` requires trait resolution by the compiler.
-/// In some cases, that resolution can exceed the recursion limit,
-/// and compilation will fail instead of this function returning `None`.
-#[rustc_nounwind]
-#[unstable(feature = "core_intrinsics", issue = "none")]
-#[rustc_intrinsic]
-pub const fn vtable_for<T, U: ptr::Pointee<Metadata = ptr::DynMetadata<U>> + ?Sized>()
--> Option<ptr::DynMetadata<U>>;
-
 /// The size of a type in bytes.
 ///
 /// Note that, unlike most intrinsics, this is safe to call;
@@ -2805,6 +2812,20 @@ pub const fn align_of<T>() -> usize;
 #[lang = "offset_of"]
 pub const fn offset_of<T: PointeeSized>(variant: u32, field: u32) -> usize;
 
+/// The offset of a field queried by its field representing type.
+///
+/// Returns the offset of the field represented by `F`. This function essentially does the same as
+/// the [`offset_of`] intrinsic, but expects the field to be represented by a generic rather than
+/// the variant and field indices. This also is a safe intrinsic and can only be evaluated at
+/// compile-time, so it should only appear in constants or inline const blocks.
+///
+/// There should be no need to call this intrinsic manually, as its value is used to define
+/// [`Field::OFFSET`](crate::field::Field::OFFSET), which is publicly accessible.
+#[rustc_intrinsic]
+#[unstable(feature = "field_projections", issue = "145383")]
+#[rustc_const_unstable(feature = "field_projections", issue = "145383")]
+pub const fn field_offset<F: crate::field::Field>() -> usize;
+
 /// Returns the number of variants of the type `T` cast to a `usize`;
 /// if `T` has no variants, returns `0`. Uninhabited variants will be counted.
 ///
@@ -2845,6 +2866,20 @@ pub const unsafe fn size_of_val<T: ?Sized>(ptr: *const T) -> usize;
 #[rustc_intrinsic_const_stable_indirect]
 pub const unsafe fn align_of_val<T: ?Sized>(ptr: *const T) -> usize;
 
+#[rustc_intrinsic]
+#[unstable(feature = "core_intrinsics", issue = "none")]
+/// Check if a type represented by a `TypeId` implements a trait represented by a `TypeId`.
+/// It can only be called at compile time, the backends do
+/// not implement it. If it implements the trait the dyn metadata gets returned for vtable access.
+pub const fn type_id_vtable(
+    _id: crate::any::TypeId,
+    _trait: crate::any::TypeId,
+) -> Option<ptr::DynMetadata<*const ()>> {
+    panic!(
+        "`TypeId::trait_info_of` and `trait_info_of_trait_type_id` can only be called at compile-time"
+    )
+}
+
 /// Compute the type information of a concrete type.
 /// It can only be called at compile time, the backends do
 /// not implement it.
@@ -2880,7 +2915,7 @@ pub const fn type_name<T: ?Sized>() -> &'static str;
 #[rustc_nounwind]
 #[unstable(feature = "core_intrinsics", issue = "none")]
 #[rustc_intrinsic]
-pub const fn type_id<T: ?Sized + 'static>() -> crate::any::TypeId;
+pub const fn type_id<T: ?Sized>() -> crate::any::TypeId;
 
 /// Tests (at compile-time) if two [`crate::any::TypeId`] instances identify the
 /// same type. This is necessary because at const-eval time the actual discriminating
@@ -3450,19 +3485,6 @@ pub(crate) const fn miri_promise_symbolic_alignment(ptr: *const (), align: usize
     )
 }
 
-/// Copies the current location of arglist `src` to the arglist `dst`.
-///
-/// # Safety
-///
-/// You must check the following invariants before you call this function:
-///
-/// - `dest` must be non-null and point to valid, writable memory.
-/// - `dest` must not alias `src`.
-///
-#[rustc_intrinsic]
-#[rustc_nounwind]
-pub unsafe fn va_copy<'f>(dest: *mut VaList<'f>, src: &VaList<'f>);
-
 /// Loads an argument of type `T` from the `va_list` `ap` and increment the
 /// argument `ap` points to.
 ///
@@ -3479,9 +3501,30 @@ pub unsafe fn va_copy<'f>(dest: *mut VaList<'f>, src: &VaList<'f>);
 ///
 #[rustc_intrinsic]
 #[rustc_nounwind]
-pub unsafe fn va_arg<T: VaArgSafe>(ap: &mut VaList<'_>) -> T;
+pub const unsafe fn va_arg<T: VaArgSafe>(ap: &mut VaList<'_>) -> T;
 
-/// Destroy the arglist `ap` after initialization with `va_start` or `va_copy`.
+/// Duplicates a variable argument list. The returned list is initially at the same position as
+/// the one in `src`, but can be advanced independently.
+///
+/// Codegen backends should not have custom behavior for this intrinsic, they should always use
+/// this fallback implementation. This intrinsic *does not* map to the LLVM `va_copy` intrinsic.
+///
+/// This intrinsic exists only as a hook for Miri and constant evaluation, and is used to detect UB
+/// when a variable argument list is used incorrectly.
+#[rustc_intrinsic]
+#[rustc_nounwind]
+pub const fn va_copy<'f>(src: &VaList<'f>) -> VaList<'f> {
+    src.duplicate()
+}
+
+/// Destroy the variable argument list `ap` after initialization with `va_start` (part of the
+/// desugaring of `...`) or `va_copy`.
+///
+/// Code generation backends should not provide a custom implementation for this intrinsic. This
+/// intrinsic *does not* map to the LLVM `va_end` intrinsic.
+///
+/// This function is a no-op on all current targets, but used as a hook for const evaluation to
+/// detect UB when a variable argument list is used incorrectly.
 ///
 /// # Safety
 ///
@@ -3489,4 +3532,6 @@ pub unsafe fn va_arg<T: VaArgSafe>(ap: &mut VaList<'_>) -> T;
 ///
 #[rustc_intrinsic]
 #[rustc_nounwind]
-pub unsafe fn va_end(ap: &mut VaList<'_>);
+pub const unsafe fn va_end(ap: &mut VaList<'_>) {
+    /* deliberately does nothing */
+}
