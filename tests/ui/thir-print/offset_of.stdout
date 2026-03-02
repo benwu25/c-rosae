@@ -27,7 +27,7 @@ body:
                                             remainder_scope: Remainder { block: 1, first_statement_index: 0}
                                             init_scope: Node(2)
                                             pattern: 
-                                                Pat: {
+                                                Pat {
                                                     ty: usize
                                                     span: $DIR/offset_of.rs:37:9: 37:10 (#0)
                                                     kind: PatKind {
@@ -68,7 +68,7 @@ body:
                                             )
                                             else_block: None
                                             hir_id: HirId(DefId(offset_of::concrete).10)
-                                            span: $DIR/offset_of.rs:37:5: 1440:57 (#0)
+                                            span: $DIR/offset_of.rs:37:5: 37:33 (#0)
                                         }
                                     }
                                     Stmt {
@@ -76,7 +76,7 @@ body:
                                             remainder_scope: Remainder { block: 1, first_statement_index: 1}
                                             init_scope: Node(12)
                                             pattern: 
-                                                Pat: {
+                                                Pat {
                                                     ty: usize
                                                     span: $DIR/offset_of.rs:38:9: 38:10 (#0)
                                                     kind: PatKind {
@@ -117,7 +117,7 @@ body:
                                             )
                                             else_block: None
                                             hir_id: HirId(DefId(offset_of::concrete).20)
-                                            span: $DIR/offset_of.rs:38:5: 1440:57 (#0)
+                                            span: $DIR/offset_of.rs:38:5: 38:33 (#0)
                                         }
                                     }
                                     Stmt {
@@ -125,7 +125,7 @@ body:
                                             remainder_scope: Remainder { block: 1, first_statement_index: 2}
                                             init_scope: Node(22)
                                             pattern: 
-                                                Pat: {
+                                                Pat {
                                                     ty: usize
                                                     span: $DIR/offset_of.rs:39:9: 39:10 (#0)
                                                     kind: PatKind {
@@ -166,7 +166,7 @@ body:
                                             )
                                             else_block: None
                                             hir_id: HirId(DefId(offset_of::concrete).30)
-                                            span: $DIR/offset_of.rs:39:5: 1440:57 (#0)
+                                            span: $DIR/offset_of.rs:39:5: 39:34 (#0)
                                         }
                                     }
                                     Stmt {
@@ -174,7 +174,7 @@ body:
                                             remainder_scope: Remainder { block: 1, first_statement_index: 3}
                                             init_scope: Node(32)
                                             pattern: 
-                                                Pat: {
+                                                Pat {
                                                     ty: usize
                                                     span: $DIR/offset_of.rs:40:9: 40:11 (#0)
                                                     kind: PatKind {
@@ -215,7 +215,7 @@ body:
                                             )
                                             else_block: None
                                             hir_id: HirId(DefId(offset_of::concrete).40)
-                                            span: $DIR/offset_of.rs:40:5: 1440:57 (#0)
+                                            span: $DIR/offset_of.rs:40:5: 40:36 (#0)
                                         }
                                     }
                                     Stmt {
@@ -223,7 +223,7 @@ body:
                                             remainder_scope: Remainder { block: 1, first_statement_index: 4}
                                             init_scope: Node(42)
                                             pattern: 
-                                                Pat: {
+                                                Pat {
                                                     ty: usize
                                                     span: $DIR/offset_of.rs:41:9: 41:11 (#0)
                                                     kind: PatKind {
@@ -264,7 +264,7 @@ body:
                                             )
                                             else_block: None
                                             hir_id: HirId(DefId(offset_of::concrete).50)
-                                            span: $DIR/offset_of.rs:41:5: 1440:57 (#0)
+                                            span: $DIR/offset_of.rs:41:5: 41:36 (#0)
                                         }
                                     }
                                 ]
@@ -823,7 +823,7 @@ body:
                                             remainder_scope: Remainder { block: 1, first_statement_index: 0}
                                             init_scope: Node(2)
                                             pattern: 
-                                                Pat: {
+                                                Pat {
                                                     ty: usize
                                                     span: $DIR/offset_of.rs:45:9: 45:11 (#0)
                                                     kind: PatKind {
@@ -864,7 +864,7 @@ body:
                                             )
                                             else_block: None
                                             hir_id: HirId(DefId(offset_of::generic).12)
-                                            span: $DIR/offset_of.rs:45:5: 1440:57 (#0)
+                                            span: $DIR/offset_of.rs:45:5: 45:37 (#0)
                                         }
                                     }
                                     Stmt {
@@ -872,7 +872,7 @@ body:
                                             remainder_scope: Remainder { block: 1, first_statement_index: 1}
                                             init_scope: Node(14)
                                             pattern: 
-                                                Pat: {
+                                                Pat {
                                                     ty: usize
                                                     span: $DIR/offset_of.rs:46:9: 46:11 (#0)
                                                     kind: PatKind {
@@ -913,7 +913,7 @@ body:
                                             )
                                             else_block: None
                                             hir_id: HirId(DefId(offset_of::generic).24)
-                                            span: $DIR/offset_of.rs:46:5: 1440:57 (#0)
+                                            span: $DIR/offset_of.rs:46:5: 46:37 (#0)
                                         }
                                     }
                                     Stmt {
@@ -921,7 +921,7 @@ body:
                                             remainder_scope: Remainder { block: 1, first_statement_index: 2}
                                             init_scope: Node(26)
                                             pattern: 
-                                                Pat: {
+                                                Pat {
                                                     ty: usize
                                                     span: $DIR/offset_of.rs:47:9: 47:11 (#0)
                                                     kind: PatKind {
@@ -962,7 +962,7 @@ body:
                                             )
                                             else_block: None
                                             hir_id: HirId(DefId(offset_of::generic).36)
-                                            span: $DIR/offset_of.rs:47:5: 1440:57 (#0)
+                                            span: $DIR/offset_of.rs:47:5: 47:37 (#0)
                                         }
                                     }
                                     Stmt {
@@ -970,7 +970,7 @@ body:
                                             remainder_scope: Remainder { block: 1, first_statement_index: 3}
                                             init_scope: Node(38)
                                             pattern: 
-                                                Pat: {
+                                                Pat {
                                                     ty: usize
                                                     span: $DIR/offset_of.rs:48:9: 48:11 (#0)
                                                     kind: PatKind {
@@ -1011,7 +1011,7 @@ body:
                                             )
                                             else_block: None
                                             hir_id: HirId(DefId(offset_of::generic).48)
-                                            span: $DIR/offset_of.rs:48:5: 1440:57 (#0)
+                                            span: $DIR/offset_of.rs:48:5: 48:37 (#0)
                                         }
                                     }
                                 ]

@@ -1,6 +1,7 @@
 // ignore-tidy-filelength
 use std::borrow::Cow;
 use std::fmt;
+use std::ops::Not;
 
 use rustc_abi::ExternAbi;
 use rustc_ast::attr::AttributeExt;
@@ -237,7 +238,7 @@ pub enum LifetimeKind {
 
     /// Indicates an error during lowering (usually `'_` in wrong place)
     /// that was already reported.
-    Error,
+    Error(ErrorGuaranteed),
 
     /// User wrote an anonymous lifetime, either `'_` or nothing (which gets
     /// converted to `'_`). The semantics of this lifetime should be inferred
@@ -257,7 +258,7 @@ impl LifetimeKind {
             // -- but this is because, as far as the code in the compiler is
             // concerned -- `Fresh` variants act equivalently to "some fresh name".
             // They correspond to early-bound regions on an impl, in other words.
-            LifetimeKind::Error | LifetimeKind::Param(..) | LifetimeKind::Static => false,
+            LifetimeKind::Error(..) | LifetimeKind::Param(..) | LifetimeKind::Static => false,
         }
     }
 }
@@ -520,7 +521,10 @@ pub enum ConstArgKind<'hir, Unambig = ()> {
     /// This variant is not always used to represent inference consts, sometimes
     /// [`GenericArg::Infer`] is used instead.
     Infer(Unambig),
-    Literal(LitKind),
+    Literal {
+        lit: LitKind,
+        negated: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, HashStable_Generic)]
@@ -1012,10 +1016,14 @@ impl<'hir> Generics<'hir> {
 
                 span_for_parentheses.map_or_else(
                     || {
-                        // We include bounds that come from a `#[derive(_)]` but point at the user's code,
-                        // as we use this method to get a span appropriate for suggestions.
+                        // We include bounds that come from a `#[derive(_)]` but point at the user's
+                        // code, as we use this method to get a span appropriate for suggestions.
                         let bs = bound.span();
-                        bs.can_be_used_for_suggestions().then(|| (bs.shrink_to_hi(), None))
+                        // We use `from_expansion` instead of `can_be_used_for_suggestions` because
+                        // the trait bound from imperfect derives do point at the type parameter,
+                        // but expanded to a where clause, so we want to ignore those. This is only
+                        // true for derive intrinsics.
+                        bs.from_expansion().not().then(|| (bs.shrink_to_hi(), None))
                     },
                     |span| Some((span.shrink_to_hi(), Some(span.shrink_to_lo()))),
                 )
@@ -1370,7 +1378,7 @@ impl AttributeExt for Attribute {
             Attribute::Unparsed(u) => u.span,
             // FIXME: should not be needed anymore when all attrs are parsed
             Attribute::Parsed(AttributeKind::DocComment { span, .. }) => *span,
-            Attribute::Parsed(AttributeKind::Deprecation { span, .. }) => *span,
+            Attribute::Parsed(AttributeKind::Deprecated { span, .. }) => *span,
             Attribute::Parsed(AttributeKind::CfgTrace(cfgs)) => cfgs[0].1,
             a => panic!("can't get the span of an arbitrary parsed attribute: {a:?}"),
         }
@@ -1412,7 +1420,7 @@ impl AttributeExt for Attribute {
     #[inline]
     fn deprecation_note(&self) -> Option<Ident> {
         match &self {
-            Attribute::Parsed(AttributeKind::Deprecation { deprecation, .. }) => deprecation.note,
+            Attribute::Parsed(AttributeKind::Deprecated { deprecation, .. }) => deprecation.note,
             _ => None,
         }
     }
@@ -1458,6 +1466,10 @@ impl AttributeExt for Attribute {
 
     fn is_doc_keyword_or_attribute(&self) -> bool {
         matches!(self, Attribute::Parsed(AttributeKind::Doc(d)) if d.attribute.is_some() || d.keyword.is_some())
+    }
+
+    fn is_rustc_doc_primitive(&self) -> bool {
+        matches!(self, Attribute::Parsed(AttributeKind::RustcDocPrimitive(..)))
     }
 }
 
@@ -1730,6 +1742,12 @@ impl<'hir> Block<'hir> {
 }
 
 #[derive(Debug, Clone, Copy, HashStable_Generic)]
+pub struct TyFieldPath {
+    pub variant: Option<Ident>,
+    pub field: Ident,
+}
+
+#[derive(Debug, Clone, Copy, HashStable_Generic)]
 pub struct TyPat<'hir> {
     #[stable_hasher(ignore)]
     pub hir_id: HirId,
@@ -1953,8 +1971,6 @@ pub struct PatExpr<'hir> {
 pub enum PatExprKind<'hir> {
     Lit {
         lit: Lit,
-        // FIXME: move this into `Lit` and handle negated literal expressions
-        // once instead of matching on unop neg expressions everywhere.
         negated: bool,
     },
     /// A path pattern for a unit struct/variant or a (maybe-associated) constant.
@@ -3193,7 +3209,7 @@ impl<'hir> TraitItem<'hir> {
 
     expect_methods_self_kind! {
         expect_const, (&'hir Ty<'hir>, Option<ConstItemRhs<'hir>>),
-            TraitItemKind::Const(ty, rhs), (ty, *rhs);
+            TraitItemKind::Const(ty, rhs, _), (ty, *rhs);
 
         expect_fn, (&FnSig<'hir>, &TraitFn<'hir>),
             TraitItemKind::Fn(ty, trfn), (ty, trfn);
@@ -3213,11 +3229,32 @@ pub enum TraitFn<'hir> {
     Provided(BodyId),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, HashStable_Generic)]
+pub enum IsTypeConst {
+    No,
+    Yes,
+}
+
+impl From<bool> for IsTypeConst {
+    fn from(value: bool) -> Self {
+        if value { Self::Yes } else { Self::No }
+    }
+}
+
+impl From<IsTypeConst> for bool {
+    fn from(value: IsTypeConst) -> Self {
+        matches!(value, IsTypeConst::Yes)
+    }
+}
+
 /// Represents a trait method or associated constant or type
 #[derive(Debug, Clone, Copy, HashStable_Generic)]
 pub enum TraitItemKind<'hir> {
+    // FIXME(mgca) eventually want to move the option that is around `ConstItemRhs<'hir>`
+    // into `ConstItemRhs`, much like `ast::ConstItemRhsKind`, but for now mark whether
+    // this node is a TypeConst with a flag.
     /// An associated constant with an optional value (otherwise `impl`s must contain a value).
-    Const(&'hir Ty<'hir>, Option<ConstItemRhs<'hir>>),
+    Const(&'hir Ty<'hir>, Option<ConstItemRhs<'hir>>, IsTypeConst),
     /// An associated function with an optional body.
     Fn(FnSig<'hir>, TraitFn<'hir>),
     /// An associated type with (possibly empty) bounds and optional concrete
@@ -3773,6 +3810,10 @@ pub enum TyKind<'hir, Unambig = ()> {
     Err(rustc_span::ErrorGuaranteed),
     /// Pattern types (`pattern_type!(u32 is 1..)`)
     Pat(&'hir Ty<'hir>, &'hir TyPat<'hir>),
+    /// Field representing type (`field_of!(Struct, field)`).
+    ///
+    /// The optional ident is the variant when an enum is passed `field_of!(Enum, Variant.field)`.
+    FieldOf(&'hir Ty<'hir>, &'hir TyFieldPath),
     /// `TyKind::Infer` means the type should be inferred instead of it having been
     /// specified. This can appear anywhere in a type.
     ///
@@ -4525,6 +4566,26 @@ impl ItemKind<'_> {
             _ => return None,
         })
     }
+
+    pub fn recovered(&self) -> bool {
+        match self {
+            ItemKind::Struct(
+                _,
+                _,
+                VariantData::Struct { recovered: ast::Recovered::Yes(_), .. },
+            ) => true,
+            ItemKind::Union(
+                _,
+                _,
+                VariantData::Struct { recovered: ast::Recovered::Yes(_), .. },
+            ) => true,
+            ItemKind::Enum(_, _, def) => def.variants.iter().any(|v| match v.data {
+                VariantData::Struct { recovered: ast::Recovered::Yes(_), .. } => true,
+                _ => false,
+            }),
+            _ => false,
+        }
+    }
 }
 
 // The bodies for items are stored "out of line", in a separate
@@ -4595,6 +4656,11 @@ pub struct Upvar {
 pub struct TraitCandidate {
     pub def_id: DefId,
     pub import_ids: SmallVec<[LocalDefId; 1]>,
+    // Indicates whether this trait candidate is ambiguously glob imported
+    // in it's scope. Related to the AMBIGUOUS_GLOB_IMPORTED_TRAITS lint.
+    // If this is set to true and the trait is used as a result of method lookup, this
+    // lint is thrown.
+    pub lint_ambiguous: bool,
 }
 
 #[derive(Copy, Clone, Debug, HashStable_Generic)]
@@ -4655,7 +4721,7 @@ impl<'hir> OwnerNode<'hir> {
             | OwnerNode::TraitItem(TraitItem {
                 kind:
                     TraitItemKind::Fn(_, TraitFn::Provided(body))
-                    | TraitItemKind::Const(_, Some(ConstItemRhs::Body(body))),
+                    | TraitItemKind::Const(_, Some(ConstItemRhs::Body(body)), _),
                 ..
             })
             | OwnerNode::ImplItem(ImplItem {
@@ -4882,7 +4948,7 @@ impl<'hir> Node<'hir> {
                 _ => None,
             },
             Node::TraitItem(it) => match it.kind {
-                TraitItemKind::Const(ty, _) => Some(ty),
+                TraitItemKind::Const(ty, _, _) => Some(ty),
                 TraitItemKind::Type(_, ty) => ty,
                 _ => None,
             },
@@ -4925,7 +4991,7 @@ impl<'hir> Node<'hir> {
             | Node::TraitItem(TraitItem {
                 owner_id,
                 kind:
-                    TraitItemKind::Const(.., Some(ConstItemRhs::Body(body)))
+                    TraitItemKind::Const(_, Some(ConstItemRhs::Body(body)), _)
                     | TraitItemKind::Fn(_, TraitFn::Provided(body)),
                 ..
             })
