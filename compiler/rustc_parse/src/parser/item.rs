@@ -8,6 +8,7 @@ use std::sync::{LazyLock, Mutex};
 use ast::token::IdentIsRaw;
 use rustc_ast as ast;
 use rustc_ast::ast::*;
+use rustc_ast::mut_visit;
 use rustc_ast::mut_visit::*;
 use rustc_ast::token::{self, Delimiter, InvisibleOrigin, MetaVarKind, TokenKind};
 use rustc_ast::tokenstream::{DelimSpan, TokenStream, TokenTree};
@@ -34,10 +35,7 @@ use super::{
 };
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::parser::daikon_strs::*;
-use crate::exp;
-use crate::{
-    StripTokens, exp, fluent_generated as fluent, new_parser_from_source_str, unwrap_or_emit_fatal,
-};
+use crate::{StripTokens, exp, new_parser_from_source_str, unwrap_or_emit_fatal};
 
 // Stores the prefix for output files.
 // Decls and dtrace files will be named according to this value.
@@ -2131,7 +2129,8 @@ impl<'a> Parser<'a> {
         // Parse from str.
         loop {
             while tmp_parser.maybe_consume_incorrect_semicolon(tmp_items.last().map(|x| &**x)) {}
-            let Some(item) = tmp_parser.parse_item(ForceCollect::No)? else {
+            let Some(item) = tmp_parser.parse_item(ForceCollect::No, AllowConstBlockItems::Yes)?
+            else {
                 break;
             };
             tmp_items.push(item);
