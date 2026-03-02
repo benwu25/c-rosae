@@ -296,7 +296,7 @@ fn from_clean_item(item: &clean::Item, renderer: &JsonRenderer<'_>) -> ItemEnum 
         MethodItem(m, _) => {
             ItemEnum::Function(from_clean_function(m, true, header.unwrap(), renderer))
         }
-        RequiredMethodItem(m) => {
+        RequiredMethodItem(m, _) => {
             ItemEnum::Function(from_clean_function(m, false, header.unwrap(), renderer))
         }
         ImplItem(i) => ItemEnum::Impl(i.into_json(renderer)),
@@ -579,6 +579,8 @@ impl FromClean<clean::Type> for Type {
                 type_: Box::new(t.into_json(renderer)),
                 __pat_unstable_do_not_use: p.to_string(),
             },
+            // FIXME(FRTs): implement
+            clean::Type::FieldOf(..) => todo!(),
             ImplTrait(g) => Type::ImplTrait(g.into_json(renderer)),
             Infer => Type::Infer,
             RawPointer(mutability, type_) => Type::RawPointer {
@@ -711,7 +713,8 @@ impl FromClean<clean::PolyTrait> for PolyTrait {
 impl FromClean<clean::Impl> for Impl {
     fn from_clean(impl_: &clean::Impl, renderer: &JsonRenderer<'_>) -> Self {
         let provided_trait_methods = impl_.provided_trait_methods(renderer.tcx);
-        let clean::Impl { safety, generics, trait_, for_, items, polarity, kind } = impl_;
+        let clean::Impl { safety, generics, trait_, for_, items, polarity, kind, is_deprecated: _ } =
+            impl_;
         // FIXME: use something like ImplKind in JSON?
         let (is_synthetic, blanket_impl) = match kind {
             clean::ImplKind::Normal | clean::ImplKind::FakeVariadic => (false, None),
@@ -915,7 +918,7 @@ fn maybe_from_hir_attr(attr: &hir::Attribute, item_id: ItemId, tcx: TyCtxt<'_>) 
     };
 
     vec![match kind {
-        AK::Deprecation { .. } => return Vec::new(), // Handled separately into Item::deprecation.
+        AK::Deprecated { .. } => return Vec::new(), // Handled separately into Item::deprecation.
         AK::DocComment { .. } => unreachable!("doc comments stripped out earlier"),
 
         AK::MacroExport { .. } => Attribute::MacroExport,
