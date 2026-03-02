@@ -81,14 +81,15 @@ fn run_daikon_rustc_pp_tests() {
                 // run dtrace-diff.pl
                 let decls_path = format!("{test_path_str}{}.decls", output_name);
                 let dtrace_path = format!("{test_path_str}{}.dtrace", output_name);
-                let dtrace_expected_path = format!("{test_path_str}{}-expected.dtrace", output_name);
-                let dtrace_diff =
-                    std::process::Command::new("perl")
-                        .arg(&decls_path)
-                        .arg(dtrace_expected_path)
-                        .arg(&dtrace_path)
-                        .output()
-                        .expect("failed to run dtrace-diff").stdout;
+                let dtrace_expected_path =
+                    format!("{test_path_str}{}-expected.dtrace", output_name);
+                let dtrace_diff = std::process::Command::new("perl")
+                    .arg(&decls_path)
+                    .arg(dtrace_expected_path)
+                    .arg(&dtrace_path)
+                    .output()
+                    .expect("failed to run dtrace-diff")
+                    .stdout;
 
                 // remove junk
                 std::fs::remove_file(std::path::Path::new(&instrumented_program)).unwrap();
