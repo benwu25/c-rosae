@@ -348,6 +348,11 @@ where
         ecx: &mut EvalCtxt<'_, D>,
         goal: Goal<I, Self>,
     ) -> Vec<Candidate<I>>;
+
+    fn consider_builtin_field_candidate(
+        ecx: &mut EvalCtxt<'_, D>,
+        goal: Goal<I, Self>,
+    ) -> Result<Candidate<I>, NoSolution>;
 }
 
 /// Allows callers of `assemble_and_evaluate_candidates` to choose whether to limit
@@ -617,6 +622,7 @@ where
                 Some(SolverTraitLangItem::BikeshedGuaranteedNoDrop) => {
                     G::consider_builtin_bikeshed_guaranteed_no_drop_candidate(self, goal)
                 }
+                Some(SolverTraitLangItem::Field) => G::consider_builtin_field_candidate(self, goal),
                 _ => Err(NoSolution),
             }
         };
@@ -792,7 +798,9 @@ where
         candidates: &mut Vec<Candidate<I>>,
     ) {
         let cx = self.cx();
-        if !cx.trait_may_be_implemented_via_object(goal.predicate.trait_def_id(cx)) {
+        if cx.is_sizedness_trait(goal.predicate.trait_def_id(cx)) {
+            // `dyn MetaSized` is valid, but should get its `MetaSized` impl from
+            // being `dyn` (SizedCandidate), not from the object candidate.
             return;
         }
 

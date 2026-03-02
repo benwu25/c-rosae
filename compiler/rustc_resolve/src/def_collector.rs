@@ -131,7 +131,11 @@ impl<'a, 'ra, 'tcx> visit::Visitor<'a> for DefCollector<'a, 'ra, 'tcx> {
                 mutability: s.mutability,
                 nested: false,
             },
-            ItemKind::Const(..) => DefKind::Const,
+            ItemKind::Const(citem) => {
+                let is_type_const = matches!(citem.rhs_kind, ConstItemRhsKind::TypeConst { .. });
+                DefKind::Const { is_type_const }
+            }
+            ItemKind::ConstBlock(..) => DefKind::Const { is_type_const: false },
             ItemKind::Fn(..) | ItemKind::Delegation(..) => DefKind::Fn,
             ItemKind::MacroDef(ident, def) => {
                 let edition = i.span.edition();
@@ -148,11 +152,10 @@ impl<'a, 'ra, 'tcx> visit::Visitor<'a> for DefCollector<'a, 'ra, 'tcx> {
                 let attrs = parser.parse_attribute_list(
                     &i.attrs,
                     i.span,
-                    i.id,
                     Target::MacroDef,
                     OmitDoc::Skip,
                     std::convert::identity,
-                    |_l| {
+                    |_lint_id, _span, _kind| {
                         // FIXME(jdonszelmann): emit lints here properly
                         // NOTE that before new attribute parsing, they didn't happen either
                         // but it would be nice if we could change that.
@@ -348,7 +351,12 @@ impl<'a, 'ra, 'tcx> visit::Visitor<'a> for DefCollector<'a, 'ra, 'tcx> {
         let (ident, def_kind) = match &i.kind {
             AssocItemKind::Fn(box Fn { ident, .. })
             | AssocItemKind::Delegation(box Delegation { ident, .. }) => (*ident, DefKind::AssocFn),
-            AssocItemKind::Const(box ConstItem { ident, .. }) => (*ident, DefKind::AssocConst),
+            AssocItemKind::Const(box ConstItem { ident, rhs_kind, .. }) => (
+                *ident,
+                DefKind::AssocConst {
+                    is_type_const: matches!(rhs_kind, ConstItemRhsKind::TypeConst { .. }),
+                },
+            ),
             AssocItemKind::Type(box TyAlias { ident, .. }) => (*ident, DefKind::AssocTy),
             AssocItemKind::MacCall(..) | AssocItemKind::DelegationMac(..) => {
                 return self.visit_macro_invoc(i.id);

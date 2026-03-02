@@ -160,10 +160,7 @@ impl<'tcx> MatchPairTree<'tcx> {
             }
 
             PatKind::Constant { value } => {
-                // CAUTION: The type of the pattern node (`pattern.ty`) is
-                // _often_ the same as the type of the const value (`value.ty`),
-                // but there are some cases where those types differ
-                // (e.g. when `deref!(..)` patterns interact with `String`).
+                assert_eq!(pattern.ty, value.ty);
 
                 // Classify the constant-pattern into further kinds, to
                 // reduce the number of ad-hoc type tests needed later on.
@@ -175,16 +172,6 @@ impl<'tcx> MatchPairTree<'tcx> {
                 } else if pat_ty.is_floating_point() {
                     PatConstKind::Float
                 } else if pat_ty.is_str() {
-                    // Deref-patterns can cause string-literal patterns to have
-                    // type `str` instead of the usual `&str`.
-                    if !cx.tcx.features().deref_patterns() {
-                        span_bug!(
-                            pattern.span,
-                            "const pattern has type `str` but deref_patterns is not enabled"
-                        );
-                    }
-                    PatConstKind::String
-                } else if pat_ty.is_imm_ref_str() {
                     PatConstKind::String
                 } else {
                     // FIXME(Zalathar): This still covers several different
@@ -304,22 +291,18 @@ impl<'tcx> MatchPairTree<'tcx> {
                 }
             }
 
-            PatKind::Variant { adt_def, variant_index, args, ref subpatterns } => {
+            PatKind::Variant { adt_def, variant_index, args: _, ref subpatterns } => {
                 let downcast_place = place_builder.downcast(adt_def, variant_index); // `(x as Variant)`
                 cx.field_match_pairs(&mut subpairs, extra_data, downcast_place, subpatterns);
 
-                let irrefutable = adt_def.variants().iter_enumerated().all(|(i, v)| {
-                    i == variant_index
-                        || !v.inhabited_predicate(cx.tcx, adt_def).instantiate(cx.tcx, args).apply(
-                            cx.tcx,
-                            cx.infcx.typing_env(cx.param_env),
-                            cx.def_id.into(),
-                        )
-                }) && !adt_def.variant_list_has_applicable_non_exhaustive();
-                if irrefutable {
-                    None
-                } else {
+                // We treat non-exhaustive enums the same independent of the crate they are
+                // defined in, to avoid differences in the operational semantics between crates.
+                let refutable =
+                    adt_def.variants().len() > 1 || adt_def.is_variant_list_non_exhaustive();
+                if refutable {
                     Some(TestableCase::Variant { adt_def, variant_index })
+                } else {
+                    None
                 }
             }
 
@@ -328,23 +311,24 @@ impl<'tcx> MatchPairTree<'tcx> {
                 None
             }
 
-            // FIXME: Pin-patterns should probably have their own pattern kind,
-            // instead of overloading `PatKind::Deref` via the pattern type.
-            PatKind::Deref { ref subpattern }
-                if let Some(ref_ty) = pattern.ty.pinned_ty()
-                    && ref_ty.is_ref() =>
-            {
+            PatKind::Deref { pin: Pinnedness::Pinned, ref subpattern } => {
+                let pinned_ref_ty = match pattern.ty.pinned_ty() {
+                    Some(p_ty) if p_ty.is_ref() => p_ty,
+                    _ => span_bug!(pattern.span, "bad type for pinned deref: {:?}", pattern.ty),
+                };
                 MatchPairTree::for_pattern(
-                    place_builder.field(FieldIdx::ZERO, ref_ty).deref(),
+                    // Project into the `Pin(_)` struct, then deref the inner `&` or `&mut`.
+                    place_builder.field(FieldIdx::ZERO, pinned_ref_ty).deref(),
                     subpattern,
                     cx,
                     &mut subpairs,
                     extra_data,
                 );
+
                 None
             }
 
-            PatKind::Deref { ref subpattern }
+            PatKind::Deref { pin: Pinnedness::Not, ref subpattern }
             | PatKind::DerefPattern { ref subpattern, borrow: DerefPatBorrowMode::Box } => {
                 MatchPairTree::for_pattern(
                     place_builder.deref(),

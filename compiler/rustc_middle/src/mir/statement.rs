@@ -374,6 +374,12 @@ impl<'tcx> Place<'tcx> {
         self.projection.iter().any(|elem| elem.is_indirect())
     }
 
+    /// Returns `true` if the `Place` always refers to the same memory region
+    /// whatever the state of the program.
+    pub fn is_stable_offset(&self) -> bool {
+        self.projection.iter().all(|elem| elem.is_stable_offset())
+    }
+
     /// Returns `true` if this `Place`'s first projection is `Deref`.
     ///
     /// This is useful because for MIR phases `AnalysisPhase::PostCleanup` and later,
@@ -426,6 +432,22 @@ impl<'tcx> Place<'tcx> {
         self.as_ref().project_deeper(more_projections, tcx)
     }
 
+    /// Return a place that projects to a field of the current place.
+    ///
+    /// The type of the current place must be an ADT.
+    pub fn project_to_field(
+        self,
+        idx: FieldIdx,
+        local_decls: &impl HasLocalDecls<'tcx>,
+        tcx: TyCtxt<'tcx>,
+    ) -> Self {
+        let ty = self.ty(local_decls, tcx).ty;
+        let ty::Adt(adt, args) = ty.kind() else { panic!("projecting to field of non-ADT {ty}") };
+        let field = &adt.non_enum_variant().fields[idx];
+        let field_ty = field.ty(tcx, args);
+        self.project_deeper(&[ProjectionElem::Field(idx, field_ty)], tcx)
+    }
+
     pub fn ty_from<D>(
         local: Local,
         projection: &[PlaceElem<'tcx>],
@@ -435,6 +457,8 @@ impl<'tcx> Place<'tcx> {
     where
         D: ?Sized + HasLocalDecls<'tcx>,
     {
+        // If there's a field projection element in `projection`, we *could* skip everything
+        // before that, but on 2026-01-31 a perf experiment showed no benefit from doing so.
         PlaceTy::from_ty(local_decls.local_decls()[local].ty).multi_projection_ty(tcx, projection)
     }
 
@@ -723,11 +747,6 @@ impl<'tcx> ConstOperand<'tcx> {
 ///////////////////////////////////////////////////////////////////////////
 // Rvalues
 
-pub enum RvalueInitializationState {
-    Shallow,
-    Deep,
-}
-
 impl<'tcx> Rvalue<'tcx> {
     /// Returns true if rvalue can be safely removed when the result is unused.
     #[inline]
@@ -762,7 +781,6 @@ impl<'tcx> Rvalue<'tcx> {
             | Rvalue::UnaryOp(_, _)
             | Rvalue::Discriminant(_)
             | Rvalue::Aggregate(_, _)
-            | Rvalue::ShallowInitBox(_, _)
             | Rvalue::WrapUnsafeBinder(_, _) => true,
         }
     }
@@ -809,19 +827,8 @@ impl<'tcx> Rvalue<'tcx> {
                 }
                 AggregateKind::RawPtr(ty, mutability) => Ty::new_ptr(tcx, ty, mutability),
             },
-            Rvalue::ShallowInitBox(_, ty) => Ty::new_box(tcx, ty),
             Rvalue::CopyForDeref(ref place) => place.ty(local_decls, tcx).ty,
             Rvalue::WrapUnsafeBinder(_, ty) => ty,
-        }
-    }
-
-    #[inline]
-    /// Returns `true` if this rvalue is deeply initialized (most rvalues) or
-    /// whether its only shallowly initialized (`Rvalue::Box`).
-    pub fn initialization_state(&self) -> RvalueInitializationState {
-        match *self {
-            Rvalue::ShallowInitBox(_, _) => RvalueInitializationState::Shallow,
-            _ => RvalueInitializationState::Deep,
         }
     }
 }
@@ -836,7 +843,7 @@ impl BorrowKind {
 
     /// Returns whether borrows represented by this kind are allowed to be split into separate
     /// Reservation and Activation phases.
-    pub fn allows_two_phase_borrow(&self) -> bool {
+    pub fn is_two_phase_borrow(&self) -> bool {
         match *self {
             BorrowKind::Shared
             | BorrowKind::Fake(_)
