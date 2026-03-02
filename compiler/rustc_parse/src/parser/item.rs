@@ -961,7 +961,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         self.mod_items.push(impl_item.clone());
     }
 
-    // Given a struct with fields `fields', returns a String with code
+    // Given a struct with fields 'fields', returns a String with code
     // containing a function to log each field of the struct given a vec of
     // such a struct. String is sufficient, since no further modifications
     // or mutations will be done to this generated code.
