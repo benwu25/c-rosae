@@ -475,6 +475,7 @@ impl Invocation {
 }
 
 // Given a parameter pat, return its identifier name in a String.
+// * `pat` - Pat struct representing a parameter identifier.
 fn get_param_ident(pat: &Box<Pat>) -> String {
     match &pat.kind {
         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
@@ -491,6 +492,8 @@ fn get_param_ident(pat: &Box<Pat>) -> String {
 // bool -> boolean
 // &str -> java.lang.String
 // String -> java.lang.String
+// * `ty_str` - String representing the type of a parameter
+//              or return variable.
 fn as_prim_rep_type(ty_str: &str) -> &str {
     if ty_str == I8
         || ty_str == I16
@@ -522,9 +525,10 @@ fn as_prim_rep_type(ty_str: &str) -> &str {
 
 // Given the template arguments to a Vec or array, return a RepType
 // enum representing the Vec/array.
-fn grok_vec_args(path: &Path) -> RepType {
+// * `generic_args` - Generic args to a Vec parameter.
+fn vec_generics_to_rust_type(generic_args: &Path) -> RepType {
     let mut is_ref = false;
-    match &path.segments[path.segments.len() - 1].args {
+    match &generic_args.segments[generic_args.segments.len() - 1].args {
         None => panic!("Vec args has no type name"),
         Some(args) => match &**args {
             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
@@ -563,6 +567,8 @@ enum RepType {
 
 // Given a Rust type kind, return its RepType. Also note whether the type
 // is a reference by setting is_ref.
+// * `kind` - Represents the actual type of a parameter in the Rust language.
+// * `is_ref` - Used to determine reference qualifiers on the type.
 fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
     match &kind {
         TyKind::Array(arr_type, _) => match &get_rep_type(&arr_type.kind, is_ref) {
@@ -590,7 +596,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
                 return RepType::Prim(String::from(maybe_prim_rep));
             }
             if ty_string == VEC {
-                return grok_vec_args(&path);
+                return vec_generics_to_rust_type(&path);
             }
             return RepType::HashCodeStruct(String::from(ty_string));
         }
@@ -717,6 +723,8 @@ impl<'a> ArrayContents<'a> {
 
     // If the top-level variable is an array of structs, use our struct_name to fetch field definitions
     // of our struct type.
+    // * `write_p` - Output parameter to indicate if self.write() should output
+    //               anything to the decls file when called.
     fn get_fields(&self, write_p: &mut bool) -> ThinVec<FieldDef> {
         // use self.struct_name to look up who we are.
         match &self.decl.struct_name {
@@ -743,10 +751,10 @@ impl<'a> ArrayContents<'a> {
 
     // If var is an array of structs, recursively populate sub_contents by creating
     // a new ArrayContents for each field.
-    // write_p: I think this was a hack for avoiding structs/enums/unions which did
-    //           not belong to the crate. We can fix this by performing a pass before
-    //           this one that builds an index of types in the user crate rather
-    //           than keeping track of which types are in the crate during this pass.
+    // * `depth_limit` - Argument to limit writing recursively defined structs
+    //                   to the decls file.
+    // * `write_p` - Output parameter to indicate if self.write() should output
+    //               anything to the decls file when called.
     fn build_contents(&mut self, depth_limit: u32, write_p: &mut bool) {
         if depth_limit == 0 {
             return;
@@ -891,6 +899,10 @@ impl<'a> FieldDecl<'a> {
 
     // If this FieldDecl represents a struct field, recursively build up our FieldDecl tree
     // by creating a new FieldDecl for each field and recursing for nested struct types.
+    // * `depth_limit` - Argument to limit writing recursively defined structs
+    //                   to the decls file.
+    // * `write_p` - Output parameter to indicate if self.write() should output
+    //               anything to the decls file when called.
     fn construct_field_decls(&mut self, depth_limit: u32, write_p: &mut bool) {
         // enclosing_var and field_name have been set, so just take care of decl.
         self.decl.construct_field_decls(depth_limit, write_p);
@@ -931,6 +943,10 @@ impl<'a> TopLevlDecl<'a> {
 
     // If field_decls is Some and sub_contents is None (top-level is a struct variable),
     // recursively build declarations for the fields.
+    // * `depth_limit` - Argument to limit writing recursively defined structs
+    //                   to the decls file.
+    // * `write_p` - Output parameter to indicate if self.write() should output
+    //               anything to the decls file when called.
     fn construct_field_decls(&mut self, depth_limit: u32, write_p: &mut bool) {
         if depth_limit == 0 {
             // Stop recursively constructing FieldDecl tree and return
@@ -1096,6 +1112,8 @@ impl<'a> TopLevlDecl<'a> {
 
     // If the top-level var is a struct variable, use our struct_name to get field definitions
     // for our struct type.
+    // * `write_p` - Output parameter to indicate if self.write() should output
+    //               anything to the decls file when called.
     fn get_fields(&self, write_p: &mut bool) -> ThinVec<FieldDef> {
         // use self.struct_name to look up who we are.
         match &self.struct_name {
@@ -1121,6 +1139,7 @@ impl<'a> TopLevlDecl<'a> {
 }
 
 // Helper to write function entries into the decls file.
+// * `ppt_name` - Program point name.
 fn write_entry(ppt_name: &str) {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
@@ -1132,6 +1151,8 @@ fn write_entry(ppt_name: &str) {
 }
 
 // Helper to write function exits into the decls file.
+// * `ppt_name` - Program point name.
+// * `exit_counter` - Unique numeric identifier for an exit ppt.
 fn write_exit(ppt_name: &str, exit_counter: usize) {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
@@ -1167,8 +1188,17 @@ fn write_header() {
 impl<'a> DaikonDeclsVisitor<'a> {
     // Walk an if expression looking for returns and
     // write exit-ppt declarations when found.
-    // See rustc_parse::parser::item::grok_expr_for_if.
-    fn grok_expr_for_if(
+    // See rustc_parse::parser::item::instrument_if_stmt.
+    // * `expr` - If expression.
+    // * `exit_counter` - Gives the previously seen number of exit ppts.
+    // * `ppt_name` - The ppt name.
+    // * `param_decls` - Vec of TopLevlDecl representing data
+    //                    needed to write variable declarations to the
+    //                    decls file at program points.
+    // * `param_to_block_idx` - Map of param identifiers to idx into
+    //                          dtrace_param_blocks.
+    // * `ret_ty` - Return type of the function.
+    fn if_stmt_to_decls(
         &mut self,
         expr: &Box<Expr>,
         exit_counter: &mut usize,
@@ -1179,7 +1209,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
     ) {
         match &expr.kind {
             ExprKind::Block(block, _) => {
-                self.grok_block(
+                self.block_to_decls(
                     ppt_name,
                     block,
                     param_decls,
@@ -1189,7 +1219,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 );
             }
             ExprKind::If(_, then_block, elif_block) => {
-                self.grok_block(
+                self.block_to_decls(
                     ppt_name,
                     then_block,
                     param_decls,
@@ -1199,7 +1229,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 );
                 match &elif_block {
                     Some(elif_block) => {
-                        self.grok_expr_for_if(
+                        self.if_stmt_to_decls(
                             elif_block,
                             exit_counter,
                             ppt_name,
@@ -1220,10 +1250,19 @@ impl<'a> DaikonDeclsVisitor<'a> {
 
     // Process an entire stmt to find an exit point to write an exit-ppt declaration
     // or recurse on block stmts.
-    // See rustc_parse::parser::item::grok_stmt.
-    fn grok_stmt(
+    // See rustc_parse::parser::item::instrument_stmt.
+    // * `i` - Index into block of the stmt to check.
+    // * `exit_counter` - Gives the previously seen number of exit ppts.
+    // * `ppt_name` - The ppt name.
+    // * `param_decls` - Vec of TopLevlDecl representing data
+    //                    needed to write variable declarations to the
+    //                    decls file at program points.
+    // * `param_to_block_idx` - Map of param identifiers to idx into
+    //                          dtrace_param_blocks.
+    // * `ret_ty` - Return type of the function.
+    fn stmt_to_decls(
         &mut self,
-        loc: usize,
+        i: usize,
         body: &Box<Block>,
         exit_counter: &mut usize,
         ppt_name: &str,
@@ -1231,21 +1270,21 @@ impl<'a> DaikonDeclsVisitor<'a> {
         param_to_block_idx: &FxHashMap<String, i32>,
         ret_ty: &FnRetTy,
     ) -> usize {
-        let mut i = loc;
-        match &body.stmts[i].kind {
+        let mut block_idx = i;
+        match &body.stmts[block_idx].kind {
             StmtKind::Let(_local) => {
-                return i + 1;
+                return block_idx + 1;
             }
             StmtKind::Item(_item) => {
-                return i + 1;
+                return block_idx + 1;
             }
             StmtKind::Expr(no_semi_expr) => match &no_semi_expr.kind {
                 // Blocks.
                 // recurse on nested block,
-                // but we still only grokked one (block) stmt, so just
+                // but we still only instrumented one (block) stmt, so just
                 // move to the next stmt (return i+1).
                 ExprKind::Block(block, _) => {
-                    self.grok_block(
+                    self.block_to_decls(
                         ppt_name,
                         block,
                         param_decls,
@@ -1253,11 +1292,11 @@ impl<'a> DaikonDeclsVisitor<'a> {
                         &ret_ty,
                         exit_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::If(_, if_block, None) => {
                     // no else.
-                    self.grok_block(
+                    self.block_to_decls(
                         ppt_name,
                         if_block,
                         param_decls,
@@ -1265,11 +1304,11 @@ impl<'a> DaikonDeclsVisitor<'a> {
                         &ret_ty,
                         exit_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::If(_, if_block, Some(expr)) => {
                     // yes else.
-                    self.grok_block(
+                    self.block_to_decls(
                         ppt_name,
                         if_block,
                         param_decls,
@@ -1278,7 +1317,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                         exit_counter,
                     );
 
-                    self.grok_expr_for_if(
+                    self.if_stmt_to_decls(
                         expr,
                         exit_counter,
                         ppt_name,
@@ -1286,10 +1325,10 @@ impl<'a> DaikonDeclsVisitor<'a> {
                         &param_to_block_idx,
                         &ret_ty,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::While(_, while_block, _) => {
-                    self.grok_block(
+                    self.block_to_decls(
                         ppt_name,
                         while_block,
                         param_decls,
@@ -1297,10 +1336,10 @@ impl<'a> DaikonDeclsVisitor<'a> {
                         &ret_ty,
                         exit_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::ForLoop { pat: _, iter: _, body: for_block, label: _, kind: _ } => {
-                    self.grok_block(
+                    self.block_to_decls(
                         ppt_name,
                         for_block,
                         param_decls,
@@ -1308,10 +1347,10 @@ impl<'a> DaikonDeclsVisitor<'a> {
                         &ret_ty,
                         exit_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::Loop(loop_block, _, _) => {
-                    self.grok_block(
+                    self.block_to_decls(
                         ppt_name,
                         loop_block,
                         param_decls,
@@ -1319,7 +1358,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                         &ret_ty,
                         exit_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 } // missing Match blocks, TryBlock, Const block? probably more.
                 _ => {}
             },
@@ -1337,7 +1376,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
 
                     // we're sitting on the void return we just processed, so inc
                     // to move on.
-                    i += 1;
+                    block_idx += 1;
                 }
                 ExprKind::Ret(Some(_)) => {
                     write_exit(ppt_name, *exit_counter);
@@ -1485,13 +1524,13 @@ impl<'a> DaikonDeclsVisitor<'a> {
 
                     write_newline();
                     // probably:
-                    i += 1;
+                    block_idx += 1;
                 }
                 ExprKind::Call(_call, _params) => {
-                    return i + 1;
+                    return block_idx + 1;
                 } // Maybe check for drop and other invalidations.
                 _ => {
-                    return i + 1;
+                    return block_idx + 1;
                 } // other things you overlooked.
             },
             // FIXME: remove this.
@@ -1502,16 +1541,25 @@ impl<'a> DaikonDeclsVisitor<'a> {
             //     _ => panic!("is this non-semi expr a return or a valid non-semi expr?"),
             // },
             _ => {
-                return i + 1;
+                return block_idx + 1;
             }
         }
-        i
+        block_idx
     }
 
     // Walk a new block looking for exit points for writing exit-ppt declarations
     // and nested blocks to recursively look for exit points.
-    // See rustc_parse::parser::item::grok_block.
-    fn grok_block(
+    // See rustc_parse::parser::item::instrument_block.
+    // * `ppt_name` - The ppt name.
+    // * `body` - Block to check for program points.
+    // * `param_decls` - Vec of TopLevlDecl representing data
+    //                    needed to write variable declarations to the
+    //                    decls file at program points.
+    // * `param_to_block_idx` - Map of param identifiers to idx into
+    //                          dtrace_param_blocks.
+    // * `ret_ty` - Return type of the function.
+    // * `exit_counter` - Gives the previously seen number of exit ppts.
+    fn block_to_decls(
         &mut self,
         ppt_name: &str,
         body: &Box<Block>,
@@ -1525,7 +1573,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
         // assuming no unreachable statements.
         while i < body.stmts.len() {
             // make sure loop bound is growing as we insert stmts.
-            i = self.grok_stmt(
+            i = self.stmt_to_decls(
                 i,
                 body,
                 exit_counter,
@@ -1546,8 +1594,16 @@ impl<'a> DaikonDeclsVisitor<'a> {
     //    for a base case.
 
     // Walk a function body looking for exit points.
-    // See rustc_parse::parser::item::grok_fn_body.
-    fn grok_fn_body(
+    // See rustc_parse::parser::item::instrument_fn_body.
+    // * `ppt_name` - The ppt name.
+    // * `body` - Block to check for program points.
+    // * `param_decls` - Vec of TopLevlDecl representing data
+    //                    needed to write variable declarations to the
+    //                    decls file at program points.
+    // * `param_to_block_idx` - Map of param identifiers to idx into
+    //                          dtrace_param_blocks.
+    // * `ret_ty` - Return type of the function.
+    fn fn_body_to_decls(
         &mut self,
         ppt_name: &str,
         body: &Box<Block>,
@@ -1561,7 +1617,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
         // assuming no unreachable statements.
         let mut i = 0;
         while i < body.stmts.len() {
-            i = self.grok_stmt(
+            i = self.stmt_to_decls(
                 i,
                 body,
                 &mut exit_counter,
@@ -1579,8 +1635,12 @@ impl<'a> DaikonDeclsVisitor<'a> {
 // walk the function body looking for exit points. Each TopLevlDecl
 // represents a parameter and information necessary to write a variable
 // declaration for the parameter.
-// See rustc_parse::parser::item::grok_fn_sig.
-fn grok_fn_sig<'a>(
+// See rustc_parse::parser::item::fn_sig_to_dtrace_code.
+// * `decl` - Function declaration of the function being processed.
+// * `map` - Retrieve Item from struct identifier.
+// * `depth_limit` - Argument to limit writing recursively defined structs
+//                   to the decls file.
+fn fn_sig_to_toplevl_decls<'a>(
     decl: &'a Box<FnDecl>,
     map: &'a FxHashMap<String, Box<Item>>,
     depth_limit: u32,
@@ -1712,6 +1772,7 @@ fn grok_fn_sig<'a>(
 
 impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
     // Process a new function and write it to the decls file.
+    // * `fk` - The function kind, i.e., function or closure.
     fn visit_fn(
         &mut self,
         fk: FnKind<'a>,
@@ -1725,7 +1786,7 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                     let ppt_name = f.ident.as_str();
                     write_entry(ppt_name);
                     let param_to_block_idx = map_params(&f.sig.decl);
-                    let mut param_decls = grok_fn_sig(&f.sig.decl, self.map, self.depth_limit);
+                    let mut param_decls = fn_sig_to_toplevl_decls(&f.sig.decl, self.map, self.depth_limit);
                     for i in 0..param_decls.len() {
                         param_decls[i].write();
                         //write(&mut param_decls[i], "", true, false, "", &mut None);
@@ -1736,7 +1797,7 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                         Some(body) => {
                             // By now, all exit ppts are
                             // explicit Semi(Ret) stmts.
-                            self.grok_fn_body(
+                            self.fn_body_to_decls(
                                 ppt_name,
                                 body,
                                 &mut param_decls,
@@ -1788,6 +1849,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             dir_path,
         });
         let krate = self.fully_expand_fragment(AstFragment::Crate(krate)).make_crate();
+
         // Decls pass.
         // First, pass through the entire krate building FxHashMap<String, Box<Item>> (value is always an ItemKind::Struct).
         // Create new decls/dtrace files. Open decls file for writing.
@@ -1810,6 +1872,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, depth_limit: 4 }; // off by one to match dtrace.
             decls_visitor.visit_crate(&krate);
         }
+
         assert_eq!(krate.id, ast::CRATE_NODE_ID);
         self.cx.trace_macros_diag();
         krate

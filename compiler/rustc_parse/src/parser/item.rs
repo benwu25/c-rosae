@@ -165,7 +165,7 @@ fn as_primitive(ty_str: &str) -> RustType {
 // &Vec<X> -> UserDefVec("X")
 // &Vec<&X> -> UserDefVec("X"), is_ref == true
 // * `generic_args` - Generic args to a Vec parameter.
-fn vec_args_to_rust_type(generic_args: &Path, is_ref: &mut bool) -> RustType {
+fn vec_generics_to_rust_type(generic_args: &Path, is_ref: &mut bool) -> RustType {
     // Reset in case we have an &Vec<X>, since we want to know if
     // the Vec arguments are references are not, i.e., Vec<X> vs.
     // Vec<&X>.
@@ -214,7 +214,7 @@ pub fn set_output_prefix(input_name: String) {
 
 // Create a RustType for the given Rust type.
 // * `kind` - Represents the actual type of a parameter in the Rust language.
-// * `is_ref` - Used to determine reference qualifiers on parameter types.
+// * `is_ref` - Used to determine reference qualifiers on the type.
 fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
     match &kind {
         TyKind::Array(arr_type, _anon_const) => match &get_basic_type(&arr_type.kind, is_ref) {
@@ -244,7 +244,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
                 return try_prim;
             }
             if ty_string == VEC {
-                return vec_args_to_rust_type(&path, is_ref);
+                return vec_generics_to_rust_type(&path, is_ref);
             }
             // Return full type: RustType<args>, need generics in some cases.
             RustType::UserDef(ty_string.to_string())
@@ -667,7 +667,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // Returns the index to the next stmt in the block to process. If this
     // method adds stmts immediately after the given index, returns the next
     // stmt after all inserted stmts.
-    // * `loc` - Index representing the index to the stmt to process.
+    // * `i` - Index representing the index to the stmt to process.
     // * `body` - Surrounding block containing the stmt.
     // * `exit_counter` - Int representing the next number to use to
     //                    label an exit ppt.
@@ -679,7 +679,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // * `ret_ty` - The return type of the function.
     fn instrument_stmt(
         &mut self,
-        loc: usize,
+        i: usize,
         body: &mut Box<Block>,
         exit_counter: &mut usize,
         ppt_name: &str,
@@ -688,14 +688,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
         ret_ty: &FnRetTy,
         daikon_tmp_counter: &mut u32,
     ) -> usize {
-        let mut i = loc;
-        let stmt = body.stmts[i].clone();
-        match &mut body.stmts[i].kind {
+        let mut block_idx = i;
+        let stmt = body.stmts[block_idx].clone();
+        match &mut body.stmts[block_idx].kind {
             StmtKind::Let(_local) => {
-                return i + 1;
+                return block_idx + 1;
             }
             StmtKind::Item(_item) => {
-                return i + 1;
+                return block_idx + 1;
             }
             StmtKind::Expr(no_semi_expr) => match &mut no_semi_expr.kind {
                 // Blocks.
@@ -712,7 +712,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         exit_counter,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::If(_, if_block, None) => {
                     // no else
@@ -725,7 +725,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         exit_counter,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::If(_, if_block, Some(expr)) => {
                     // yes else
@@ -748,7 +748,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         &ret_ty,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::While(_, while_block, _) => {
                     self.instrument_block(
@@ -760,7 +760,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         exit_counter,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::ForLoop { pat: _, iter: _, body: for_block, label: _, kind: _ } => {
                     self.instrument_block(
@@ -772,7 +772,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         exit_counter,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::Loop(loop_block, _, _) => {
                     self.instrument_block(
@@ -784,7 +784,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         exit_counter,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 // Not sure how to handle match blocks
                 ExprKind::Match(_, arms, _) => {
@@ -806,7 +806,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             },
                         }
                     }
-                    return i + 1;
+                    return block_idx + 1;
                 } // TryBlock, Const block? probably more
                 _ => {}
             },
@@ -831,23 +831,23 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
 
                     *exit_counter += 1;
-                    i = self.insert_into_block(i, &exit, body);
+                    block_idx = self.insert_into_block(block_idx, &exit, body);
                     for param_block in &mut *dtrace_param_blocks {
                         // DAIKON TMP ERROR: you will end up using the same __daikon_tmpX values,
                         // but Rust doesn't care. Not high-priority, just weird to see
                         // let __daikon_tmp7 = ... twice in the same scope.
-                        i = self.insert_into_block(i, &param_block, body);
+                        block_idx = self.insert_into_block(block_idx, &param_block, body);
                     }
 
-                    i = self.insert_into_block(i, &String::from(DTRACE_NEWLINE), body);
+                    block_idx = self.insert_into_block(block_idx, &String::from(DTRACE_NEWLINE), body);
 
                     // we're sitting on the void return we just processed, so inc
                     // to move on.
-                    i += 1;
+                    block_idx += 1;
                 }
                 ExprKind::Ret(Some(return_expr)) => {
                     self.insert_return(
-                        &mut i,
+                        &mut block_idx,
                         &return_expr,
                         body,
                         exit_counter,
@@ -858,10 +858,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
                 }
                 ExprKind::Call(_call, _params) => {
-                    return i + 1;
+                    return block_idx + 1;
                 } // Maybe check for drop and other invalidations.
                 _ => {
-                    return i + 1;
+                    return block_idx + 1;
                 } // other things you overlooked?
             },
             // Now, any stmt without a semicolon must be a trailing return?
@@ -870,7 +870,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             StmtKind::Expr(no_semi_expr) => {
                 // we know it is not a block, so it must be trailing no-semi return expr
                 self.insert_return(
-                    &mut i,
+                    &mut block_idx,
                     &no_semi_expr,
                     body,
                     exit_counter,
@@ -881,10 +881,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
             }
             _ => {
-                return i + 1;
+                return block_idx + 1;
             }
         }
-        i
+        block_idx
     }
 
     // Get 'impl X { }' as an Item struct.
