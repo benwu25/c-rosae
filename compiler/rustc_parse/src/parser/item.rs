@@ -839,7 +839,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         block_idx = self.insert_into_block(block_idx, &param_block, body);
                     }
 
-                    block_idx = self.insert_into_block(block_idx, &String::from(DTRACE_NEWLINE), body);
+                    block_idx =
+                        self.insert_into_block(block_idx, &String::from(DTRACE_NEWLINE), body);
 
                     // we're sitting on the void return we just processed, so inc
                     // to move on.
@@ -1592,7 +1593,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // * `decl` - Function declaration of the function being processed.
     // * `daikon_tmp_counter` - Stores the number of temporary variables used in the
     //                          instrumentation code.
-    fn fn_sig_to_dtrace_code(&mut self, decl: &Box<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
+    fn fn_sig_to_dtrace_code(
+        &mut self,
+        decl: &Box<FnDecl>,
+        daikon_tmp_counter: &mut u32,
+    ) -> Vec<String> {
         // Process params.
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
         for i in 0..decl.inputs.len() {
@@ -2049,7 +2054,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                     }
                 }
             }
-	    // FIXME: instrument lambda/closure types.
+            // FIXME: instrument lambda/closure types.
             FnKind::Closure(_, _, _, _) => {}
         }
         mut_visit::walk_fn(self, fk);

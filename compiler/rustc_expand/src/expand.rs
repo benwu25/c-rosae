@@ -1786,7 +1786,8 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                     let ppt_name = f.ident.as_str();
                     write_entry(ppt_name);
                     let param_to_block_idx = map_params(&f.sig.decl);
-                    let mut param_decls = fn_sig_to_toplevl_decls(&f.sig.decl, self.map, self.depth_limit);
+                    let mut param_decls =
+                        fn_sig_to_toplevl_decls(&f.sig.decl, self.map, self.depth_limit);
                     for i in 0..param_decls.len() {
                         param_decls[i].write();
                         //write(&mut param_decls[i], "", true, false, "", &mut None);
