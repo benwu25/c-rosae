@@ -1,5 +1,4 @@
 // ignore-tidy-filelength
-
 use std::fmt::Write;
 use std::io::Write as FileWrite;
 use std::mem;
@@ -163,7 +162,7 @@ fn as_primitive(ty_str: &str) -> RustType {
 // Vec<&X> -> UserDefVec("X"), is_ref == true
 // &Vec<X> -> UserDefVec("X")
 // &Vec<&X> -> UserDefVec("X"), is_ref == true
-fn grok_vec_args(path: &Path, is_ref: &mut bool) -> RustType {
+fn vec_args_to_rust_type(path: &Path, is_ref: &mut bool) -> RustType {
     // Reset in case we have an &Vec<X>, since we want to know if
     // the Vec arguments are references are not, i.e., Vec<X> vs.
     // Vec<&X>.
@@ -239,7 +238,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
                 return try_prim;
             }
             if ty_string == VEC {
-                return grok_vec_args(&path, is_ref);
+                return vec_args_to_rust_type(&path, is_ref);
             }
             // Return full type: RustType<args>, need generics in some cases.
             RustType::UserDef(ty_string.to_string())
@@ -340,7 +339,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // ret_ty: return type of the function.
     // daikon_tmp_counter: gives the number of previously allocated.
     // temporaries added into the code.
-    fn grok_expr_for_if(
+    fn instrument_if_stmt(
         &mut self,
         expr: &mut Box<Expr>,
         exit_counter: &mut usize,
@@ -352,7 +351,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     ) {
         match &mut expr.kind {
             ExprKind::Block(block, _) => {
-                self.grok_block(
+                self.instrument_block(
                     ppt_name,
                     block,
                     dtrace_param_blocks,
@@ -363,7 +362,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
             }
             ExprKind::If(_, then_block, elif_block) => {
-                self.grok_block(
+                self.instrument_block(
                     ppt_name,
                     then_block,
                     dtrace_param_blocks,
@@ -374,7 +373,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
                 match elif_block {
                     Some(elif_block) => {
-                        self.grok_expr_for_if(
+                        self.instrument_if_stmt(
                             elif_block,
                             exit_counter,
                             ppt_name,
@@ -661,7 +660,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     //                      added at exit ppts.
     // param_to_block_idx: no description.
     // ret_ty: The return type of the function.
-    fn grok_stmt(
+    fn instrument_stmt(
         &mut self,
         loc: usize,
         body: &mut Box<Block>,
@@ -684,10 +683,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
             StmtKind::Expr(no_semi_expr) => match &mut no_semi_expr.kind {
                 // Blocks.
                 // recurse on nested block,
-                // but we still only grokked one (block) stmt, so just
+                // but we still only walked one (block) stmt, so just
                 // move to the next stmt (return i+1)
                 ExprKind::Block(block, _) => {
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         block,
                         dtrace_param_blocks,
@@ -700,7 +699,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 ExprKind::If(_, if_block, None) => {
                     // no else
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         if_block,
                         dtrace_param_blocks,
@@ -713,7 +712,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 ExprKind::If(_, if_block, Some(expr)) => {
                     // yes else
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         if_block,
                         dtrace_param_blocks,
@@ -723,7 +722,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         daikon_tmp_counter,
                     );
 
-                    self.grok_expr_for_if(
+                    self.instrument_if_stmt(
                         expr,
                         exit_counter,
                         ppt_name,
@@ -735,7 +734,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     return i + 1;
                 }
                 ExprKind::While(_, while_block, _) => {
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         while_block,
                         dtrace_param_blocks,
@@ -747,7 +746,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     return i + 1;
                 }
                 ExprKind::ForLoop { pat: _, iter: _, body: for_block, label: _, kind: _ } => {
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         for_block,
                         dtrace_param_blocks,
@@ -759,7 +758,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     return i + 1;
                 }
                 ExprKind::Loop(loop_block, _, _) => {
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         loop_block,
                         dtrace_param_blocks,
@@ -778,7 +777,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             Some(bd) => match &mut bd.kind {
                                 ExprKind::Block(_block, _) => {
                                     // FIXME: remove this commented code.
-                                    // self.grok_block(ppt_name,
+                                    // self.instrument_block(ppt_name,
                                     //                 block,
                                     //                 dtrace_param_blocks,
                                     //                 &param_to_block_idx,
@@ -1563,8 +1562,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // These will be used at the function entry and each exit ppt, potentially updating
     // names of synthesized/injected variables to avoid name conflicts (this should become
     // easy with better data structures generated by this function).
-    fn grok_fn_sig(&mut self, decl: &Box<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
-        // grok params.
+    fn fn_sig_to_dtrace_code(&mut self, decl: &Box<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
+        // Process params.
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
         for i in 0..decl.inputs.len() {
             let mut is_ref = false;
@@ -1878,7 +1877,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // exit_counter: contains the next label for an exit ppt.
     // daikon_tmp_counter: contains the next label for a
     //                     temporary variable.
-    fn grok_block(
+    fn instrument_block(
         &mut self,
         ppt_name: &str,
         body: &mut Box<Block>,
@@ -1892,7 +1891,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         // Assuming no unreachable statements.
         while i < body.stmts.len() {
-            i = self.grok_stmt(
+            i = self.instrument_stmt(
                 i,
                 body,
                 exit_counter,
@@ -1907,7 +1906,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // Walk the function body and insert dtrace calls at
     // the beginning and at exit points.
-    fn grok_fn_body(
+    fn instrument_fn_body(
         &mut self,
         ppt_name: &str,
         body: &mut Box<Block>,
@@ -1939,7 +1938,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         i = self.insert_into_block(i, &String::from(DTRACE_NEWLINE), body);
 
-        // Before grokking fn body, turn implicit void return into "return;".
+        // Before instrumenting fn body, turn implicit void return into "return;".
         // This may be unreachable in some situations like
         // fn foo(t: bool) { if t { return; } else { return; } }.
         // In this situation we should not add a return stmt, but
@@ -1958,7 +1957,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         // Assuming no unreachable statements.
         while i < body.stmts.len() {
-            i = self.grok_stmt(
+            i = self.instrument_stmt(
                 i,
                 body,
                 &mut exit_counter,
@@ -1995,12 +1994,12 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                 let mut daikon_tmp_counter = 0;
                 // get block of dtrace chunks -- one for each param (in a String, not good).
                 let mut dtrace_param_blocks =
-                    self.grok_fn_sig(&f.sig.decl, &mut daikon_tmp_counter);
+                    self.fn_sig_to_dtrace_code(&f.sig.decl, &mut daikon_tmp_counter);
                 let param_to_block_idx = map_params(&f.sig.decl);
                 match &mut f.body {
                     None => {}
                     Some(body) => {
-                        self.grok_fn_body(
+                        self.instrument_fn_body(
                             ppt_name,
                             body,
                             &mut dtrace_param_blocks,
