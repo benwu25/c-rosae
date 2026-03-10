@@ -595,7 +595,12 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
             }
             return RepType::HashCodeStruct(String::from(ty_string));
         }
-        _ => todo!(),
+        TyKind::ImplicitSelf => {
+            // FIXME: Query our current scope to get the ty_string
+            // as in the path case.
+            panic!("ImplicitSelf not yet implemented in get_rep_type")
+        }
+        _ => panic!("TyKind not yet implemented in get_rep_type"),
     }
 }
 
