@@ -1,5 +1,6 @@
 // ignore-tidy-filelength
 
+use std::collections::VecDeque;
 use std::fmt::Write;
 use std::io::Write as FileWrite;
 use std::mem;
@@ -50,6 +51,12 @@ pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false
 // For generating unique names for auxiliary files to parse in parse_items_from_source_str{,ing}.
 static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 
+enum ScopeType {
+    ToplevelScope(ThinVec<Box<Item>>),
+    FnBody(ThinVec<Stmt>),
+    // [continues for whatever can have Items, and thus struct definitions]
+}
+
 /*
    Primary visitor pass for dtrace instrumentation.
 */
@@ -57,13 +64,8 @@ struct DaikonDtraceVisitor<'a> {
     // For parsing string fragments.
     pub parser: &'a Parser<'a>,
 
-    // For appending impl blocks to the file.
-    // When we find structs while walking the file,
-    // we construct an impl block containing dtrace_*
-    // routines, which are added to this field.
-    // They are later mashed to the end of the file
-    // contents.
-    pub mod_items: &'a mut ThinVec<Box<Item>>,
+    // For adding impl blocks which bundle dtrace_* routines.
+    pub scope_stack: &'a mut VecDeque<ScopeType>,
 }
 
 // Represents a Rust type.
@@ -343,6 +345,95 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
         i
     }
+
+    // Pop stmts (impls) at the back into the front of stmts
+    fn pop_back_into_stmts_front(&mut self, stmts: &mut ThinVec<Stmt>) {
+        match self.scope_stack.pop_back() {
+            Some(scope_type) => match scope_type {
+                ScopeType::FnBody(stmt_vec) => {
+                    for stmt in stmt_vec {
+                        stmts.insert(0, stmt);
+                    }
+                }
+                // [continues]
+                _ => panic!("Expected a ScopeType with a stmt_vec"),
+            },
+            None => panic!("Expected scope_stack to be non-empty"),
+        };
+    }
+
+    // Pop items (impls) at back into items
+    fn pop_back_into_items(&mut self, items: &mut ThinVec<Box<Item>>) {
+        match self.scope_stack.pop_back() {
+            Some(scope_type) => match scope_type {
+                // ScopeType::InlineMod(item_vec) |
+                ScopeType::ToplevelScope(item_vec) => {
+                    for item in item_vec {
+                        items.push(item);
+                    }
+                }
+                // [continues]
+                ScopeType::FnBody(_) => panic!("Why is this an FnBody?"), //_ => panic!("Expected a ScopeType with an item_vec")
+            },
+            None => panic!("Expected scope_stack to be non-empty"),
+        };
+    }
+
+    // Return true if we should call push_impl_item instead of
+    // push_impl_stmt.
+    fn scope_type_requires_items_p(&self) -> bool {
+        match &self.scope_stack.back() {
+            Some(back) => match &back {
+                // ScopeType::InlineMod(_) |
+                ScopeType::ToplevelScope(_) => {
+                    // [continues]
+                    true
+                }
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
+    // Push a new impl as a Stmt to the current scope
+    fn push_impl_stmt(&mut self, impl_stmt: Stmt) {
+        match &mut self.scope_stack.back_mut() {
+            Some(back) => match back {
+                ScopeType::FnBody(stmt_vec) => {
+                    stmt_vec.push(impl_stmt);
+                }
+                // [continues]
+                _ => panic!("Expected a ScopeType with stmts"),
+            },
+            None => panic!("Expected scope_stack non-empty"),
+        };
+    }
+
+    // Push a new impl as an Item to the current scope
+    fn push_impl_item(&mut self, impl_item: Box<Item>) {
+        match &mut self.scope_stack.back_mut() {
+            Some(back) => match back {
+                // ScopeType::InlineMod(item_vec) |
+                ScopeType::ToplevelScope(item_vec) => {
+                    item_vec.push(impl_item);
+                }
+                // [continues]
+                _ => panic!("Expected a ScopeType with an item_vec"),
+            },
+            None => panic!("Expected scope_stack non-empty"),
+        };
+    }
+
+    // Initialize the scope_stack with the ToplevelScope
+    fn init_scope_stack(&mut self) {
+        self.scope_stack.push_back(ScopeType::ToplevelScope(ThinVec::new()));
+    }
+
+    // Push/enter a new ScopeType::FnBody
+    fn enter_fn_body(&mut self) {
+        self.scope_stack.push_back(ScopeType::FnBody(ThinVec::new()));
+    }
+    // [continues]
 
     // Take an if stmt and walk all blocks to locate exit ppts and insert
     // log stmts to log exit ppts.
@@ -695,7 +786,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             StmtKind::Let(_local) => {
                 return block_idx + 1;
             }
-            StmtKind::Item(_item) => {
+            StmtKind::Item(_) => {
                 return block_idx + 1;
             }
             StmtKind::Expr(no_semi_expr) => match &mut no_semi_expr.kind {
@@ -813,11 +904,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
             },
             _ => {}
         }
-        // Next, look for return stmts.
-        // We start a new match block since we may be adding stmts
-        // into the block, so it does not make sense to relinquish
-        // mutability to the match block as above. The compiler
-        // will complain.
+        // Next, look for return stmts where we don't need to borrow
+        // the stmt mutably. We will just mutate the block appropriately
+        // and delete the original return statement.
         match &stmt.kind {
             StmtKind::Semi(semi) => match &semi.kind {
                 ExprKind::Ret(None) => {
@@ -915,7 +1004,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
         struct_fields: &mut ThinVec<FieldDef>,
         struct_ty: &Ty,
         struct_generics: &Generics,
-    ) {
+    ) -> Box<Item> {
+        // get the base_impl. If we are not toplevel, we should get
+        // the impl as nested in a function, otherwise get the impl
+        // just as an Item for the toplevel
         let mut impl_item = self.base_impl_item();
         let the_impl = match &mut impl_item.kind {
             ItemKind::Impl(i) => i,
@@ -981,7 +1073,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             },
         }
 
-        self.mod_items.push(impl_item.clone());
+        return impl_item;
     }
 
     // Given a struct with fields 'fields', returns a String with code
@@ -1565,7 +1657,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     }
                 }
-                // FIXME: use the | operator here.
                 RustType::PrimVec(_)
                 | RustType::UserDefVec(_)
                 | RustType::PrimArray(_)
@@ -2030,6 +2121,8 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
         _span: rustc_span::Span,
         _id: rustc_ast::NodeId,
     ) {
+        // Walk the function body looking for return statements and adding
+        // instrumentation.
         match &mut fk {
             FnKind::Fn(_, _, f) => {
                 let ppt_name = f.ident.as_str();
@@ -2053,12 +2146,54 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                             &mut daikon_tmp_counter,
                         );
                     }
-                }
+                };
             }
-            // FIXME: instrument lambda/closure types.
+            // FIXME: instrument closures.
             FnKind::Closure(_, _, _, _) => {}
-        }
-        mut_visit::walk_fn(self, fk);
+        };
+
+        // we didn't look for struct definitions while walking, so now we prepare a new ScopeType::FnBody
+        // and walk this function to generate impl blocks
+        self.enter_fn_body();
+
+        // We need to preserve fk and avoid moving it, so we cannot call walk_fn
+        // on fk.
+        // To do this, we can fully clone fk and walk that instead so we can
+        // modify fk after calling walk_fn.
+        // FIXME: this seems bad for performance, cloning a whole function AST node.
+        let fk_clone = match &mut fk {
+            FnKind::Fn(ctxt, vis, f) => FnKind::Fn(ctxt.clone(), &mut vis.clone(), &mut f.clone()),
+            FnKind::Closure(binder, coro_kind, decl, expr) => match &coro_kind {
+                Some(coro_kind) => FnKind::Closure(
+                    &mut binder.clone(),
+                    &mut Some(coro_kind.clone()),
+                    &mut decl.clone(),
+                    &mut expr.clone(),
+                ),
+                None => FnKind::Closure(
+                    &mut binder.clone(),
+                    &mut None,
+                    &mut decl.clone(),
+                    &mut expr.clone(),
+                ),
+            },
+        };
+        mut_visit::walk_fn(self, fk_clone);
+
+        // now we can mutate fk like before.
+        match &mut fk {
+            FnKind::Fn(_, _, f) => match &mut f.body {
+                Some(body) => {
+                    self.pop_back_into_stmts_front(&mut body.stmts);
+                }
+                None => {
+                    self.scope_stack.pop_back();
+                }
+            },
+            _ => {
+                self.scope_stack.pop_back();
+            }
+        };
     }
 
     // Visit all structs and generate new impl blocks with dtrace
@@ -2067,6 +2202,8 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
     //       whether to continue or not.
     // * `item` - An item to maybe instrument.
     fn visit_item(&mut self, item: &mut Item) {
+        let mut inline_mod_p = false;
+
         match &mut item.kind {
             ItemKind::Enum(_ident, _generics, _enum_def) => {}
             ItemKind::Struct(ident, generics, variant_data) => match variant_data {
@@ -2101,16 +2238,53 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                         span: item.span.clone(),
                         tokens: None,
                     };
-                    self.gen_impl(fields, &the_ty, &generics);
+
+                    let impl_item = self.gen_impl(fields, &the_ty, &generics);
+
+                    // Now we push this to the back of scope_stack.
+                    // This is the only time we ever see a struct definition. i.e., this
+                    // is the only place where gen_impl is ever called. So we need
+                    // not push generated impls anywhere else. We only push new/empty scopes
+                    // everywhere else.
+                    if self.scope_type_requires_items_p() {
+                        self.push_impl_item(impl_item);
+                    } else {
+                        let impl_stmt = Stmt {
+                            id: NodeId::MAX_AS_U32.into(),
+                            kind: StmtKind::Item(impl_item),
+                            span: item.span.clone(),
+                        };
+                        self.push_impl_stmt(impl_stmt);
+                    }
+
+                    // also, structs cannot be defined in structs, so we don't
+                    // need to enter a new scope here.
+                    // NOTE: in decls generation, you absolutely need to enter
+                    // a scope here for deducing type of seen self parameters.
                 }
                 VariantData::Tuple(_, _) => {}
                 _ => {}
             },
             ItemKind::Union(_ident, _generics, _variant_data) => {}
+            ItemKind::Mod(_, _, mod_kind) => match &mod_kind {
+                ModKind::Loaded(_, inline, _) => match &inline {
+                    Inline::Yes => {
+                        inline_mod_p = true;
+                    }
+                    _ => {}
+                },
+                _ => {}
+            },
             _ => {}
+        };
+
+        if !inline_mod_p {
+            mut_visit::walk_item(self, item);
         }
 
-        mut_visit::walk_item(self, item);
+        // If there are any items where structs can be defined, match &mut item.kind again
+        // here and dump the new impls into those items.
+        //match &mut item.kind {
     }
 }
 
@@ -2263,18 +2437,19 @@ impl<'a> Parser<'a> {
         //== Daikon dtrace instrumentation passes ==//
 
         if *DO_VISITOR.lock().unwrap() {
-            // do all instrumentation.
-            let mut items_to_append: ThinVec<Box<Item>> = ThinVec::new();
-            let mut impl_inserter =
-                DaikonDtraceVisitor { parser: &self, mod_items: &mut items_to_append };
-            mut_visit::visit_items(&mut impl_inserter, &mut items);
+            let mut dtrace_visitor =
+                DaikonDtraceVisitor { parser: &self, scope_stack: &mut VecDeque::new() };
+            dtrace_visitor.init_scope_stack();
 
-            // push impl blocks.
-            for i in 0..items_to_append.len() {
-                items.push(items_to_append[i].clone());
-            }
+            // Do instrumentation
+            mut_visit::visit_items(&mut dtrace_visitor, &mut items);
 
-            // pretty print the instrumented code (without library/imports) for testing.
+            // Push last remaining impl blocks into ToplevelScope
+            dtrace_visitor.pop_back_into_items(&mut items);
+
+            // pretty print the instrumented code (without library/imports) for testing and
+            // debugging. The library/imports will be present for inline mods.
+            // FIXME: delegate this to a function.
             let pp_path = format!("{}{}", *OUTPUT_PREFIX.lock().unwrap(), ".pp");
             let pp_as_path = std::path::Path::new(&pp_path);
             std::fs::File::create(&pp_as_path).unwrap();
@@ -2289,6 +2464,8 @@ impl<'a> Parser<'a> {
 
             // add imports.
             // FIXME: you should check if these imports are already included.
+            // probably visit types or paths or use stmts or
+            // something.
             match &self.parse_items_from_source_string(String::from(DTRACE_IMPORTS)) {
                 Err(_why) => panic!("Can't parse imports"),
                 Ok(prepend_items) => {
