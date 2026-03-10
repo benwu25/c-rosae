@@ -15,7 +15,6 @@ use rustc_ast::{
     ItemKind, MacStmtStyle, MetaItemInner, MetaItemKind, ModKind, NodeId, PatKind, StmtKind,
     TyKind, token,
 };
-#[allow(unused_imports)]
 use rustc_ast::{
     AngleBracketedArg, Block, Expr, FieldDef, FnDecl, FnRetTy, GenericArg, GenericArgs, Item, Pat,
     Path, VariantData,
@@ -33,7 +32,6 @@ use rustc_feature::Features;
 use rustc_hir::Target;
 use rustc_hir::def::MacroKinds;
 use rustc_hir::limit::Limit;
-#[allow(unused_imports)]
 use rustc_parse::parser::daikon_strs::{
     BOOL, CHAR, F32, F64, I8, I16, I32, I64, I128, ISIZE, STR, STRING, U8, U16, U32, U64, U128,
     UNIT, USIZE, VEC,
