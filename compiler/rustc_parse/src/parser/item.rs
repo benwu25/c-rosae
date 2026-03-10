@@ -35,6 +35,7 @@ use super::{
 };
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::parser::daikon_strs::*;
+use crate::parser::dtrace_routine_builders::*;
 use crate::{StripTokens, exp, new_parser_from_source_str, unwrap_or_emit_fatal};
 
 // Stores the prefix for output files.
@@ -66,6 +67,11 @@ struct DaikonDtraceVisitor<'a> {
 }
 
 // Represents a Rust type.
+// If it is a reference, note this with is_ref in get_basic_type.
+// For Vec/array, is_ref indicates whether the contents of the
+// container are references or not rather than the container
+// itself. It does not matter if the container is_ref or not,
+// since we always make a copy Vec with references to contents.
 // E.g.,
 // i32 -> Prim("i32")
 // Vec<char> -> PrimVec("char")
@@ -94,6 +100,7 @@ enum RustType {
 }
 
 // Convert a Pat representing a parameter name into a String representation.
+// * `pat` - Pat struct representing an identifier for a parameter.
 fn get_param_ident(pat: &Box<Pat>) -> String {
     match &pat.kind {
         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
@@ -105,6 +112,7 @@ fn get_param_ident(pat: &Box<Pat>) -> String {
 // representing it or RustType::Error otherwise.
 // i32 -> RustType::Prim("i32")
 // Vec<X> -> RustType::Error
+// * `ty_str` - String representing a parameter type.
 fn as_primitive(ty_str: &str) -> RustType {
     if ty_str == I8 {
         return RustType::Prim(String::from(I8));
@@ -149,19 +157,21 @@ fn as_primitive(ty_str: &str) -> RustType {
 }
 
 // Given the type of the object contained in a Vec,
-// return a RustType representing the Vec.
+// represented as a Path struct, return a RustType representing
+// the Vec.
 // is_ref is set to true if the Vec contains references.
 // Vec<X> -> UserDefVec("X")
 // &'a Vec<X> -> UserDefVec("X")
 // Vec<&X> -> UserDefVec("X"), is_ref == true
 // &Vec<X> -> UserDefVec("X")
 // &Vec<&X> -> UserDefVec("X"), is_ref == true
-fn grok_vec_args(path: &Path, is_ref: &mut bool) -> RustType {
+// * `generic_args` - Generic args to a Vec parameter.
+fn vec_generics_to_rust_type(generic_args: &Path, is_ref: &mut bool) -> RustType {
     // Reset in case we have an &Vec<X>, since we want to know if
     // the Vec arguments are references are not, i.e., Vec<X> vs.
     // Vec<&X>.
     *is_ref = false;
-    match &path.segments[path.segments.len() - 1].args {
+    match &generic_args.segments[generic_args.segments.len() - 1].args {
         None => RustType::Error,
         Some(args) => match &**args {
             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
@@ -187,6 +197,7 @@ fn grok_vec_args(path: &Path, is_ref: &mut bool) -> RustType {
 // been invoked by cargo, take the OUTPUT_PREFIX from the input file
 // name.
 // foo.rs -> foo
+// * `input_name` - Name of the program, i.e., a file prefix or crate name.
 pub fn set_output_prefix(input_name: String) {
     let dot_idx = match input_name.rfind(".") {
         // .rs
@@ -202,12 +213,9 @@ pub fn set_output_prefix(input_name: String) {
     *OUTPUT_PREFIX.lock().unwrap() = String::from(res);
 }
 
-// Create a RustType for the given Rust type. If it is a reference,
-// note this with is_ref.
-// For Vec/array, is_ref indicates whether the contents of the
-// container are references or not rather than the container
-// itself. It does not matter if the container is_ref or not,
-// since we always make a copy Vec with references to contents.
+// Create a RustType for the given Rust type.
+// * `kind` - Represents the actual type of a parameter in the Rust language.
+// * `is_ref` - Used to determine reference qualifiers on the type.
 fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
     match &kind {
         TyKind::Array(arr_type, _anon_const) => match &get_basic_type(&arr_type.kind, is_ref) {
@@ -228,7 +236,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
             get_basic_type(&mut_ty.ty.kind, is_ref)
         }
         TyKind::Path(_, path) => {
-            if path.segments.len() == 0 {
+            if path.segments.is_empty() {
                 panic!("Path has no type");
             }
             let ty_string = path.segments[path.segments.len() - 1].ident.as_str();
@@ -237,7 +245,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
                 return try_prim;
             }
             if ty_string == VEC {
-                return grok_vec_args(&path, is_ref);
+                return vec_generics_to_rust_type(&path, is_ref);
             }
             // Return full type: RustType<args>, need generics in some cases.
             RustType::UserDef(ty_string.to_string())
@@ -270,8 +278,9 @@ if cond { return; } else { return; }
 // In this case, an extra void return is unreachable.
 // FIXME: handle checking for exhaustive control flow with
 // explicit void returns.
+// * `block` - A block representing a function body to check.
 fn last_stmt_is_void_return(block: &Box<Block>) -> bool {
-    if block.stmts.len() == 0 {
+    if block.stmts.is_empty() {
         panic!("no stmts to check");
     }
     match &block.stmts[block.stmts.len() - 1].kind {
@@ -286,6 +295,10 @@ fn last_stmt_is_void_return(block: &Box<Block>) -> bool {
 impl<'a> DaikonDtraceVisitor<'a> {
     // Given a block of stmts in a String and a block, parse the string
     // and append parsed stmts to the end of the block.
+    // * `to_insert` - A block of code to parse, either wrapped in a
+    //                 function or a plain semi-colon separated sequence
+    //                 of stmts.
+    // * `block` - The block to append stmts to.
     fn append_to_block(&self, to_insert: &str, block: &mut Box<Block>) {
         match &self.parser.parse_items_from_source_str(to_insert) {
             Err(_why) => panic!("Parsing internal String failed"),
@@ -305,6 +318,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // Given a block of stmts in a String, a block, and an idx into the block,
     // parse the string and insert parsed stmts at the specified index.
+    // * `loc` - A stmt index to insert new stmts.
+    // * `to_insert` - A block of code to parse, either wrapped in a
+    //                 function or a semi-colon separated sequence
+    //                 of stmts.
+    // * `block` - The block  to insert stmts into.
     fn insert_into_block(&self, loc: usize, to_insert: &str, block: &mut Box<Block>) -> usize {
         let mut i = loc;
         let items = self.parser.parse_items_from_source_str(to_insert);
@@ -328,17 +346,18 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // Take an if stmt and walk all blocks to locate exit ppts and insert
     // log stmts to log exit ppts.
-    // expr: If expression.
-    // exit_counter: gives the previously seen number of exit ppts.
-    // ppt_name: ppt name.
-    // dtrace_param_blocks: Vec of String blocks, with the ith block
-    // giving the dtrace calls needed to log the ith parameter.
-    // param_to_block_idx: map of param identifiers to idx into
-    // dtrace_param_blocks.
-    // ret_ty: return type of the function.
-    // daikon_tmp_counter: gives the number of previously allocated.
-    // temporaries added into the code.
-    fn grok_expr_for_if(
+    // * `expr` - If expression.
+    // * `exit_counter` - Gives the previously seen number of exit ppts.
+    // * `ppt_name` - The ppt name.
+    // * `dtrace_param_blocks` - Vec of String blocks, with the ith block
+    //                           giving the dtrace calls needed to log the
+    //                           ith parameter.
+    // * `param_to_block_idx` - Map of param identifiers to idx into
+    //                          dtrace_param_blocks.
+    // * `ret_ty` - Return type of the function.
+    // * `daikon_tmp_counter` - Gives the number of previously allocated
+    //                          temporaries added into the code.
+    fn instrument_if_stmt(
         &mut self,
         expr: &mut Box<Expr>,
         exit_counter: &mut usize,
@@ -350,7 +369,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     ) {
         match &mut expr.kind {
             ExprKind::Block(block, _) => {
-                self.grok_block(
+                self.instrument_block(
                     ppt_name,
                     block,
                     dtrace_param_blocks,
@@ -360,57 +379,51 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     daikon_tmp_counter,
                 );
             }
-            ExprKind::If(_, if_block, None) => {
-                self.grok_block(
+            ExprKind::If(_, then_block, elif_block) => {
+                self.instrument_block(
                     ppt_name,
-                    if_block,
+                    then_block,
                     dtrace_param_blocks,
                     &param_to_block_idx,
                     &ret_ty,
                     exit_counter,
                     daikon_tmp_counter,
                 );
+                match elif_block {
+                    Some(elif_block) => {
+                        self.instrument_if_stmt(
+                            elif_block,
+                            exit_counter,
+                            ppt_name,
+                            dtrace_param_blocks,
+                            &param_to_block_idx,
+                            &ret_ty,
+                            daikon_tmp_counter,
+                        );
+                    }
+                    None => {}
+                }
             }
-            ExprKind::If(_, if_block, Some(another_expr)) => {
-                self.grok_block(
-                    ppt_name,
-                    if_block,
-                    dtrace_param_blocks,
-                    &param_to_block_idx,
-                    &ret_ty,
-                    exit_counter,
-                    daikon_tmp_counter,
-                );
-                self.grok_expr_for_if(
-                    another_expr,
-                    exit_counter,
-                    ppt_name,
-                    dtrace_param_blocks,
-                    &param_to_block_idx,
-                    &ret_ty,
-                    daikon_tmp_counter,
-                );
-            }
-            _ => panic!("Internal error handling if stmt with else!"),
+            _ => panic!("Internal error handling if stmt!"),
         }
     }
 
     // FIXME: noted elsewhere, but also here: implement data structures
     // to store exit ppt information rather than in dtrace_param_blocks
-    // as a string. This allows for much greater flexibility, and avoids
-    // parse errors deep in the instrumentation pipeline.
+    // as a string. This allows for much greater flexibility, and detects
+    // parse errors earlier in the dtrace pass.
 
     // Given a ret_expr from an explicit return stmt or a non-semi
     // trailing return, insert code into body at index i to log the
     // ret_expr.
-    // i: index into block to insert logging.
-    // ret_expr: Expr representing the return value at a given exit ppt.
-    // body: the block to insert into.
-    // exit_counter: unique, function-local numeric identifier for an exit ppt.
-    // ppt_name: program point name.
-    // dtrace_param_blocks: Vec of logging code stored in Strings.
-    // ret_ty: return type of the function.
-    // daikon_tmp_counter: label for the next temporary variable.
+    // * `i` - Index into block to insert logging.
+    // * `ret_expr` - Expr representing the return value at a given exit ppt.
+    // * `body` - The block to insert into.
+    // * `exit_counter` - Unique, function-local numeric identifier for an exit ppt.
+    // * `ppt_name` - Program point name.
+    // * `dtrace_param_blocks` - Vec of logging code stored in Strings.
+    // * `ret_ty` - Return type of the function.
+    // * `daikon_tmp_counter` - Label for the next temporary variable.
     fn insert_return(
         &mut self,
         i: &mut usize,
@@ -431,11 +444,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             ]),
             DTRACE_EXIT,
         );
-
         *exit_counter += 1;
-        // FIXME: create overloads of build_instrument_code specialized for
-        // common tasks like creating exit ppts, which may also do operations
-        // like increment exit_counter.
 
         *i = self.insert_into_block(*i, &exit, body);
 
@@ -655,23 +664,23 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // Given a block body and an index i, check the stmt
     // body.stmts[i] for a return stmt, a new block to walk,
     // or a stmt which invalidates one of the parameters such
-    // as drop(param).
+    // as drop(param), and perform an appropriate action.
     // Returns the index to the next stmt in the block to process. If this
     // method adds stmts immediately after the given index, returns the next
     // stmt after all inserted stmts.
-    // loc: index representing the index to the stmt to process.
-    // body: surrounding block containing the stmt.
-    // exit_counter: int representing the next number to use to
-    //               label an exit ppt.
-    // ppt_name: the program point name.
-    // dtrace_param_blocks: Vec of String representing
-    //                      instrumentation which should be
-    //                      added at exit ppts.
-    // param_to_block_idx: no description.
-    // ret_ty: The return type of the function.
-    fn grok_stmt(
+    // * `i` - Index representing the index to the stmt to process.
+    // * `body` - Surrounding block containing the stmt.
+    // * `exit_counter` - Int representing the next number to use to
+    //                    label an exit ppt.
+    // * `ppt_name` - The program point name.
+    // * `dtrace_param_blocks` - Vec of String representing
+    //                           instrumentation which should be
+    //                           added at exit ppts.
+    // * `param_to_block_idx` - No description.
+    // * `ret_ty` - The return type of the function.
+    fn instrument_stmt(
         &mut self,
-        loc: usize,
+        i: usize,
         body: &mut Box<Block>,
         exit_counter: &mut usize,
         ppt_name: &str,
@@ -680,22 +689,22 @@ impl<'a> DaikonDtraceVisitor<'a> {
         ret_ty: &FnRetTy,
         daikon_tmp_counter: &mut u32,
     ) -> usize {
-        let mut i = loc;
-        let stmt = body.stmts[i].clone();
-        match &mut body.stmts[i].kind {
+        let mut block_idx = i;
+        let stmt = body.stmts[block_idx].clone();
+        match &mut body.stmts[block_idx].kind {
             StmtKind::Let(_local) => {
-                return i + 1;
+                return block_idx + 1;
             }
             StmtKind::Item(_item) => {
-                return i + 1;
+                return block_idx + 1;
             }
             StmtKind::Expr(no_semi_expr) => match &mut no_semi_expr.kind {
                 // Blocks.
                 // recurse on nested block,
-                // but we still only grokked one (block) stmt, so just
+                // but we still only walked one (block) stmt, so just
                 // move to the next stmt (return i+1)
                 ExprKind::Block(block, _) => {
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         block,
                         dtrace_param_blocks,
@@ -704,11 +713,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         exit_counter,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::If(_, if_block, None) => {
                     // no else
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         if_block,
                         dtrace_param_blocks,
@@ -717,11 +726,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         exit_counter,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::If(_, if_block, Some(expr)) => {
                     // yes else
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         if_block,
                         dtrace_param_blocks,
@@ -731,7 +740,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         daikon_tmp_counter,
                     );
 
-                    self.grok_expr_for_if(
+                    self.instrument_if_stmt(
                         expr,
                         exit_counter,
                         ppt_name,
@@ -740,10 +749,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         &ret_ty,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::While(_, while_block, _) => {
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         while_block,
                         dtrace_param_blocks,
@@ -752,10 +761,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         exit_counter,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::ForLoop { pat: _, iter: _, body: for_block, label: _, kind: _ } => {
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         for_block,
                         dtrace_param_blocks,
@@ -764,10 +773,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         exit_counter,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 ExprKind::Loop(loop_block, _, _) => {
-                    self.grok_block(
+                    self.instrument_block(
                         ppt_name,
                         loop_block,
                         dtrace_param_blocks,
@@ -776,7 +785,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         exit_counter,
                         daikon_tmp_counter,
                     );
-                    return i + 1;
+                    return block_idx + 1;
                 }
                 // Not sure how to handle match blocks
                 ExprKind::Match(_, arms, _) => {
@@ -786,7 +795,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             Some(bd) => match &mut bd.kind {
                                 ExprKind::Block(_block, _) => {
                                     // FIXME: remove this commented code.
-                                    // self.grok_block(ppt_name,
+                                    // self.instrument_block(ppt_name,
                                     //                 block,
                                     //                 dtrace_param_blocks,
                                     //                 &param_to_block_idx,
@@ -798,7 +807,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             },
                         }
                     }
-                    return i + 1;
+                    return block_idx + 1;
                 } // TryBlock, Const block? probably more
                 _ => {}
             },
@@ -823,23 +832,24 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
 
                     *exit_counter += 1;
-                    i = self.insert_into_block(i, &exit, body);
+                    block_idx = self.insert_into_block(block_idx, &exit, body);
                     for param_block in &mut *dtrace_param_blocks {
                         // DAIKON TMP ERROR: you will end up using the same __daikon_tmpX values,
                         // but Rust doesn't care. Not high-priority, just weird to see
                         // let __daikon_tmp7 = ... twice in the same scope.
-                        i = self.insert_into_block(i, &param_block, body);
+                        block_idx = self.insert_into_block(block_idx, &param_block, body);
                     }
 
-                    i = self.insert_into_block(i, &String::from(DTRACE_NEWLINE), body);
+                    block_idx =
+                        self.insert_into_block(block_idx, &String::from(DTRACE_NEWLINE), body);
 
                     // we're sitting on the void return we just processed, so inc
                     // to move on.
-                    i += 1;
+                    block_idx += 1;
                 }
                 ExprKind::Ret(Some(return_expr)) => {
                     self.insert_return(
-                        &mut i,
+                        &mut block_idx,
                         &return_expr,
                         body,
                         exit_counter,
@@ -850,10 +860,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
                 }
                 ExprKind::Call(_call, _params) => {
-                    return i + 1;
+                    return block_idx + 1;
                 } // Maybe check for drop and other invalidations.
                 _ => {
-                    return i + 1;
+                    return block_idx + 1;
                 } // other things you overlooked?
             },
             // Now, any stmt without a semicolon must be a trailing return?
@@ -862,7 +872,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             StmtKind::Expr(no_semi_expr) => {
                 // we know it is not a block, so it must be trailing no-semi return expr
                 self.insert_return(
-                    &mut i,
+                    &mut block_idx,
                     &no_semi_expr,
                     body,
                     exit_counter,
@@ -873,10 +883,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
             }
             _ => {
-                return i + 1;
+                return block_idx + 1;
             }
         }
-        i
+        block_idx
     }
 
     // Get 'impl X { }' as an Item struct.
@@ -895,7 +905,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // the end of the current translation unit (file). The impl will contain
     // multiple synthesized functions, like dtrace_print_fields,
     // dtrace_print_fields_vec, and more.
-    // fields: fields of the struct for which we are generating a new impl blocl.
+    // * `struct_fields` - Fields of the struct whose impl we are generating.
+    // * `struct_ty` - Type struct representing the actual type in Rust of the
+    //                 struct whose impl is being generated.
+    // * `struct_generics` - Required generic arguments to the struct whose
+    //                       impl we are generating.
     fn gen_impl(
         &mut self,
         struct_fields: &mut ThinVec<FieldDef>,
@@ -970,13 +984,16 @@ impl<'a> DaikonDtraceVisitor<'a> {
         self.mod_items.push(impl_item.clone());
     }
 
-    // Given a struct with fields ``fields``, returns a String with code
+    // Given a struct with fields 'fields', returns a String with code
     // containing a function to log each field of the struct given a vec of
     // such a struct. String is sufficient, since no further modifications
     // or mutations will be done to this generated code.
     // Additionally, for any Vec or array fields, adds a function
     // which is responsible for logging the field in pointer format.
     // FIXME: write a small example input/output.
+    // * `plain_struct` - The identifier for the struct being processed.
+    // * `fields` - Data structures representing the fields of the struct
+    //              being processed.
     fn build_dtrace_print_xfield_vec(
         &mut self,
         plain_struct: String,
@@ -986,8 +1003,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // dtrace_print_xfield_vec prints scalar fields out of a Vec<Me>, and dtrace_print_xfield takes one Me and prints Me.f which is a Vec.
         let mut dtrace_print_xfields_vec = String::from(DTRACE_PRINT_XFIELDS_VEC_PROLOGUE);
 
-        // not important for this to be here, each function is self-contained so
-        // the names don't matter.
+        // Not important for this to be here, name clashes are not a concern since
+        // this function is synthesized by the dtrace pass.
         let mut daikon_tmp_counter = 0;
         for i in 0..fields.len() {
             let field_name = match &fields[i].ident {
@@ -1285,6 +1302,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
     }
 
     // Builds the top-level function which is called to log a Vec or array of a given struct.
+    // * `plain_struct` - Identifier for the struct being processed.
+    // * `fields` - Data structures representing the fields of the struct being processed.
     fn build_dtrace_print_fields_vec(
         &mut self,
         plain_struct: String,
@@ -1497,14 +1516,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // Given a struct's field declarations, generate the function dtrace_print_fields(self)
     // to be added to the synthesized impl block.
+    // * `fields` - Data structures representing the fields of the struct being processed.
     fn build_dtrace_print_fields(&mut self, fields: &mut ThinVec<FieldDef>) -> String {
         let mut dtrace_print_fields: String = String::from(DTRACE_PRINT_FIELDS_PROLOGUE);
 
         for i in 0..fields.len() {
-            // FIXME: remove and add tests for private fields.
-            // Make all fields public for access in dtrace routines.
-            fields[i].vis.kind = VisibilityKind::Public;
-
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
@@ -1570,11 +1586,20 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // FIXME: dtrace calls should be represented with a better data structures rather than
     // Strings.
-    // Given a function signature, generate a set of dtrace calls for each parameter,
-    // such as logging a pointer value and logging contents for structs. These
-    // will be reused at the function entry and each exit ppt.
-    fn grok_fn_sig(&mut self, decl: &Box<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
-        // grok params.
+    // Given a function signature, generate a dtrace call for each parameter including
+    // necessary setup library calls,
+    // These will be used at the function entry and each exit ppt, potentially updating
+    // names of synthesized/injected variables to avoid name conflicts (this should become
+    // easy with better data structures generated by this function).
+    // * `decl` - Function declaration of the function being processed.
+    // * `daikon_tmp_counter` - Stores the number of temporary variables used in the
+    //                          instrumentation code.
+    fn fn_sig_to_dtrace_code(
+        &mut self,
+        decl: &Box<FnDecl>,
+        daikon_tmp_counter: &mut u32,
+    ) -> Vec<String> {
+        // Process params.
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
         for i in 0..decl.inputs.len() {
             let mut is_ref = false;
@@ -1879,16 +1904,16 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // Visit a single block, used for recursing through nested
     // blocks like if stmts and loops.
-    // ppt_name: program point name.
-    // body: the block to walk.
-    // dtrace_param_blocks: Vec of Strings containing dtrace
-    //                      calls for each parameter.
-    // param_to_block_idx: no description.
-    // ret_ty: Function return type.
-    // exit_counter: contains the next label for an exit ppt.
-    // daikon_tmp_counter: contains the next label for a
-    //                     temporary variable.
-    fn grok_block(
+    // * `ppt_name` - Program point name.
+    // * `body` - The block to instrument.
+    // * `dtrace_param_blocks` - Vec of Strings containing dtrace
+    //                           calls for each parameter.
+    // * `param_to_block_idx` - No description.
+    // * `ret_ty` - Function return type.
+    // * `exit_counter` - Contains the next label for an exit ppt.
+    // * `daikon_tmp_counter` - Contains the next label for a temporary
+    //                          variable used in the instrumented code.
+    fn instrument_block(
         &mut self,
         ppt_name: &str,
         body: &mut Box<Block>,
@@ -1902,7 +1927,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         // Assuming no unreachable statements.
         while i < body.stmts.len() {
-            i = self.grok_stmt(
+            i = self.instrument_stmt(
                 i,
                 body,
                 exit_counter,
@@ -1917,7 +1942,15 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // Walk the function body and insert dtrace calls at
     // the beginning and at exit points.
-    fn grok_fn_body(
+    // * `ppt_name` - Program point name.
+    // * `body` - The block to instrument.
+    // * `dtrace_param_blocks` - Vec of Strings containing dtrace
+    //                           calls for each parameter.
+    // * `param_to_block_idx` - No description.
+    // * `ret_ty` - Function return type.
+    // * `daikon_tmp_counter` - Stores the next label for a temporary
+    //                          variable used in the instrumented code.
+    fn instrument_fn_body(
         &mut self,
         ppt_name: &str,
         body: &mut Box<Block>,
@@ -1949,15 +1982,15 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         i = self.insert_into_block(i, &String::from(DTRACE_NEWLINE), body);
 
-        // Before grokking fn body, turn implicit void return into "return;".
+        // Before instrumenting fn body, turn implicit void return into "return;".
         // This may be unreachable in some situations like
         // fn foo(t: bool) { if t { return; } else { return; } }.
         // In this situation we should not add a return stmt, but
-        // I cannot detect this yet, maybe there is a better solution
+        // we do not detect this yet. Maybe there is a better solution
         // to detecting the end of a function that returns void.
         match &ret_ty {
             FnRetTy::Default(_) => {
-                if body.stmts.len() == 0 || !last_stmt_is_void_return(body) {
+                if body.stmts.is_empty() || !last_stmt_is_void_return(body) {
                     self.append_to_block(&String::from(DTRACE_VOID_RETURN), body);
                 }
             }
@@ -1968,7 +2001,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
         // Assuming no unreachable statements.
         while i < body.stmts.len() {
-            i = self.grok_stmt(
+            i = self.instrument_stmt(
                 i,
                 body,
                 &mut exit_counter,
@@ -1989,6 +2022,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
     // return value.
     // Visit the function body and insert calls at exit points via
     // DaikonDtraceVisitor::insert_into_block.
+    // * `fk` - The function kind, i.e., function or closure.
     fn visit_fn(
         &mut self,
         mut fk: FnKind<'_>,
@@ -2005,12 +2039,12 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                 let mut daikon_tmp_counter = 0;
                 // get block of dtrace chunks -- one for each param (in a String, not good).
                 let mut dtrace_param_blocks =
-                    self.grok_fn_sig(&f.sig.decl, &mut daikon_tmp_counter);
+                    self.fn_sig_to_dtrace_code(&f.sig.decl, &mut daikon_tmp_counter);
                 let param_to_block_idx = map_params(&f.sig.decl);
                 match &mut f.body {
                     None => {}
                     Some(body) => {
-                        self.grok_fn_body(
+                        self.instrument_fn_body(
                             ppt_name,
                             body,
                             &mut dtrace_param_blocks,
@@ -2021,7 +2055,8 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                     }
                 }
             }
-            _ => {}
+            // FIXME: instrument lambda/closure types.
+            FnKind::Closure(_, _, _, _) => {}
         }
         mut_visit::walk_fn(self, fk);
     }
@@ -2030,6 +2065,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
     // routine definitions.
     // FIXME: look up struct names in a /tmp file to determine
     //       whether to continue or not.
+    // * `item` - An item to maybe instrument.
     fn visit_item(&mut self, item: &mut Item) {
         match &mut item.kind {
             ItemKind::Enum(_ident, _generics, _enum_def) => {}
@@ -2113,12 +2149,13 @@ impl<'a> Parser<'a> {
     // Convert String to items. We create a new file dtrace_parserX each time we want to
     // parse some new items vec. Diagnostics sometimes point to these files for unknown
     // reasons.
-    pub fn parse_items_from_source_string(&self, str: String) -> PResult<'a, ThinVec<Box<Item>>> {
+    // * `items` - String with items to parse.
+    pub fn parse_items_from_source_string(&self, items: String) -> PResult<'a, ThinVec<Box<Item>>> {
         let count = *PARSER_COUNTER.lock().unwrap();
         let mut tmp_parser = unwrap_or_emit_fatal(new_parser_from_source_str(
             &self.psess,
             rustc_span::FileName::Custom(format!("{}{}", "dtrace_parser", count.to_string())),
-            str,
+            items,
             StripTokens::Nothing,
         ));
 
