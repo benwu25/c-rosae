@@ -51,6 +51,15 @@ pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false
 // For generating unique names for auxiliary files to parse in parse_items_from_source_str{,ing}.
 static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 
+// Represents a scope that we are instrumenting/visiting,
+// see DaikonDtraceVisitor::scope_stack member. If we are
+// visiting a struct in the toplevel scope, the top of the
+// scope_stack will be a ScopeType::TopLevelScope. The new
+// synthesized impl block will be placed in the ScopeType.
+// For structs encountered in nested scopes, such as a
+// function body, those impls will be placed in a different
+// ScopeType representing the current function body, so they
+// are placed in the correct function scope.
 enum ScopeType {
     ToplevelScope(ThinVec<Box<Item>>),
     FnBody(ThinVec<Stmt>),

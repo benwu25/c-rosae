@@ -1,5 +1,6 @@
 // ignore-tidy-filelength
 
+use std::collections::VecDeque;
 use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -560,6 +561,8 @@ enum RepType {
     HashCodeStruct(String),
 }
 
+// *NEXT*: make this a member of DaikonDeclsVisitor.
+
 // Given a Rust type kind, return its RepType. Also note whether the type
 // is a reference by setting is_ref.
 // * `kind` - Represents the actual type of a parameter in the Rust language.
@@ -598,7 +601,14 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
         TyKind::ImplicitSelf => {
             // FIXME: Query our current scope to get the ty_string
             // as in the path case.
-            panic!("ImplicitSelf not yet implemented in get_rep_type")
+
+            match &self.scope_stack.back() {
+                Some(plain_struct) => {
+                    println!("Hooray, we are in a struct impl named {}", plain_struct);
+                    RepType::Prim(String::from("int")) // temporary for now
+                }
+                None => panic!("scope_stack has no name for this struct"),
+            }
         }
         _ => panic!("TyKind not yet implemented in get_rep_type"),
     }
@@ -644,6 +654,7 @@ impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
 struct DaikonDeclsVisitor<'a> {
     pub map: &'a FxHashMap<String, Box<Item>>,
     pub depth_limit: u32,
+    pub scope_stack: &'a mut VecDeque<String>,
 }
 
 // Represents a parameter or return value which must be written to decls.
@@ -1186,6 +1197,12 @@ fn write_header() {
 }
 
 impl<'a> DaikonDeclsVisitor<'a> {
+    // * `plain_struct` - The struct identifier whose scope
+    //                    we are about to enter.
+    fn push_struct(&mut self, plain_struct: String) {
+        self.scope_stack.push_back(plain_struct);
+    }
+
     // Walk an if expression looking for returns and
     // write exit-ppt declarations when found.
     // See rustc_parse::parser::item::instrument_if_stmt.
@@ -1813,6 +1830,36 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
         }
         visit::walk_fn(self, fk);
     }
+
+    fn visit_item(&mut self, item: &'a Item) {
+        let mut inline_mod_p = false;
+
+        match &item.kind {
+            ItemKind::Enum(_, _, _) => {} // FIXME: enums can have impl blocks.
+            ItemKind::Struct(ident, _generics, variant_data) => match variant_data {
+                VariantData::Struct { fields: _, recovered: _ } => {
+                    let path = Path::from_ident(*ident);
+                    let plain_struct = String::from(path.segments[0].ident.as_str());
+                    self.push_struct(plain_struct);
+                }
+                _ => {}
+            },
+            ItemKind::Mod(_, _, kind) => match &kind {
+                ModKind::Loaded(_, inline, _) => match &inline {
+                    Inline::Yes => {
+                        inline_mod_p = true;
+                    }
+                    _ => {}
+                },
+                _ => {}
+            },
+            _ => {}
+        };
+
+        if !inline_mod_p {
+            visit::walk_item(self, item);
+        }
+    }
 }
 
 // Lock on the decls file.
@@ -1870,7 +1917,11 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             std::fs::File::create(&dtrace).unwrap();
             write_header();
             write_newline();
-            let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, depth_limit: 4 }; // off by one to match dtrace.
+            let mut decls_visitor = DaikonDeclsVisitor {
+                map: &struct_map,
+                depth_limit: 4,
+                scope_stack: &mut VecDeque::new(),
+            }; // off by one to match dtrace.
             decls_visitor.visit_crate(&krate);
         }
 
