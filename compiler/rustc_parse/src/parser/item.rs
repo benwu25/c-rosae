@@ -2148,7 +2148,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                     }
                 };
             }
-	    // FIXME: instrument closures.
+            // FIXME: instrument closures.
             FnKind::Closure(_, _, _, _) => {}
         };
 
