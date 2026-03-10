@@ -10,14 +10,11 @@ use rustc_ast::mut_visit::*;
 use rustc_ast::tokenstream::TokenStream;
 use rustc_ast::visit::{self, AssocCtxt, FnKind, Visitor, VisitorResult, try_visit, walk_list};
 use rustc_ast::{
-    self as ast, AssocItemKind, AstNodeWrapper, AttrArgs, AttrItemKind, AttrStyle, AttrVec,
-    DUMMY_NODE_ID, EarlyParsedAttribute, ExprKind, ForeignItemKind, HasAttrs, HasNodeId, Inline,
-    ItemKind, MacStmtStyle, MetaItemInner, MetaItemKind, ModKind, NodeId, PatKind, StmtKind,
-    TyKind, token,
-};
-use rustc_ast::{
-    AngleBracketedArg, Block, Expr, FieldDef, FnDecl, FnRetTy, GenericArg, GenericArgs, Item, Pat,
-    Path, VariantData,
+    self as ast, AngleBracketedArg, AssocItemKind, AstNodeWrapper, AttrArgs, AttrItemKind,
+    AttrStyle, AttrVec, Block, DUMMY_NODE_ID, EarlyParsedAttribute, Expr, ExprKind, FieldDef,
+    FnDecl, FnRetTy, ForeignItemKind, GenericArg, GenericArgs, HasAttrs, HasNodeId, Inline, Item,
+    ItemKind, MacStmtStyle, MetaItemInner, MetaItemKind, ModKind, NodeId, Pat, PatKind, Path,
+    StmtKind, TyKind, VariantData, token,
 };
 use rustc_ast_pretty::pprust;
 use rustc_attr_parsing::{
