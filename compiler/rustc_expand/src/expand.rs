@@ -522,7 +522,10 @@ fn as_prim_rep_type(ty_str: &str) -> &str {
 // Given the template arguments to a Vec or array, return a RepType
 // enum representing the Vec/array.
 // * `generic_args` - Generic args to a Vec parameter.
-fn vec_generics_to_rust_type(generic_args: &Path) -> RepType {
+fn vec_generics_to_rust_type(
+    generic_args: &Path,
+    visitor: Option<&DaikonDeclsVisitor<'_>>,
+) -> RepType {
     let mut is_ref = false;
     match &generic_args.segments[generic_args.segments.len() - 1].args {
         None => panic!("Vec args has no type name"),
@@ -530,7 +533,7 @@ fn vec_generics_to_rust_type(generic_args: &Path) -> RepType {
             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
                 AngleBracketedArg::Arg(arg) => match &arg {
                     GenericArg::Type(arg_type) => {
-                        match &get_rep_type(&arg_type.kind, &mut is_ref) {
+                        match &get_rep_type(&arg_type.kind, &mut is_ref, visitor) {
                             RepType::Prim(arg_p_type) => RepType::PrimArray(arg_p_type.to_string()),
                             RepType::HashCodeStruct(struct_type) => {
                                 RepType::HashCodeArray(struct_type.to_string())
@@ -561,20 +564,22 @@ enum RepType {
     HashCodeStruct(String),
 }
 
-// *NEXT*: make this a member of DaikonDeclsVisitor.
-
 // Given a Rust type kind, return its RepType. Also note whether the type
 // is a reference by setting is_ref.
 // * `kind` - Represents the actual type of a parameter in the Rust language.
 // * `is_ref` - Used to determine reference qualifiers on the type.
-fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
+fn get_rep_type(
+    kind: &TyKind,
+    is_ref: &mut bool,
+    visitor: Option<&DaikonDeclsVisitor<'_>>,
+) -> RepType {
     match &kind {
-        TyKind::Array(arr_type, _) => match &get_rep_type(&arr_type.kind, is_ref) {
+        TyKind::Array(arr_type, _) => match &get_rep_type(&arr_type.kind, is_ref, visitor) {
             RepType::Prim(p_type) => RepType::PrimArray(String::from(p_type)),
             RepType::HashCodeStruct(basic_type) => RepType::HashCodeArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
         },
-        TyKind::Slice(arr_type) => match &get_rep_type(&arr_type.kind, is_ref) {
+        TyKind::Slice(arr_type) => match &get_rep_type(&arr_type.kind, is_ref, visitor) {
             RepType::Prim(p_type) => RepType::PrimArray(String::from(p_type)),
             RepType::HashCodeStruct(basic_type) => RepType::HashCodeArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
@@ -582,7 +587,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
         TyKind::Ptr(_) => todo!(),
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
-            return get_rep_type(&mut_ty.ty.kind, is_ref);
+            return get_rep_type(&mut_ty.ty.kind, is_ref, visitor);
         }
         TyKind::Path(_, path) => {
             if path.segments.is_empty() {
@@ -594,7 +599,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
                 return RepType::Prim(String::from(maybe_prim_rep));
             }
             if ty_string == VEC {
-                return vec_generics_to_rust_type(&path);
+                return vec_generics_to_rust_type(&path, visitor);
             }
             return RepType::HashCodeStruct(String::from(ty_string));
         }
@@ -602,12 +607,12 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
             // FIXME: Query our current scope to get the ty_string
             // as in the path case.
 
-            match &self.scope_stack.back() {
-                Some(plain_struct) => {
-                    println!("Hooray, we are in a struct impl named {}", plain_struct);
-                    RepType::Prim(String::from("int")) // temporary for now
-                }
-                None => panic!("scope_stack has no name for this struct"),
+            match &visitor {
+                None => panic!("Cannot access scope_stack in get_rep_type"),
+                Some(visitor) => match &visitor.scope_stack.back() {
+                    Some(plain_struct) => RepType::HashCodeStruct(String::from(*plain_struct)),
+                    None => panic!("scope_stack has no name for this struct"),
+                },
             }
         }
         _ => panic!("TyKind not yet implemented in get_rep_type"),
@@ -785,7 +790,7 @@ impl<'a> ArrayContents<'a> {
             let var_name = format!("{}.{}", self.decl.var_name, field_name);
             let mut is_ref = false;
             let mut write_p = true;
-            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref, None) {
                 RepType::Prim(p_type) => ArrayContents {
                     decl: Box::new(TopLevlDecl {
                         map: self.decl.map,
@@ -978,7 +983,7 @@ impl<'a> TopLevlDecl<'a> {
             let var_name = format!("{}.{}", self.var_name, field_name);
             let mut is_ref = false;
             let mut write_p = true;
-            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref, None) {
                 RepType::Prim(p_type) => {
                     let tmp_toplevl = TopLevlDecl {
                         map: self.map,
@@ -1410,7 +1415,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                             let var_name = String::from("return");
                             let mut is_ref = false;
                             let mut write_p = true;
-                            let mut return_decl = match &get_rep_type(&ty.kind, &mut is_ref) {
+                            let mut return_decl = match &get_rep_type(&ty.kind, &mut is_ref, None) {
                                 RepType::Prim(p_type) => {
                                     TopLevlDecl {
                                         map: self.map,
@@ -1661,13 +1666,14 @@ fn fn_sig_to_toplevl_decls<'a>(
     decl: &'a Box<FnDecl>,
     map: &'a FxHashMap<String, Box<Item>>,
     depth_limit: u32,
+    visitor: Option<&DaikonDeclsVisitor<'_>>,
 ) -> Vec<Box<TopLevlDecl<'a>>> {
     let mut var_decls: Vec<Box<TopLevlDecl<'_>>> = Vec::new();
     for i in 0..decl.inputs.len() {
         let var_name = get_param_ident(&decl.inputs[i].pat);
         let mut is_ref = false;
         let mut write_p = true;
-        let toplevl_decl = match &get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref) {
+        let toplevl_decl = match &get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref, visitor) {
             RepType::Prim(p_type) => {
                 TopLevlDecl {
                     map,
@@ -1803,8 +1809,12 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                     let ppt_name = f.ident.as_str();
                     write_entry(ppt_name);
                     let param_to_block_idx = map_params(&f.sig.decl);
-                    let mut param_decls =
-                        fn_sig_to_toplevl_decls(&f.sig.decl, self.map, self.depth_limit);
+                    let mut param_decls = fn_sig_to_toplevl_decls(
+                        &f.sig.decl,
+                        self.map,
+                        self.depth_limit,
+                        Some(&self),
+                    );
                     for i in 0..param_decls.len() {
                         param_decls[i].write();
                         //write(&mut param_decls[i], "", true, false, "", &mut None);
@@ -1840,7 +1850,7 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                 VariantData::Struct { fields: _, recovered: _ } => {
                     let path = Path::from_ident(*ident);
                     let plain_struct = String::from(path.segments[0].ident.as_str());
-                    self.push_struct(plain_struct);
+                    self.push_struct(plain_struct); // FIXME: when do we pop from the scope_stack?
                 }
                 _ => {}
             },

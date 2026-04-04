@@ -52,7 +52,7 @@ pub(crate) static DTRACE_PRINT_XFIELDS_VEC: &str =
       };
       writeln!(&mut traces, \"{}\", var_name).ok();
       let mut arr = String::from(\"[\");
-      for i in 0..v.len()-1 {
+      for i in 0..v.len() - 1 {
           arr.push_str(&format!(\"0x{:x}\", v[i].${field_name}.as_ptr() as usize));
       }
       if v.len() > 0 {
@@ -141,7 +141,7 @@ pub(crate) static DTRACE_PRINT_XFIELDS_VEC_EPILOGUE: &str = " }";
       };
       writeln!(&mut traces, "{}", var_name).ok();
       let mut arr = String::from("[");
-      for i in i+1..v.len() - 1 { // NOTE: a check for length would be wise to insert here.
+      for i in 0..v.len() - 1 { // NOTE: a check for length would be wise to insert here.
           arr.push_str(&format!("{}", v[i].{field1}));
       }
       if v.len() > 0 {
@@ -161,7 +161,7 @@ pub(crate) static DTRACE_PRINT_XFIELDS: &str =
       };
       writeln!(&mut traces, \"{}\", var_name).ok();
       let mut arr = String::from(\"[\");
-      for i in i+1..v.len() - 1 { // NOTE: a check for length would be wise to insert here.
+      for i in 0..v.len() - 1 { // NOTE: a check for length would be wise to insert here.
           arr.push_str(&format!(\"{}\", v[i].${field_name}));
       }
       if v.len() > 0 {
@@ -187,7 +187,7 @@ pub(crate) static DTRACE_PRINT_XFIELDS: &str =
       };
       writeln!(&mut traces, "{}", var_name).ok();
       let mut arr = String::from("[");
-      for i in i+1..v.len() {
+      for i in 0..v.len() - 1 {
           arr.push_str(&format!(" \"{}\" ", v[i].{field1}));
       }
       if v.len() > 0 {
@@ -208,7 +208,7 @@ pub(crate) static DTRACE_PRINT_XFIELDS_STRING: &str =
       };
       writeln!(&mut traces, \"{}\", var_name).ok();
       let mut arr = String::from(\"[\");
-      for i in i+1..v.len() {
+      for i in 0..v.len() - 1 {
           arr.push_str(&format!(\" \\ \"{}\\ \" \", v[i].${field_name}));
       }
       if v.len() > 0 {

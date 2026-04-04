@@ -1435,8 +1435,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1508,8 +1508,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1533,8 +1533,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1559,8 +1559,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1585,8 +1585,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
