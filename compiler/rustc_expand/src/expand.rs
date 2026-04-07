@@ -1777,6 +1777,10 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
     ) {
         match &fk {
             FnKind::Fn(_, _, f) => {
+                if !f.generics.params.is_empty() {
+                    // Skip generics for now.
+                    return;
+                }
                 if !f.ident.as_str().starts_with("dtrace") {
                     let ppt_name = f.ident.as_str();
                     write_entry(ppt_name);
