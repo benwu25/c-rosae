@@ -2254,7 +2254,9 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                     // This is the only time we ever see a struct definition. i.e., this
                     // is the only place where gen_impl is ever called. So we need
                     // not push generated impls anywhere else. We only push new/empty scopes
-                    // everywhere else.
+                    // everywhere else. Note, we don't need to pop these impls until we reach
+                    // the end of our current scope, e.g., end of function scope. Things are
+                    // popped correctly in, e.g., visit_fn.
                     if self.scope_type_requires_items_p() {
                         self.push_impl_item(impl_item);
                     } else {
