@@ -558,6 +558,7 @@ enum RepType {
     PrimArray(String),
     HashCodeArray(String),
     HashCodeStruct(String),
+    Skip,
 }
 
 // Given a Rust type kind, return its RepType. Also note whether the type
@@ -594,6 +595,10 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
                 return vec_generics_to_rust_type(&path);
             }
             return RepType::HashCodeStruct(String::from(ty_string));
+        }
+        TyKind::ImplTrait(_, _) => {
+            // A bunch of types we want to skip for Daikon.
+            RepType::Skip
         }
         _ => todo!(),
     }
@@ -849,6 +854,9 @@ impl<'a> ArrayContents<'a> {
                         sub_contents: None,
                     }
                 }
+                RepType::Skip => {
+                    continue;
+                }
             };
             match &mut self.sub_contents {
                 None => panic!("No sub_contents in build_contents"),
@@ -1094,6 +1102,9 @@ impl<'a> TopLevlDecl<'a> {
                         }
                     }
                     tmp
+                }
+                RepType::Skip => {
+                    continue;
                 }
             };
             match &self.contents {
@@ -1511,6 +1522,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                     }
                                     tmp
                                 }
+                                RepType::Skip => panic!("What TopLevlDecl should we produce here"),
                             };
                             return_decl.write();
                             //write(&mut Box::new(return_decl), "", true, false, "", &mut None);
@@ -1757,6 +1769,9 @@ fn fn_sig_to_toplevl_decls<'a>(
                     }
                 }
                 tmp
+            }
+            RepType::Skip => {
+                continue;
             }
         };
         var_decls.push(Box::new(toplevl_decl));
