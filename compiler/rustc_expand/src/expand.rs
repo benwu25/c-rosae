@@ -604,9 +604,7 @@ fn get_rep_type(
             return RepType::HashCodeStruct(String::from(ty_string));
         }
         TyKind::ImplicitSelf => {
-            // FIXME: Query our current scope to get the ty_string
-            // as in the path case.
-
+            // Query for the impl we are currently in by accessing scope_stack.
             match &visitor {
                 None => panic!("Cannot access scope_stack in get_rep_type"),
                 Some(visitor) => match &visitor.scope_stack.back() {
