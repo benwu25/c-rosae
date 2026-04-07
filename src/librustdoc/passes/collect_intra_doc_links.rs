@@ -7,15 +7,15 @@ use std::fmt::Display;
 use std::mem;
 use std::ops::Range;
 
-use rustc_ast::attr::AttributeExt;
 use rustc_ast::util::comments::may_have_doc_links;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexMap, FxIndexSet};
 use rustc_data_structures::intern::Interned;
 use rustc_errors::{Applicability, Diag, DiagMessage};
+use rustc_hir::attrs::AttributeKind;
 use rustc_hir::def::Namespace::*;
 use rustc_hir::def::{DefKind, MacroKinds, Namespace, PerNS};
 use rustc_hir::def_id::{CRATE_DEF_ID, DefId, LOCAL_CRATE};
-use rustc_hir::{Mutability, Safety};
+use rustc_hir::{Attribute, Mutability, Safety, find_attr};
 use rustc_middle::ty::{Ty, TyCtxt};
 use rustc_middle::{bug, span_bug, ty};
 use rustc_resolve::rustdoc::pulldown_cmark::LinkType;
@@ -125,9 +125,10 @@ impl Res {
             DefKind::Trait => "trait",
             DefKind::Union => "union",
             DefKind::Mod => "mod",
-            DefKind::Const | DefKind::ConstParam | DefKind::AssocConst | DefKind::AnonConst => {
-                "const"
-            }
+            DefKind::Const { .. }
+            | DefKind::ConstParam
+            | DefKind::AssocConst { .. }
+            | DefKind::AnonConst => "const",
             DefKind::Static { .. } => "static",
             DefKind::Field => "field",
             DefKind::Variant | DefKind::Ctor(..) => "variant",
@@ -393,7 +394,10 @@ impl<'tcx> LinkCollector<'_, 'tcx> {
         if let Some(res) = self.resolve_path(path_str, ns, item_id, module_id) {
             return Ok(match res {
                 Res::Def(
-                    DefKind::AssocFn | DefKind::AssocConst | DefKind::AssocTy | DefKind::Variant,
+                    DefKind::AssocFn
+                    | DefKind::AssocConst { .. }
+                    | DefKind::AssocTy
+                    | DefKind::Variant,
                     def_id,
                 ) => {
                     vec![(Res::from_def_id(self.cx.tcx, self.cx.tcx.parent(def_id)), Some(def_id))]
@@ -490,7 +494,7 @@ fn resolve_self_ty<'tcx>(
 
     let self_id = match tcx.def_kind(item_id) {
         def_kind @ (DefKind::AssocFn
-        | DefKind::AssocConst
+        | DefKind::AssocConst { .. }
         | DefKind::AssocTy
         | DefKind::Variant
         | DefKind::Field) => {
@@ -1062,10 +1066,11 @@ fn preprocessed_markdown_links(s: &str) -> Vec<PreprocessedMarkdownLink> {
 impl LinkCollector<'_, '_> {
     #[instrument(level = "debug", skip_all)]
     fn resolve_links(&mut self, item: &Item) {
+        let tcx = self.cx.tcx;
         if !self.cx.document_private()
             && let Some(def_id) = item.item_id.as_def_id()
             && let Some(def_id) = def_id.as_local()
-            && !self.cx.tcx.effective_visibilities(()).is_exported(def_id)
+            && !tcx.effective_visibilities(()).is_exported(def_id)
             && !has_primitive_or_keyword_or_attribute_docs(&item.attrs.other_attrs)
         {
             // Skip link resolution for non-exported items.
@@ -1073,9 +1078,9 @@ impl LinkCollector<'_, '_> {
         }
 
         let mut insert_links = |item_id, doc: &str| {
-            let module_id = match self.cx.tcx.def_kind(item_id) {
-                DefKind::Mod if item.inner_docs(self.cx.tcx) => item_id,
-                _ => find_nearest_parent_module(self.cx.tcx, item_id).unwrap(),
+            let module_id = match tcx.def_kind(item_id) {
+                DefKind::Mod if item.inner_docs(tcx) => item_id,
+                _ => find_nearest_parent_module(tcx, item_id).unwrap(),
             };
             for md_link in preprocessed_markdown_links(&doc) {
                 let link = self.resolve_link(&doc, item, item_id, module_id, &md_link);
@@ -1108,7 +1113,12 @@ impl LinkCollector<'_, '_> {
 
         // Also resolve links in the note text of `#[deprecated]`.
         for attr in &item.attrs.other_attrs {
-            let Some(note_sym) = attr.deprecation_note() else { continue };
+            let Attribute::Parsed(AttributeKind::Deprecated { span: depr_span, deprecation }) =
+                attr
+            else {
+                continue;
+            };
+            let Some(note_sym) = deprecation.note else { continue };
             let note = note_sym.as_str();
 
             if !may_have_doc_links(note) {
@@ -1116,7 +1126,18 @@ impl LinkCollector<'_, '_> {
             }
 
             debug!("deprecated_note={note}");
-            insert_links(item.item_id.expect_def_id(), note)
+            // When resolving an intra-doc link inside a deprecation note that is on an inlined
+            // `use` statement, we need to use the `def_id` of the `use` statement, not the
+            // inlined item.
+            // <https://github.com/rust-lang/rust/pull/151120>
+            let item_id = if let Some(inline_stmt_id) = item.inline_stmt_id
+                && find_attr!(tcx, inline_stmt_id, Deprecated { span, ..} if span == depr_span)
+            {
+                inline_stmt_id.to_def_id()
+            } else {
+                item.item_id.expect_def_id()
+            };
+            insert_links(item_id, note)
         }
     }
 
@@ -1193,7 +1214,7 @@ impl LinkCollector<'_, '_> {
         let tcx = self.cx.tcx;
         let def_kind = tcx.def_kind(original_did);
         let did = match def_kind {
-            DefKind::AssocTy | DefKind::AssocFn | DefKind::AssocConst | DefKind::Variant => {
+            DefKind::AssocTy | DefKind::AssocFn | DefKind::AssocConst { .. } | DefKind::Variant => {
                 // documented on their parent's page
                 tcx.parent(original_did)
             }
@@ -1381,7 +1402,13 @@ impl LinkCollector<'_, '_> {
         // Disallow e.g. linking to enums with `struct@`
         debug!("saw kind {kind:?} with disambiguator {disambiguator:?}");
         match (kind, disambiguator) {
-                | (DefKind::Const | DefKind::ConstParam | DefKind::AssocConst | DefKind::AnonConst, Some(Disambiguator::Kind(DefKind::Const)))
+                | (
+                    DefKind::Const { .. }
+                    | DefKind::ConstParam
+                    | DefKind::AssocConst { .. }
+                    | DefKind::AnonConst,
+                    Some(Disambiguator::Kind(DefKind::Const { .. })),
+                )
                 // NOTE: this allows 'method' to mean both normal functions and associated functions
                 // This can't cause ambiguity because both are in the same namespace.
                 | (DefKind::Fn | DefKind::AssocFn, Some(Disambiguator::Kind(DefKind::Fn)))
@@ -1704,7 +1731,7 @@ impl Disambiguator {
                 "trait" => Kind(DefKind::Trait),
                 "union" => Kind(DefKind::Union),
                 "module" | "mod" => Kind(DefKind::Mod),
-                "const" | "constant" => Kind(DefKind::Const),
+                "const" | "constant" => Kind(DefKind::Const { is_type_const: false }),
                 "static" => Kind(DefKind::Static {
                     mutability: Mutability::Not,
                     nested: false,
@@ -2105,11 +2132,11 @@ fn resolution_failure(
                             | Field
                             | Closure
                             | AssocTy
-                            | AssocConst
+                            | AssocConst { .. }
                             | AssocFn
                             | Fn
                             | Macro(_)
-                            | Const
+                            | Const { .. }
                             | ConstParam
                             | ExternCrate
                             | Use
