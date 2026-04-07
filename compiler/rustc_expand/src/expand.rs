@@ -490,32 +490,16 @@ fn get_param_ident(pat: &Box<Pat>) -> String {
 // * `ty_str` - String representing the type of a parameter
 //              or return variable.
 fn as_prim_rep_type(ty_str: &str) -> &str {
-    if ty_str == I8
-        || ty_str == I16
-        || ty_str == I32
-        || ty_str == I64
-        || ty_str == I128
-        || ty_str == ISIZE
-        || ty_str == U8
-        || ty_str == U16
-        || ty_str == U32
-        || ty_str == U64
-        || ty_str == U128
-        || ty_str == USIZE
-    {
-        return "int";
-    } else if ty_str == F32 || ty_str == F64 {
-        return "";
-    } else if ty_str == CHAR {
-        return "char";
-    } else if ty_str == BOOL {
-        return "boolean";
-    } else if ty_str == UNIT {
-        return "";
-    } else if ty_str == STR || ty_str == STRING {
-        return "java.lang.String";
+    match ty_str {
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+        | "usize" => "int",
+        "f32" | "f64" => "",
+        "char" => "char",
+        "bool" => "boolean",
+        "()" => "",
+        "str" | "String" => "java.lang.String",
+        _ => "",
     }
-    ""
 }
 
 // Given the template arguments to a Vec or array, return a RepType
@@ -523,8 +507,8 @@ fn as_prim_rep_type(ty_str: &str) -> &str {
 // * `generic_args` - Generic args to a Vec parameter.
 fn vec_generics_to_rust_type(generic_args: &Path) -> RepType {
     let mut is_ref = false;
-    match &generic_args.segments[generic_args.segments.len() - 1].args {
-        None => panic!("Vec args has no type name"),
+    match &generic_args.segments.last().unwrap().args {
+        None => panic!("Vec has no type argument"),
         Some(args) => match &**args {
             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
                 AngleBracketedArg::Arg(arg) => match &arg {
@@ -537,11 +521,11 @@ fn vec_generics_to_rust_type(generic_args: &Path) -> RepType {
                             _ => panic!("Multi-dim vec/array not supported"),
                         }
                     }
-                    _ => panic!("Grok args failed 1"),
+                    _ => panic!("Expected a type argument in Vec generic args"),
                 },
-                _ => panic!("Grok args failed 2"),
+                _ => panic!("Expected AngleBracketedArg::Arg in Vec generic args"),
             },
-            _ => panic!("Grok args failed 3"),
+            _ => panic!("Expected angle-bracketed generic args for Vec"),
         },
     }
 }
@@ -585,9 +569,9 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
             if path.segments.is_empty() {
                 panic!("Path has no type");
             }
-            let ty_string = path.segments[path.segments.len() - 1].ident.as_str();
+            let ty_string = path.segments.last().unwrap().ident.as_str();
             let maybe_prim_rep = as_prim_rep_type(ty_string);
-            if maybe_prim_rep != "" {
+            if !maybe_prim_rep.is_empty() {
                 return RepType::Prim(String::from(maybe_prim_rep));
             }
             if ty_string == VEC {
@@ -599,11 +583,15 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
     }
 }
 
-// Unused.
+// Maps each parameter's identifier to its index in the parameter list.
+// Used to determine the index of a parameter in the dtrace information Vec,
+// which would be needed for parameter invalidation (e.g., if a parameter x
+// is invalidated by drop(x), we can avoid logging it at future exit ppts).
+// Parameter invalidation is still unimplemented.
 fn map_params(decl: &Box<FnDecl>) -> FxHashMap<String, i32> {
     let mut res = FxHashMap::default();
-    for i in 0..decl.inputs.len() {
-        res.insert(get_param_ident(&decl.inputs[i].pat), i as i32);
+    for (i, input) in decl.inputs.iter().enumerate() {
+        res.insert(get_param_ident(&input.pat), i as i32);
     }
     res
 }
@@ -661,6 +649,10 @@ struct TopLevlDecl<'a> {
     pub struct_name: Option<String>, // struct name for looking up structs if this is a struct.
     pub field_decls: Vec<FieldDecl<'a>>,
     pub contents: Option<Box<ArrayContents<'a>>>,
+    /// Whether this declaration should be written to the decls file.
+    /// Set to false when the struct type cannot be found (e.g., it is an enum or union
+    /// from outside the crate) or when it is an Option/Result type.
+    pub should_write: bool,
 }
 
 // Represents a field decl of a struct at some arb. depth.
@@ -692,7 +684,7 @@ impl<'a> ArrayContents<'a> {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
             Some(decls) => {
-                if self.decl.var_name == "false" {
+                if !self.decl.should_write {
                     return;
                 }
 
@@ -709,8 +701,8 @@ impl<'a> ArrayContents<'a> {
         match &mut self.sub_contents {
             None => {}
             Some(sub_contents) => {
-                for i in 0..sub_contents.len() {
-                    sub_contents[i].write();
+                for sub_content in sub_contents.iter_mut() {
+                    sub_content.write();
                 }
             }
         }
@@ -761,15 +753,15 @@ impl<'a> ArrayContents<'a> {
             return;
         }
 
-        for i in 0..fields.len() {
-            let field_name = match &fields[i].ident {
+        for field in &fields {
+            let field_name = match &field.ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
             };
             let var_name = format!("{}.{}", self.decl.var_name, field_name);
             let mut is_ref = false;
             let mut write_p = true;
-            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+            let var_decl = match &get_rep_type(&field.ty.kind, &mut is_ref) {
                 RepType::Prim(p_type) => ArrayContents {
                     decl: Box::new(TopLevlDecl {
                         map: self.decl.map,
@@ -779,6 +771,7 @@ impl<'a> ArrayContents<'a> {
                         struct_name: None,
                         field_decls: Vec::new(),
                         contents: None,
+                        should_write: true,
                     }),
                     enclosing_var: self.decl.var_name.clone(),
                     sub_contents: None,
@@ -793,6 +786,7 @@ impl<'a> ArrayContents<'a> {
                             struct_name: Some(ty_string.clone()),
                             field_decls: Vec::new(),
                             contents: None,
+                            should_write: true,
                         }),
                         enclosing_var: self.decl.var_name.clone(),
                         sub_contents: Some(Vec::new()),
@@ -803,17 +797,17 @@ impl<'a> ArrayContents<'a> {
                     if !write_p {
                         // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
                         match &mut tmp.sub_contents {
-                            None => panic!("Expected some field_decls 1"), // expected sub_contents?
+                            None => panic!("Expected some sub_contents"),
                             Some(sub_contents) => {
-                                for j in 0..sub_contents.len() {
-                                    sub_contents[j].decl.var_name = String::from("false");
+                                for sc in sub_contents.iter_mut() {
+                                    sc.decl.should_write = false;
                                 }
                             }
                         }
                     }
                     if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
                         // this record is also invalid.
-                        tmp.decl.var_name = String::from("false");
+                        tmp.decl.should_write = false;
                     }
                     tmp
                 }
@@ -828,6 +822,7 @@ impl<'a> ArrayContents<'a> {
                             struct_name: None, // we shouldn't be using this in write.
                             field_decls: Vec::new(),
                             contents: None,
+                            should_write: true,
                         }),
                         enclosing_var: self.decl.var_name.clone(),
                         sub_contents: None,
@@ -844,6 +839,7 @@ impl<'a> ArrayContents<'a> {
                             struct_name: None,
                             field_decls: Vec::new(),
                             contents: None,
+                            should_write: true,
                         }),
                         enclosing_var: self.decl.var_name.clone(),
                         sub_contents: None,
@@ -866,7 +862,7 @@ impl<'a> FieldDecl<'a> {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
             Some(decls) => {
-                if self.decl.var_name == "false" {
+                if !self.decl.should_write {
                     return;
                 }
 
@@ -881,8 +877,8 @@ impl<'a> FieldDecl<'a> {
 
         match &mut self.decl.contents {
             None => {
-                for i in 0..self.decl.field_decls.len() {
-                    self.decl.field_decls[i].write();
+                for field_decl in &mut self.decl.field_decls {
+                    field_decl.write();
                 }
                 return;
             }
@@ -910,7 +906,7 @@ impl<'a> TopLevlDecl<'a> {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
             Some(decls) => {
-                if self.var_name == "false" {
+                if !self.should_write {
                     return;
                 }
 
@@ -925,8 +921,8 @@ impl<'a> TopLevlDecl<'a> {
 
         match &mut self.contents {
             None => {
-                for i in 0..self.field_decls.len() {
-                    self.field_decls[i].write();
+                for field_decl in &mut self.field_decls {
+                    field_decl.write();
                 }
                 return;
             }
@@ -954,15 +950,15 @@ impl<'a> TopLevlDecl<'a> {
             return;
         }
 
-        for i in 0..fields.len() {
-            let field_name = match &fields[i].ident {
+        for field in &fields {
+            let field_name = match &field.ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
             };
             let var_name = format!("{}.{}", self.var_name, field_name);
             let mut is_ref = false;
             let mut write_p = true;
-            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+            let var_decl = match &get_rep_type(&field.ty.kind, &mut is_ref) {
                 RepType::Prim(p_type) => {
                     let tmp_toplevl = TopLevlDecl {
                         map: self.map,
@@ -972,6 +968,7 @@ impl<'a> TopLevlDecl<'a> {
                         struct_name: None,
                         field_decls: Vec::new(),
                         contents: None,
+                        should_write: true,
                     };
                     FieldDecl {
                         decl: Box::new(tmp_toplevl),
@@ -988,6 +985,7 @@ impl<'a> TopLevlDecl<'a> {
                         struct_name: Some(ty_string.clone()),
                         field_decls: Vec::new(),
                         contents: None,
+                        should_write: true,
                     };
                     let mut tmp = FieldDecl {
                         decl: Box::new(tmp_toplevl),
@@ -999,18 +997,18 @@ impl<'a> TopLevlDecl<'a> {
                     // Error checking.
                     if !write_p {
                         // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
-                        match &tmp.decl.contents {
+                        match &mut tmp.decl.contents {
                             None => {
-                                for j in 0..tmp.decl.field_decls.len() {
-                                    tmp.decl.field_decls[j].decl.var_name = String::from("false");
+                                for fd in &mut tmp.decl.field_decls {
+                                    fd.decl.should_write = false;
                                 }
                             }
-                            Some(_) => panic!("Expected some field_decls 2"),
+                            Some(_) => panic!("Expected no contents here, only field_decls"),
                         }
                     }
                     if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
                         // this record is also invalid.
-                        tmp.decl.var_name = String::from("false");
+                        tmp.decl.should_write = false;
                     }
                     tmp
                 }
@@ -1023,6 +1021,7 @@ impl<'a> TopLevlDecl<'a> {
                         struct_name: None,
                         field_decls: Vec::new(),
                         contents: Some(Box::new(ArrayContents {
+                            should_write: true,
                             decl: Box::new(TopLevlDecl {
                                 map: self.map,
                                 var_name: format!("{}[..]", var_name),
@@ -1031,6 +1030,7 @@ impl<'a> TopLevlDecl<'a> {
                                 struct_name: None,
                                 field_decls: Vec::new(),
                                 contents: None,
+                                should_write: true,
                             }),
                             enclosing_var: var_name.clone(),
                             sub_contents: None,
@@ -1051,6 +1051,7 @@ impl<'a> TopLevlDecl<'a> {
                         struct_name: Some(ty_string.clone()),
                         field_decls: Vec::new(),
                         contents: Some(Box::new(ArrayContents {
+                            should_write: true,
                             decl: Box::new(TopLevlDecl {
                                 map: self.map,
                                 var_name: format!("{}[..]", var_name),
@@ -1059,6 +1060,7 @@ impl<'a> TopLevlDecl<'a> {
                                 struct_name: Some(ty_string.clone()),
                                 field_decls: Vec::new(),
                                 contents: None,
+                                should_write: true,
                             }),
                             enclosing_var: var_name.clone(),
                             sub_contents: Some(Vec::new()),
@@ -1078,10 +1080,10 @@ impl<'a> TopLevlDecl<'a> {
                             if !write_p {
                                 // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
                                 match &mut contents.sub_contents {
-                                    None => panic!("Expected some field_decls 1"), // field_decls?
+                                    None => panic!("Expected some sub_contents"),
                                     Some(sub_contents) => {
-                                        for j in 0..sub_contents.len() {
-                                            sub_contents[j].decl.var_name = String::from("false");
+                                        for sc in sub_contents.iter_mut() {
+                                            sc.decl.should_write = false;
                                         }
                                     }
                                 }
@@ -1089,7 +1091,7 @@ impl<'a> TopLevlDecl<'a> {
 
                             if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
                                 // this record is also invalid.
-                                tmp.decl.var_name = String::from("false");
+                                tmp.decl.should_write = false;
                             }
                         }
                     }
@@ -1398,6 +1400,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         struct_name: None,
                                         field_decls: Vec::new(),
                                         contents: None,
+                                        should_write: true,
                                     } // Ready to write this var decl.
                                 }
                                 RepType::HashCodeStruct(ty_string) => {
@@ -1412,27 +1415,29 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         struct_name: Some(ty_string.clone()),
                                         field_decls: Vec::new(),
                                         contents: None,
+                                        should_write: true,
                                     };
                                     tmp.construct_field_decls(self.depth_limit, &mut write_p);
 
                                     // Error checking.
                                     if !write_p {
                                         // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
-                                        match &tmp.contents {
+                                        match &mut tmp.contents {
                                             None => {
-                                                for j in 0..tmp.field_decls.len() {
-                                                    tmp.field_decls[j].decl.var_name =
-                                                        String::from("false");
+                                                for fd in &mut tmp.field_decls {
+                                                    fd.decl.should_write = false;
                                                 }
                                             }
-                                            Some(_) => panic!("Expected some field_decls"),
+                                            Some(_) => panic!(
+                                                "Expected no contents here, only field_decls"
+                                            ),
                                         }
                                     }
                                     if ty_string.starts_with("Option")
                                         || ty_string.starts_with("Result")
                                     {
                                         // this record is also invalid.
-                                        tmp.var_name = String::from("false");
+                                        tmp.should_write = false;
                                     }
                                     tmp
                                 }
@@ -1445,6 +1450,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         struct_name: None,
                                         field_decls: Vec::new(),
                                         contents: Some(Box::new(ArrayContents {
+                                            should_write: true,
                                             decl: Box::new(TopLevlDecl {
                                                 map: self.map,
                                                 var_name: format!("{}[..]", var_name),
@@ -1453,6 +1459,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 struct_name: None,
                                                 field_decls: Vec::new(),
                                                 contents: None,
+                                                should_write: true,
                                             }),
                                             enclosing_var: var_name.clone(),
                                             sub_contents: None,
@@ -1468,6 +1475,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         struct_name: Some(ty_string.clone()),
                                         field_decls: Vec::new(),
                                         contents: Some(Box::new(ArrayContents {
+                                            should_write: true,
                                             decl: Box::new(TopLevlDecl {
                                                 map: self.map,
                                                 var_name: format!("{}[..]", var_name),
@@ -1476,6 +1484,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 struct_name: Some(ty_string.clone()),
                                                 field_decls: Vec::new(),
                                                 contents: None,
+                                                should_write: true,
                                             }),
                                             enclosing_var: var_name.clone(),
                                             sub_contents: Some(Vec::new()),
@@ -1491,11 +1500,10 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                             if !write_p {
                                                 // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
                                                 match &mut contents.sub_contents {
-                                                    None => panic!("Expected some field_decls 1"),
+                                                    None => panic!("Expected some sub_contents"),
                                                     Some(sub_contents) => {
-                                                        for j in 0..sub_contents.len() {
-                                                            sub_contents[j].decl.var_name =
-                                                                String::from("false");
+                                                        for sc in sub_contents.iter_mut() {
+                                                            sc.decl.should_write = false;
                                                         }
                                                     }
                                                 }
@@ -1505,7 +1513,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 || ty_string.starts_with("Result")
                                             {
                                                 // this record is also invalid.
-                                                tmp.var_name = String::from("false");
+                                                tmp.should_write = false;
                                             }
                                         }
                                     }
@@ -1641,11 +1649,11 @@ fn fn_sig_to_toplevl_decls<'a>(
     depth_limit: u32,
 ) -> Vec<Box<TopLevlDecl<'a>>> {
     let mut var_decls: Vec<Box<TopLevlDecl<'_>>> = Vec::new();
-    for i in 0..decl.inputs.len() {
-        let var_name = get_param_ident(&decl.inputs[i].pat);
+    for input in &decl.inputs {
+        let var_name = get_param_ident(&input.pat);
         let mut is_ref = false;
         let mut write_p = true;
-        let toplevl_decl = match &get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref) {
+        let toplevl_decl = match &get_rep_type(&input.ty.kind, &mut is_ref) {
             RepType::Prim(p_type) => {
                 TopLevlDecl {
                     map,
@@ -1655,6 +1663,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                     struct_name: None,
                     field_decls: Vec::new(),
                     contents: None,
+                    should_write: true,
                 } // Ready to write this var decl.
             }
             RepType::HashCodeStruct(ty_string) => {
@@ -1666,24 +1675,25 @@ fn fn_sig_to_toplevl_decls<'a>(
                     struct_name: Some(ty_string.clone()),
                     field_decls: Vec::new(),
                     contents: None,
+                    should_write: true,
                 };
                 decl.construct_field_decls(depth_limit, &mut write_p);
 
                 // Error checking.
                 if !write_p {
                     // Any "fields" are invalid, but decl could be an enum/union and pointer is valid.
-                    match &decl.contents {
+                    match &mut decl.contents {
                         None => {
-                            for j in 0..decl.field_decls.len() {
-                                decl.field_decls[j].decl.var_name = String::from("false");
+                            for fd in &mut decl.field_decls {
+                                fd.decl.should_write = false;
                             }
                         }
-                        Some(_) => panic!("Expected some field_decls"),
+                        Some(_) => panic!("Expected no contents here, only field_decls"),
                     }
                 }
                 if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
                     // this record is also invalid.
-                    decl.var_name = String::from("false");
+                    decl.should_write = false;
                 }
                 decl
             }
@@ -1696,6 +1706,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                     struct_name: None,
                     field_decls: Vec::new(),
                     contents: Some(Box::new(ArrayContents {
+                        should_write: true,
                         decl: Box::new(TopLevlDecl {
                             map,
                             var_name: format!("{}[..]", var_name),
@@ -1704,6 +1715,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                             struct_name: None,
                             field_decls: Vec::new(),
                             contents: None,
+                            should_write: true,
                         }),
                         enclosing_var: var_name.clone(),
                         sub_contents: None,
@@ -1719,6 +1731,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                     struct_name: Some(ty_string.clone()),
                     field_decls: Vec::new(),
                     contents: Some(Box::new(ArrayContents {
+                        should_write: true,
                         decl: Box::new(TopLevlDecl {
                             map,
                             var_name: format!("{}[..]", var_name),
@@ -1727,6 +1740,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                             struct_name: Some(ty_string.clone()),
                             field_decls: Vec::new(),
                             contents: None,
+                            should_write: true,
                         }),
                         enclosing_var: var_name.clone(),
                         sub_contents: Some(Vec::new()),
@@ -1741,10 +1755,10 @@ fn fn_sig_to_toplevl_decls<'a>(
                         if !write_p {
                             // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
                             match &mut contents.sub_contents {
-                                None => panic!("Expected some field_decls 1"),
+                                None => panic!("Expected some sub_contents"),
                                 Some(sub_contents) => {
-                                    for j in 0..sub_contents.len() {
-                                        sub_contents[j].decl.var_name = String::from("false");
+                                    for sc in sub_contents.iter_mut() {
+                                        sc.decl.should_write = false;
                                     }
                                 }
                             }
@@ -1752,7 +1766,7 @@ fn fn_sig_to_toplevl_decls<'a>(
 
                         if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
                             // this record is also invalid.
-                            tmp.var_name = String::from("false");
+                            tmp.should_write = false;
                         }
                     }
                 }
@@ -1783,9 +1797,8 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                     let param_to_block_idx = map_params(&f.sig.decl);
                     let mut param_decls =
                         fn_sig_to_toplevl_decls(&f.sig.decl, self.map, self.depth_limit);
-                    for i in 0..param_decls.len() {
-                        param_decls[i].write();
-                        //write(&mut param_decls[i], "", true, false, "", &mut None);
+                    for decl in &mut param_decls {
+                        decl.write();
                     }
                     write_newline();
                     match &f.body {
