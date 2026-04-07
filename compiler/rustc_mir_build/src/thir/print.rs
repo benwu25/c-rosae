@@ -223,11 +223,6 @@ impl<'a, 'tcx> ThirPrinter<'a, 'tcx> {
                 self.print_expr(*value, depth_lvl + 2);
                 print_indented!(self, "}", depth_lvl);
             }
-            Box { value } => {
-                print_indented!(self, "Box {", depth_lvl);
-                self.print_expr(*value, depth_lvl + 1);
-                print_indented!(self, "}", depth_lvl);
-            }
             If { if_then_scope, cond, then, else_opt } => {
                 print_indented!(self, "If {", depth_lvl);
                 print_indented!(self, format!("if_then_scope: {:?}", if_then_scope), depth_lvl + 1);
@@ -402,9 +397,10 @@ impl<'a, 'tcx> ThirPrinter<'a, 'tcx> {
             }
             Index { lhs, index } => {
                 print_indented!(self, "Index {", depth_lvl);
-                print_indented!(self, format!("index: {:?}", index), depth_lvl + 1);
                 print_indented!(self, "lhs:", depth_lvl + 1);
                 self.print_expr(*lhs, depth_lvl + 2);
+                print_indented!(self, "index:", depth_lvl + 1);
+                self.print_expr(*index, depth_lvl + 2);
                 print_indented!(self, "}", depth_lvl);
             }
             VarRef { id } => {
@@ -618,8 +614,8 @@ impl<'a, 'tcx> ThirPrinter<'a, 'tcx> {
         print_indented!(self, format!("args: {:?}", adt_expr.args), depth_lvl + 1);
         print_indented!(self, format!("user_ty: {:?}", adt_expr.user_ty), depth_lvl + 1);
 
-        for (i, field_expr) in adt_expr.fields.iter().enumerate() {
-            print_indented!(self, format!("field {}:", i), depth_lvl + 1);
+        for field_expr in adt_expr.fields.iter() {
+            print_indented!(self, format!("field {}:", field_expr.name.as_u32()), depth_lvl + 1);
             self.print_expr(field_expr.expr, depth_lvl + 2);
         }
 
@@ -643,6 +639,7 @@ impl<'a, 'tcx> ThirPrinter<'a, 'tcx> {
         print_indented!(self, format!("variants: {:?}", adt_def.variants()), depth_lvl + 1);
         print_indented!(self, format!("flags: {:?}", adt_def.flags()), depth_lvl + 1);
         print_indented!(self, format!("repr: {:?}", adt_def.repr()), depth_lvl + 1);
+        print_indented!(self, "}", depth_lvl);
     }
 
     fn print_fru_info(&mut self, fru_info: &FruInfo<'tcx>, depth_lvl: usize) {
@@ -653,6 +650,7 @@ impl<'a, 'tcx> ThirPrinter<'a, 'tcx> {
         for ty in fru_info.field_types.iter() {
             print_indented!(self, format!("ty: {:?}", ty), depth_lvl + 2);
         }
+        print_indented!(self, "]", depth_lvl + 1);
         print_indented!(self, "}", depth_lvl);
     }
 
@@ -683,7 +681,7 @@ impl<'a, 'tcx> ThirPrinter<'a, 'tcx> {
     fn print_pat(&mut self, pat: &Pat<'tcx>, depth_lvl: usize) {
         let &Pat { ty, span, ref kind, ref extra } = pat;
 
-        print_indented!(self, "Pat: {", depth_lvl);
+        print_indented!(self, "Pat {", depth_lvl);
         print_indented!(self, format!("ty: {:?}", ty), depth_lvl + 1);
         print_indented!(self, format!("span: {:?}", span), depth_lvl + 1);
         self.print_pat_extra(extra.as_deref(), depth_lvl + 1);
@@ -772,8 +770,9 @@ impl<'a, 'tcx> ThirPrinter<'a, 'tcx> {
                 print_indented!(self, "]", depth_lvl + 2);
                 print_indented!(self, "}", depth_lvl + 1);
             }
-            PatKind::Deref { subpattern } => {
+            PatKind::Deref { pin, subpattern } => {
                 print_indented!(self, "Deref { ", depth_lvl + 1);
+                print_indented!(self, format_args!("pin: {pin:?}"), depth_lvl + 2);
                 print_indented!(self, "subpattern:", depth_lvl + 2);
                 self.print_pat(subpattern, depth_lvl + 2);
                 print_indented!(self, "}", depth_lvl + 1);
@@ -913,6 +912,8 @@ impl<'a, 'tcx> ThirPrinter<'a, 'tcx> {
 
         print_indented!(self, format!("options: {:?}", options), depth_lvl + 1);
         print_indented!(self, format!("line_spans: {:?}", line_spans), depth_lvl + 1);
+
+        print_indented!(self, "}", depth_lvl);
     }
 
     fn print_inline_operand(&mut self, operand: &InlineAsmOperand<'tcx>, depth_lvl: usize) {

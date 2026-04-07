@@ -1,8 +1,8 @@
-use std::assert_matches::assert_matches;
 use std::iter;
 
 use rustc_abi::Primitive::Pointer;
 use rustc_abi::{BackendRepr, ExternAbi, PointerKind, Scalar, Size};
+use rustc_data_structures::assert_matches;
 use rustc_hir as hir;
 use rustc_hir::lang_items::LangItem;
 use rustc_middle::bug;
@@ -306,8 +306,12 @@ fn arg_attrs_for_rust_scalar<'tcx>(
         let kind = if let Some(kind) = pointee.safe {
             Some(kind)
         } else if let Some(pointee) = drop_target_pointee {
+            assert_eq!(pointee, layout.ty.builtin_deref(true).unwrap());
+            assert_eq!(offset, Size::ZERO);
             // The argument to `drop_in_place` is semantically equivalent to a mutable reference.
-            Some(PointerKind::MutableRef { unpin: pointee.is_unpin(tcx, cx.typing_env) })
+            let mutref = Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, pointee);
+            let layout = cx.layout_of(mutref).unwrap();
+            layout.pointee_info_at(&cx, offset).and_then(|pi| pi.safe)
         } else {
             None
         };
@@ -623,6 +627,7 @@ fn fn_abi_adjust_for_abi<'tcx>(
 
     if abi.is_rustic_abi() {
         fn_abi.adjust_for_rust_abi(cx);
+
         // Look up the deduced parameter attributes for this function, if we have its def ID and
         // we're optimizing in non-incremental mode. We'll tag its parameters with those attributes
         // as appropriate.
