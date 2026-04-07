@@ -1208,6 +1208,11 @@ impl<'a> DaikonDeclsVisitor<'a> {
         self.scope_stack.push_back(plain_struct);
     }
 
+    // Pop the top of the scope_stack.
+    fn pop_struct(&mut self) {
+        self.scope_stack.pop_back();
+    }
+
     // Walk an if expression looking for returns and
     // write exit-ppt declarations when found.
     // See rustc_parse::parser::item::instrument_if_stmt.
@@ -1843,15 +1848,12 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
 
     fn visit_item(&mut self, item: &'a Item) {
         let mut inline_mod_p = false;
+        let mut do_pop = false;
 
         match &item.kind {
             ItemKind::Enum(_, _, _) => {} // FIXME: enums can have impl blocks.
-            ItemKind::Struct(ident, _generics, variant_data) => match variant_data {
-                VariantData::Struct { fields: _, recovered: _ } => {
-                    let path = Path::from_ident(*ident);
-                    let plain_struct = String::from(path.segments[0].ident.as_str());
-                    self.push_struct(plain_struct); // FIXME: when do we pop from the scope_stack?
-                }
+            ItemKind::Struct(_ident, _generics, variant_data) => match variant_data {
+                VariantData::Struct { fields: _, recovered: _ } => {}
                 _ => {}
             },
             ItemKind::Mod(_, _, kind) => match &kind {
@@ -1863,11 +1865,23 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                 },
                 _ => {}
             },
+            ItemKind::Impl(imp) => match &imp.self_ty.kind {
+                TyKind::Path(_, path) => {
+                    let plain_struct = String::from(path.segments[0].ident.as_str());
+                    self.push_struct(plain_struct);
+                    do_pop = true;
+                }
+                _ => {}
+            },
             _ => {}
         };
 
         if !inline_mod_p {
             visit::walk_item(self, item);
+        }
+
+        if do_pop {
+            self.pop_struct();
         }
     }
 }
