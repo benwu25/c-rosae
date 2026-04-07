@@ -257,16 +257,14 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
 }
 
 // FIXME: replace this idea with better data structures for the logging code.
-// Unused. This was intended to allow easy invalidation
-// of parameters. E.g., if parameter x was invalidated with
-// drop(x), we need to know which idx it belongs to in our
-// Vec of dtrace information to avoid logging it at future
-// exit ppts.
+// Maps each parameter's identifier to its index in the parameter list.
+// Would be needed for parameter invalidation (e.g., if a parameter x
+// is invalidated by drop(x), we can avoid logging it at future exit ppts).
 // Parameter invalidation is still unimplemented.
 fn map_params(decl: &Box<FnDecl>) -> FxHashMap<String, i32> {
     let mut res = FxHashMap::default();
-    for i in 0..decl.inputs.len() {
-        res.insert(get_param_ident(&decl.inputs[i].pat), i as i32);
+    for (i, input) in decl.inputs.iter().enumerate() {
+        res.insert(get_param_ident(&input.pat), i as i32);
     }
     res
 }
@@ -880,8 +878,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 }
                 // Not sure how to handle match blocks
                 ExprKind::Match(_, arms, _) => {
-                    for j in 0..arms.len() {
-                        match &mut arms[j].body {
+                    for arm in arms.iter_mut() {
+                        match &mut arm.body {
                             None => {}
                             Some(bd) => match &mut bd.kind {
                                 ExprKind::Block(_block, _) => {
@@ -1065,8 +1063,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
             Err(_) => panic!("Parsing dtrace_print_xfields failed"),
             Ok(items) => match &items[0].kind {
                 ItemKind::Impl(tmp_impl) => {
-                    for i in 0..tmp_impl.items.len() {
-                        the_impl.items.push(tmp_impl.items[i].clone());
+                    for item in &tmp_impl.items {
+                        the_impl.items.push(item.clone());
                     }
                 }
                 _ => panic!("Expected phony impl 3"),
@@ -1098,14 +1096,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // Not important for this to be here, name clashes are not a concern since
         // this function is synthesized by the dtrace pass.
         let mut daikon_tmp_counter = 0;
-        for i in 0..fields.len() {
-            let field_name = match &fields[i].ident {
+        for field in &fields {
+            let field_name = match &field.ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
             };
 
             let mut is_ref = false;
-            let dtrace_print_xfield = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
+            let dtrace_print_xfield = match &get_basic_type(&field.ty.kind, &mut is_ref) {
                 RustType::Prim(p_type) => {
                     // We have a vec of ourselves, and the field is
                     if p_type == "String" || p_type == "str" {
@@ -1407,14 +1405,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
         );
 
         let mut daikon_tmp_counter = 0;
-        for i in 0..fields.len() {
-            let field_name = match &fields[i].ident {
+        for field in &fields {
+            let field_name = match &field.ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
             };
 
             let mut is_ref = false;
-            let dtrace_field_vec_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
+            let dtrace_field_vec_rec = match &get_basic_type(&field.ty.kind, &mut is_ref) {
                 // don't need p_type because we just call dtrace_print_xfield which handles the type.
                 RustType::Prim(_) => {
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
@@ -1612,14 +1610,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
     fn build_dtrace_print_fields(&mut self, fields: &mut ThinVec<FieldDef>) -> String {
         let mut dtrace_print_fields: String = String::from(DTRACE_PRINT_FIELDS_PROLOGUE);
 
-        for i in 0..fields.len() {
-            let field_name = match &fields[i].ident {
+        for field in fields.iter() {
+            let field_name = match &field.ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
             };
 
             let mut is_ref = false;
-            let mut dtrace_field_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
+            let mut dtrace_field_rec = match &get_basic_type(&field.ty.kind, &mut is_ref) {
                 RustType::Prim(p_type) => {
                     if p_type == "String" || p_type == "str" {
                         substitute(
@@ -1692,33 +1690,27 @@ impl<'a> DaikonDtraceVisitor<'a> {
     ) -> Vec<String> {
         // Process params.
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
-        for i in 0..decl.inputs.len() {
+        for input in &decl.inputs {
             let mut is_ref = false;
-            let var_name = get_param_ident(&decl.inputs[i].pat);
-            let mut dtrace_rec = if get_param_ident(&decl.inputs[i].pat) == "self" {
+            let var_name = get_param_ident(&input.pat);
+            let mut dtrace_rec = if var_name == "self" {
                 substitute(
                     FxHashMap::from_iter([("${variable_name}", var_name.as_str())]),
                     DTRACE_USERDEF,
                 )
             } else {
-                match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
+                match &get_basic_type(&input.ty.kind, &mut is_ref) {
                     RustType::Prim(p_type) => {
                         if p_type == "String" || p_type == "str" {
                             substitute(
-                                FxHashMap::from_iter([(
-                                    "${variable_name}",
-                                    get_param_ident(&decl.inputs[i].pat).as_str(),
-                                )]),
+                                FxHashMap::from_iter([("${variable_name}", var_name.as_str())]),
                                 DTRACE_PRIM_TOSTRING,
                             )
                         } else if is_ref {
                             substitute(
                                 FxHashMap::from_iter([
                                     ("${prim_type}", p_type.as_str()),
-                                    (
-                                        "${variable_name}",
-                                        get_param_ident(&decl.inputs[i].pat).as_str(),
-                                    ),
+                                    ("${variable_name}", var_name.as_str()),
                                 ]),
                                 DTRACE_PRIM_REF,
                             )
@@ -1726,10 +1718,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             substitute(
                                 FxHashMap::from_iter([
                                     ("${prim_type}", p_type.as_str()),
-                                    (
-                                        "${variable_name}",
-                                        get_param_ident(&decl.inputs[i].pat).as_str(),
-                                    ),
+                                    ("${variable_name}", var_name.as_str()),
                                 ]),
                                 DTRACE_PRIM,
                             )
@@ -1757,10 +1746,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             substitute(
                                 FxHashMap::from_iter([
                                     ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                    (
-                                        "${variable_name}",
-                                        get_param_ident(&decl.inputs[i].pat).as_str(),
-                                    ),
+                                    ("${variable_name}", var_name.as_str()),
                                 ]),
                                 DTRACE_PRINT_STRING_VEC,
                             )
@@ -1769,7 +1755,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 FxHashMap::from_iter([
                                     ("${prim_type}", p_type.as_str()),
                                     ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                    ("${variable_name}", &get_param_ident(&decl.inputs[i].pat)),
+                                    ("${variable_name}", var_name.as_str()),
                                 ]),
                                 DTRACE_PRINT_PRIM_VEC,
                             )
@@ -1784,18 +1770,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                         "${counter_name}",
                                         format!("__daikon_tmp{}", next_tmp).as_str()
                                     ),
-                                    (
-                                        "${variable_name}",
-                                        get_param_ident(&decl.inputs[i].pat).as_str()
-                                    )
+                                    ("${variable_name}", var_name.as_str())
                                 ]),
                                 DTRACE_TMP_VEC_PRIM
                             ),
                             substitute(
-                                FxHashMap::from_iter([(
-                                    "${variable_name}",
-                                    get_param_ident(&decl.inputs[i].pat).as_str()
-                                )]),
+                                FxHashMap::from_iter([("${variable_name}", var_name.as_str())]),
                                 DTRACE_VEC_POINTER
                             ),
                             print_vec.clone()
@@ -1806,7 +1786,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         *daikon_tmp_counter += 1;
                         let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let var_name = get_param_ident(&decl.inputs[i].pat);
+
                         // We maintain that is_ref represents Vec/array argument in this case.
                         let tmp_vec = if is_ref {
                             substitute(
@@ -1839,10 +1819,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             "{}\n{}\n{}\n{}",
                             tmp_vec.clone(),
                             substitute(
-                                FxHashMap::from_iter([(
-                                    "${variable_name}",
-                                    get_param_ident(&decl.inputs[i].pat).as_str()
-                                )]),
+                                FxHashMap::from_iter([("${variable_name}", var_name.as_str())]),
                                 DTRACE_VEC_POINTER
                             ),
                             substitute(
@@ -1873,10 +1850,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             substitute(
                                 FxHashMap::from_iter([
                                     ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                    (
-                                        "${variable_name}",
-                                        get_param_ident(&decl.inputs[i].pat).as_str(),
-                                    ),
+                                    ("${variable_name}", var_name.as_str()),
                                 ]),
                                 DTRACE_PRINT_STRING_VEC,
                             )
@@ -1885,10 +1859,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 FxHashMap::from_iter([
                                     ("${prim_type}", p_type.as_str()),
                                     ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                    (
-                                        "${variable_name}",
-                                        get_param_ident(&decl.inputs[i].pat).as_str(),
-                                    ),
+                                    ("${variable_name}", var_name.as_str()),
                                 ]),
                                 DTRACE_PRINT_PRIM_VEC,
                             )
@@ -1903,18 +1874,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                         "${counter_name}",
                                         format!("__daikon_tmp{}", next_tmp).as_str()
                                     ),
-                                    (
-                                        "${variable_name}",
-                                        get_param_ident(&decl.inputs[i].pat).as_str()
-                                    )
+                                    ("${variable_name}", var_name.as_str())
                                 ]),
                                 DTRACE_TMP_VEC_PRIM
                             ),
                             substitute(
-                                FxHashMap::from_iter([(
-                                    "${variable_name}",
-                                    get_param_ident(&decl.inputs[i].pat).as_str()
-                                )]),
+                                FxHashMap::from_iter([("${variable_name}", var_name.as_str())]),
                                 DTRACE_BUILD_POINTER_ARR
                             ),
                             print_vec.clone()
@@ -1925,7 +1890,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         *daikon_tmp_counter += 1;
                         let next_tmp = &daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let var_name = get_param_ident(&decl.inputs[i].pat);
+
                         // We maintain that is_ref represents Vec/array argument in this case.
                         let tmp_vec = if is_ref {
                             substitute(
@@ -2210,13 +2175,13 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                 VariantData::Struct { fields, recovered: _recovered } => {
                     let mut the_path = Path::from_ident(ident.clone());
                     let mut the_args: ThinVec<AngleBracketedArg> = ThinVec::new();
-                    for i in 0..generics.params.len() {
-                        match &generics.params[i].kind {
+                    for param in &generics.params {
+                        match &param.kind {
                             GenericParamKind::Lifetime => {
                                 the_args.push(AngleBracketedArg::Arg(GenericArg::Lifetime(
                                     Lifetime {
                                         id: NodeId::MAX_AS_U32.into(),
-                                        ident: generics.params[i].ident.clone(),
+                                        ident: param.ident.clone(),
                                     },
                                 )));
                             }
@@ -2456,11 +2421,12 @@ impl<'a> Parser<'a> {
             let mut pp =
                 std::fs::File::options().write(true).append(true).open(&pp_as_path).unwrap();
 
-            for i in 0..items.len() - 1 {
-                writeln!(&mut pp, "{}\n", pprust::item_to_string(&items[i])).ok();
+            if let Some((last_item, rest_items)) = items.split_last() {
+                for item in rest_items {
+                    writeln!(&mut pp, "{}\n", pprust::item_to_string(item)).ok();
+                }
+                writeln!(&mut pp, "{}", pprust::item_to_string(last_item)).ok(); // no trailing newline
             }
-
-            writeln!(&mut pp, "{}", pprust::item_to_string(&items[items.len() - 1])).ok(); // no newline
 
             // add imports.
             // FIXME: you should check if these imports are already included.

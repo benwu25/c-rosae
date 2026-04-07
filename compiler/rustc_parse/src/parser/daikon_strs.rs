@@ -386,9 +386,9 @@ pub(crate) static DTRACE_TMP_VEC_USERDEF_FIELD: &str =
 
 */
 pub(crate) static DTRACE_TMP_VEC_USERDEF_FIELD_AMPERSAND: &str =
-    "let mut {__daikon_tmp1}: Vec<&{X}> = Vec::new();
-  for {__daikon_tmp2} in 0..v.len() {
-      {__daikon_tmp1}.push(&v[{__daikon_tmp2}].{field1});
+    "let mut ${vec_name}: Vec<&${type}> = Vec::new();
+  for ${counter_name} in 0..v.len() {
+      ${vec_name}.push(&v[${counter_name}].${field_name});
   }";
 
 // ${type}: Struct/enum/union type.
@@ -644,7 +644,7 @@ pub(crate) static DTRACE_PRINT_PRIM_VEC: &str =
 
 */
 pub(crate) static DTRACE_PRINT_STRING_VEC: &str =
-    "dtrace_print_string_vec(&${vec_name}, String::from(\"{parameter1}\"));
+    "dtrace_print_string_vec(&${vec_name}, String::from(\"${variable_name}\"));
   }";
 
 /* Ex.
@@ -694,7 +694,7 @@ pub(crate) static DAIKON_LIB: [&str; 15] = [
         arr.push_str(&format!(\"0x{:x} \", v[i] as *const _ as usize));
         i += 1;
     }
-    if v.len() > 0 {
+    if !v.is_empty() {
         arr.push_str(&format!(\"0x{:x}\", v[i] as *const _ as usize));
     }
     arr.push_str(\"]\");
@@ -715,7 +715,7 @@ pub fn dtrace_print_pointer_vec<T>(v: &Vec<&T>, var_name: String) {
         arr.push_str(&format!(\"0x{:x} \", v[i] as *const _ as usize));
         i += 1;
     }
-    if v.len() > 0 {
+    if !v.is_empty() {
         arr.push_str(&format!(\"0x{:x}\", v[i] as *const _ as usize));
     }
     arr.push_str(\"]\");
@@ -737,7 +737,7 @@ fn dtrace_print_prim_arr<T: std::fmt::Display>(v: &[T], prefix: String) {
         arr.push_str(&format!(\"{} \", v[i]));
         i += 1;
     }
-    if v.len() > 0 {
+    if !v.is_empty() {
         arr.push_str(&format!(\"{}\", v[i]));
     }
     arr.push_str(\"]\");
@@ -758,7 +758,7 @@ fn dtrace_print_prim_vec<T: std::fmt::Display>(v: &Vec<T>, prefix: String) {
         arr.push_str(&format!(\"{} \", v[i]));
         i += 1;
     }
-    if v.len() > 0 {
+    if !v.is_empty() {
         arr.push_str(&format!(\"{}\", v[i]));
     }
     arr.push_str(\"]\");
@@ -813,7 +813,7 @@ fn dtrace_print_string_vec(v: &Vec<String>, prefix: String) {
         arr.push_str(&format!(\"\\\"{}\\\" \", v[i]));
         i += 1;
     }
-    if v.len() > 0 {
+    if !v.is_empty() {
         arr.push_str(&format!(\"\\\"{}\\\"\", v[i]));
     }
     arr.push_str(\"]\");
