@@ -563,7 +563,6 @@ enum RepType {
     HashCodeStruct(String),
 }
 
-/// MDE: "with is_ref" is confusing.  Say "by side-effecting" or "by setting".
 /// MDE: This returns a rep type and sets variable is_ref.  Why isn't is_ref a
 /// field in the RepType struct?
 // Given a Rust type kind, return its RepType. Also note whether the type
