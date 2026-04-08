@@ -2140,6 +2140,10 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
         // instrumentation.
         match &mut fk {
             FnKind::Fn(_, _, f) => {
+                if !f.generics.params.is_empty() {
+                    // Skip generics for now.
+                    return;
+                }
                 let ppt_name = f.ident.as_str();
                 if ppt_name == "execute" {
                     return;
