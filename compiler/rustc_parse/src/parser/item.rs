@@ -78,7 +78,7 @@ struct DaikonDtraceVisitor<'a> {
 }
 
 // Represents a Rust type.
-// If it is a reference, note this with is_ref in get_basic_type.
+// If it is a reference, note this with is_ref in get_rust_type.
 // For Vec/array, is_ref indicates whether the contents of the
 // container are references or not rather than the container
 // itself. It does not matter if the container is_ref or not,
@@ -187,7 +187,7 @@ fn vec_generics_to_rust_type(generic_args: &Path, is_ref: &mut bool) -> RustType
         Some(args) => match &**args {
             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
                 AngleBracketedArg::Arg(arg) => match &arg {
-                    GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind, is_ref) {
+                    GenericArg::Type(arg_type) => match &get_rust_type(&arg_type.kind, is_ref) {
                         RustType::Prim(p_type) => RustType::PrimVec(String::from(p_type)),
                         RustType::UserDef(basic_type) => {
                             RustType::UserDefVec(String::from(basic_type))
@@ -227,14 +227,14 @@ pub fn set_output_prefix(input_name: String) {
 // Create a RustType for the given Rust type.
 // * `kind` - Represents the actual type of a parameter in the Rust language.
 // * `is_ref` - Used to determine reference qualifiers on the type.
-fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
+fn get_rust_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
     match &kind {
-        TyKind::Array(arr_type, _anon_const) => match &get_basic_type(&arr_type.kind, is_ref) {
+        TyKind::Array(arr_type, _anon_const) => match &get_rust_type(&arr_type.kind, is_ref) {
             RustType::Prim(p_type) => RustType::PrimArray(String::from(p_type)),
             RustType::UserDef(basic_type) => RustType::UserDefArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
         },
-        TyKind::Slice(arr_type) => match &get_basic_type(&arr_type.kind, is_ref) {
+        TyKind::Slice(arr_type) => match &get_rust_type(&arr_type.kind, is_ref) {
             RustType::Prim(p_type) => RustType::PrimArray(String::from(p_type)),
             RustType::UserDef(basic_type) => RustType::UserDefArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
@@ -244,7 +244,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
             // recurse to get to the underlying type
-            get_basic_type(&mut_ty.ty.kind, is_ref)
+            get_rust_type(&mut_ty.ty.kind, is_ref)
         }
         TyKind::Path(_, path) => {
             if path.segments.is_empty() {
@@ -555,7 +555,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut ret_is_ref = false;
         let r_ty = match &ret_ty {
             FnRetTy::Default(_span) => RustType::NoRet,
-            FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref),
+            FnRetTy::Ty(ty) => get_rust_type(&ty.kind, &mut ret_is_ref),
         };
         let pr_ty = match &ret_ty {
             FnRetTy::Ty(ty) => ty,
@@ -1114,7 +1114,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             };
 
             let mut is_ref = false;
-            let dtrace_print_xfield = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
+            let dtrace_print_xfield = match &get_rust_type(&fields[i].ty.kind, &mut is_ref) {
                 RustType::Prim(p_type) => {
                     // We have a vec of ourselves, and the field is
                     if p_type == "String" || p_type == "str" {
@@ -1423,7 +1423,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             };
 
             let mut is_ref = false;
-            let dtrace_field_vec_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
+            let dtrace_field_vec_rec = match &get_rust_type(&fields[i].ty.kind, &mut is_ref) {
                 // don't need p_type because we just call dtrace_print_xfield which handles the type.
                 RustType::Prim(_) => {
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
@@ -1628,7 +1628,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             };
 
             let mut is_ref = false;
-            let mut dtrace_field_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
+            let mut dtrace_field_rec = match &get_rust_type(&fields[i].ty.kind, &mut is_ref) {
                 RustType::Prim(p_type) => {
                     if p_type == "String" || p_type == "str" {
                         substitute(
@@ -1710,7 +1710,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     DTRACE_USERDEF,
                 )
             } else {
-                match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
+                match &get_rust_type(&decl.inputs[i].ty.kind, &mut is_ref) {
                     RustType::Prim(p_type) => {
                         if p_type == "String" || p_type == "str" {
                             substitute(
