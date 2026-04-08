@@ -97,6 +97,7 @@ enum RustType {
     UserDefVec(String),
     PrimArray(String),
     UserDefArray(String),
+    Skip,  // Types we want to skip.
     NoRet, // For void-returning functions.
     Error, // Used to indicate a type is not primitive.
 }
@@ -251,6 +252,10 @@ fn get_rust_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
             }
             // Return full type: RustType<args>, need generics in some cases.
             RustType::UserDef(ty_string.to_string())
+        }
+        TyKind::ImplTrait(_, _) => {
+            // A bunch of types we want to ignore for Daikon.
+            RustType::Skip
         }
         _ => RustType::Error,
     }
@@ -739,6 +744,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
                 *i = self.insert_into_block(*i, &userdef_vec_record_ret, body);
             }
+            RustType::Skip => {}
             RustType::NoRet => {}
             RustType::Error => panic!("ret_ty is RustType::Error"),
         }
@@ -1591,6 +1597,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
+                RustType::Skip => {
+                    continue;
+                }
                 RustType::NoRet => String::from(""),
                 RustType::Error => panic!("Field type not handled"),
             };
@@ -1664,6 +1673,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     FxHashMap::from_iter([("${field_name}", field_name.as_str())]),
                     DTRACE_CALL_PRINT_FIELD,
                 ),
+                RustType::Skip => {
+                    continue;
+                }
                 RustType::NoRet => String::from(""),
                 RustType::Error => panic!("Field type not handled"),
             };
@@ -1979,6 +1991,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             )
                         );
                         res
+                    }
+                    RustType::Skip => {
+                        continue;
                     }
                     RustType::NoRet => String::from(""),
                     RustType::Error => panic!("Formal arg type not handled."),
