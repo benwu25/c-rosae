@@ -1,5 +1,6 @@
 // ignore-tidy-filelength
 
+use std::collections::VecDeque;
 use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -521,7 +522,10 @@ fn as_prim_rep_type(ty_str: &str) -> &str {
 // Given the template arguments to a Vec or array, return a RepType
 // enum representing the Vec/array.
 // * `generic_args` - Generic args to a Vec parameter.
-fn vec_generics_to_rust_type(generic_args: &Path) -> RepType {
+fn vec_generics_to_rust_type(
+    generic_args: &Path,
+    visitor: Option<&DaikonDeclsVisitor<'_>>,
+) -> RepType {
     let mut is_ref = false;
     match &generic_args.segments[generic_args.segments.len() - 1].args {
         None => panic!("Vec args has no type name"),
@@ -529,7 +533,7 @@ fn vec_generics_to_rust_type(generic_args: &Path) -> RepType {
             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
                 AngleBracketedArg::Arg(arg) => match &arg {
                     GenericArg::Type(arg_type) => {
-                        match &get_rep_type(&arg_type.kind, &mut is_ref) {
+                        match &get_rep_type(&arg_type.kind, &mut is_ref, visitor) {
                             RepType::Prim(arg_p_type) => RepType::PrimArray(arg_p_type.to_string()),
                             RepType::HashCodeStruct(struct_type) => {
                                 RepType::HashCodeArray(struct_type.to_string())
@@ -565,14 +569,18 @@ enum RepType {
 // is a reference by setting is_ref.
 // * `kind` - Represents the actual type of a parameter in the Rust language.
 // * `is_ref` - Used to determine reference qualifiers on the type.
-fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
+fn get_rep_type(
+    kind: &TyKind,
+    is_ref: &mut bool,
+    visitor: Option<&DaikonDeclsVisitor<'_>>,
+) -> RepType {
     match &kind {
-        TyKind::Array(arr_type, _) => match &get_rep_type(&arr_type.kind, is_ref) {
+        TyKind::Array(arr_type, _) => match &get_rep_type(&arr_type.kind, is_ref, visitor) {
             RepType::Prim(p_type) => RepType::PrimArray(String::from(p_type)),
             RepType::HashCodeStruct(basic_type) => RepType::HashCodeArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
         },
-        TyKind::Slice(arr_type) => match &get_rep_type(&arr_type.kind, is_ref) {
+        TyKind::Slice(arr_type) => match &get_rep_type(&arr_type.kind, is_ref, visitor) {
             RepType::Prim(p_type) => RepType::PrimArray(String::from(p_type)),
             RepType::HashCodeStruct(basic_type) => RepType::HashCodeArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
@@ -580,7 +588,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
         TyKind::Ptr(_) => todo!(),
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
-            return get_rep_type(&mut_ty.ty.kind, is_ref);
+            return get_rep_type(&mut_ty.ty.kind, is_ref, visitor);
         }
         TyKind::Path(_, path) => {
             if path.segments.is_empty() {
@@ -592,9 +600,19 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
                 return RepType::Prim(String::from(maybe_prim_rep));
             }
             if ty_string == VEC {
-                return vec_generics_to_rust_type(&path);
+                return vec_generics_to_rust_type(&path, visitor);
             }
             return RepType::HashCodeStruct(String::from(ty_string));
+        }
+        TyKind::ImplicitSelf => {
+            // Query for the impl we are currently in by accessing scope_stack.
+            match &visitor {
+                None => panic!("Cannot access scope_stack in get_rep_type"),
+                Some(visitor) => match &visitor.scope_stack.back() {
+                    Some(plain_struct) => RepType::HashCodeStruct(String::from(*plain_struct)),
+                    None => panic!("scope_stack has no name for this struct"),
+                },
+            }
         }
         TyKind::ImplTrait(_, _) => {
             // A bunch of types we want to skip for Daikon.
@@ -644,6 +662,7 @@ impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
 struct DaikonDeclsVisitor<'a> {
     pub map: &'a FxHashMap<String, Box<Item>>,
     pub depth_limit: u32,
+    pub scope_stack: &'a mut VecDeque<String>,
 }
 
 // Represents a parameter or return value which must be written to decls.
@@ -774,7 +793,7 @@ impl<'a> ArrayContents<'a> {
             let var_name = format!("{}.{}", self.decl.var_name, field_name);
             let mut is_ref = false;
             let mut write_p = true;
-            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref, None) {
                 RepType::Prim(p_type) => ArrayContents {
                     decl: Box::new(TopLevlDecl {
                         map: self.decl.map,
@@ -970,7 +989,7 @@ impl<'a> TopLevlDecl<'a> {
             let var_name = format!("{}.{}", self.var_name, field_name);
             let mut is_ref = false;
             let mut write_p = true;
-            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref, None) {
                 RepType::Prim(p_type) => {
                     let tmp_toplevl = TopLevlDecl {
                         map: self.map,
@@ -1192,6 +1211,17 @@ fn write_header() {
 }
 
 impl<'a> DaikonDeclsVisitor<'a> {
+    // * `plain_struct` - The struct identifier whose scope
+    //                    we are about to enter.
+    fn push_struct(&mut self, plain_struct: String) {
+        self.scope_stack.push_back(plain_struct);
+    }
+
+    // Pop the top of the scope_stack.
+    fn pop_struct(&mut self) {
+        self.scope_stack.pop_back();
+    }
+
     // Walk an if expression looking for returns and
     // write exit-ppt declarations when found.
     // See rustc_parse::parser::item::instrument_if_stmt.
@@ -1399,7 +1429,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                             let var_name = String::from("return");
                             let mut is_ref = false;
                             let mut write_p = true;
-                            let mut return_decl = match &get_rep_type(&ty.kind, &mut is_ref) {
+                            let mut return_decl = match &get_rep_type(&ty.kind, &mut is_ref, None) {
                                 RepType::Prim(p_type) => {
                                     TopLevlDecl {
                                         map: self.map,
@@ -1651,13 +1681,14 @@ fn fn_sig_to_toplevl_decls<'a>(
     decl: &'a Box<FnDecl>,
     map: &'a FxHashMap<String, Box<Item>>,
     depth_limit: u32,
+    visitor: Option<&DaikonDeclsVisitor<'_>>,
 ) -> Vec<Box<TopLevlDecl<'a>>> {
     let mut var_decls: Vec<Box<TopLevlDecl<'_>>> = Vec::new();
     for i in 0..decl.inputs.len() {
         let var_name = get_param_ident(&decl.inputs[i].pat);
         let mut is_ref = false;
         let mut write_p = true;
-        let toplevl_decl = match &get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref) {
+        let toplevl_decl = match &get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref, visitor) {
             RepType::Prim(p_type) => {
                 TopLevlDecl {
                     map,
@@ -1800,8 +1831,12 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                     let ppt_name = f.ident.as_str();
                     write_entry(ppt_name);
                     let param_to_block_idx = map_params(&f.sig.decl);
-                    let mut param_decls =
-                        fn_sig_to_toplevl_decls(&f.sig.decl, self.map, self.depth_limit);
+                    let mut param_decls = fn_sig_to_toplevl_decls(
+                        &f.sig.decl,
+                        self.map,
+                        self.depth_limit,
+                        Some(&self),
+                    );
                     for i in 0..param_decls.len() {
                         param_decls[i].write();
                         //write(&mut param_decls[i], "", true, false, "", &mut None);
@@ -1826,6 +1861,41 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
             _ => {}
         }
         visit::walk_fn(self, fk);
+    }
+
+    // Look for impl blocks. Also skip inline mods.
+    fn visit_item(&mut self, item: &'a Item) {
+        let mut inline_mod_p = false;
+        let mut do_pop = false;
+
+        match &item.kind {
+            ItemKind::Mod(_, _, kind) => match &kind {
+                ModKind::Loaded(_, inline, _) => match &inline {
+                    Inline::Yes => {
+                        inline_mod_p = true;
+                    }
+                    _ => {}
+                },
+                _ => {}
+            },
+            ItemKind::Impl(imp) => match &imp.self_ty.kind {
+                TyKind::Path(_, path) => {
+                    let plain_struct = String::from(path.segments[0].ident.as_str());
+                    self.push_struct(plain_struct);
+                    do_pop = true;
+                }
+                _ => {}
+            },
+            _ => {}
+        };
+
+        if !inline_mod_p {
+            visit::walk_item(self, item);
+        }
+
+        if do_pop {
+            self.pop_struct();
+        }
     }
 }
 
@@ -1884,7 +1954,11 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             std::fs::File::create(&dtrace).unwrap();
             write_header();
             write_newline();
-            let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, depth_limit: 4 }; // off by one to match dtrace.
+            let mut decls_visitor = DaikonDeclsVisitor {
+                map: &struct_map,
+                depth_limit: 4,
+                scope_stack: &mut VecDeque::new(),
+            }; // off by one to match dtrace.
             decls_visitor.visit_crate(&krate);
         }
 

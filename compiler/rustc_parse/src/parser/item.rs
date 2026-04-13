@@ -51,6 +51,15 @@ pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false
 // For generating unique names for auxiliary files to parse in parse_items_from_source_str{,ing}.
 static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 
+// Represents a scope that we are instrumenting/visiting,
+// see DaikonDtraceVisitor::scope_stack member. If we are
+// visiting a struct in the toplevel scope, the top of the
+// scope_stack will be a ScopeType::TopLevelScope. The new
+// synthesized impl block will be placed in the ScopeType.
+// For structs encountered in nested scopes, such as a
+// function body, those impls will be placed in a different
+// ScopeType representing the current function body, so they
+// are placed in the correct function scope.
 enum ScopeType {
     ToplevelScope(ThinVec<Box<Item>>),
     FnBody(ThinVec<Stmt>),
@@ -1432,8 +1441,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1505,8 +1514,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1530,8 +1539,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1556,8 +1565,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1582,8 +1591,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -2264,7 +2273,9 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                     // This is the only time we ever see a struct definition. i.e., this
                     // is the only place where gen_impl is ever called. So we need
                     // not push generated impls anywhere else. We only push new/empty scopes
-                    // everywhere else.
+                    // everywhere else. Note, we don't need to pop these impls until we reach
+                    // the end of our current scope, e.g., end of function scope. Things are
+                    // popped correctly in, e.g., visit_fn.
                     if self.scope_type_requires_items_p() {
                         self.push_impl_item(impl_item);
                     } else {
