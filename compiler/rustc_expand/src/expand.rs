@@ -562,6 +562,7 @@ enum RepType {
     PrimArray(String),
     HashCodeArray(String),
     HashCodeStruct(String),
+    Skip,
 }
 
 // Given a Rust type kind, return its RepType. Also note whether the type
@@ -613,7 +614,11 @@ fn get_rep_type(
                 },
             }
         }
-        _ => panic!("TyKind not yet implemented in get_rep_type"),
+        TyKind::ImplTrait(_, _) => {
+            // A bunch of types we want to skip for Daikon.
+            RepType::Skip
+        }
+        _ => todo!(),
     }
 }
 
@@ -868,6 +873,9 @@ impl<'a> ArrayContents<'a> {
                         sub_contents: None,
                     }
                 }
+                RepType::Skip => {
+                    continue;
+                }
             };
             match &mut self.sub_contents {
                 None => panic!("No sub_contents in build_contents"),
@@ -1113,6 +1121,9 @@ impl<'a> TopLevlDecl<'a> {
                         }
                     }
                     tmp
+                }
+                RepType::Skip => {
+                    continue;
                 }
             };
             match &self.contents {
@@ -1541,6 +1552,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                     }
                                     tmp
                                 }
+                                RepType::Skip => panic!("What TopLevlDecl should we produce here"),
                             };
                             return_decl.write();
                             //write(&mut Box::new(return_decl), "", true, false, "", &mut None);
@@ -1789,6 +1801,9 @@ fn fn_sig_to_toplevl_decls<'a>(
                 }
                 tmp
             }
+            RepType::Skip => {
+                continue;
+            }
         };
         var_decls.push(Box::new(toplevl_decl));
     }
@@ -1808,6 +1823,10 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
     ) {
         match &fk {
             FnKind::Fn(_, _, f) => {
+                if !f.generics.params.is_empty() {
+                    // Skip generics for now.
+                    return;
+                }
                 if !f.ident.as_str().starts_with("dtrace") {
                     let ppt_name = f.ident.as_str();
                     write_entry(ppt_name);
