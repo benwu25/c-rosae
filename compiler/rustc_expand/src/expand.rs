@@ -1863,16 +1863,12 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
         visit::walk_fn(self, fk);
     }
 
+    // Look for impl blocks. Also skip inline mods.
     fn visit_item(&mut self, item: &'a Item) {
         let mut inline_mod_p = false;
         let mut do_pop = false;
 
         match &item.kind {
-            ItemKind::Enum(_, _, _) => {} // FIXME: enums can have impl blocks.
-            ItemKind::Struct(_ident, _generics, variant_data) => match variant_data {
-                VariantData::Struct { fields: _, recovered: _ } => {}
-                _ => {}
-            },
             ItemKind::Mod(_, _, kind) => match &kind {
                 ModKind::Loaded(_, inline, _) => match &inline {
                     Inline::Yes => {
