@@ -51,6 +51,15 @@ pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false
 // For generating unique names for auxiliary files to parse in parse_items_from_source_str{,ing}.
 static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 
+// Represents a scope that we are instrumenting/visiting,
+// see DaikonDtraceVisitor::scope_stack member. If we are
+// visiting a struct in the toplevel scope, the top of the
+// scope_stack will be a ScopeType::TopLevelScope. The new
+// synthesized impl block will be placed in the ScopeType.
+// For structs encountered in nested scopes, such as a
+// function body, those impls will be placed in a different
+// ScopeType representing the current function body, so they
+// are placed in the correct function scope.
 enum ScopeType {
     ToplevelScope(ThinVec<Box<Item>>),
     FnBody(ThinVec<Stmt>),
@@ -69,7 +78,7 @@ struct DaikonDtraceVisitor<'a> {
 }
 
 // Represents a Rust type.
-// If it is a reference, note this with is_ref in get_basic_type.
+// If it is a reference, note this with is_ref in get_rust_type.
 // For Vec/array, is_ref indicates whether the contents of the
 // container are references or not rather than the container
 // itself. It does not matter if the container is_ref or not,
@@ -97,6 +106,7 @@ enum RustType {
     UserDefVec(String),
     PrimArray(String),
     UserDefArray(String),
+    Skip,  // Types we want to skip.
     NoRet, // For void-returning functions.
     Error, // Used to indicate a type is not primitive.
 }
@@ -178,7 +188,7 @@ fn vec_generics_to_rust_type(generic_args: &Path, is_ref: &mut bool) -> RustType
         Some(args) => match &**args {
             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
                 AngleBracketedArg::Arg(arg) => match &arg {
-                    GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind, is_ref) {
+                    GenericArg::Type(arg_type) => match &get_rust_type(&arg_type.kind, is_ref) {
                         RustType::Prim(p_type) => RustType::PrimVec(String::from(p_type)),
                         RustType::UserDef(basic_type) => {
                             RustType::UserDefVec(String::from(basic_type))
@@ -218,14 +228,14 @@ pub fn set_output_prefix(input_name: String) {
 // Create a RustType for the given Rust type.
 // * `kind` - Represents the actual type of a parameter in the Rust language.
 // * `is_ref` - Used to determine reference qualifiers on the type.
-fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
+fn get_rust_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
     match &kind {
-        TyKind::Array(arr_type, _anon_const) => match &get_basic_type(&arr_type.kind, is_ref) {
+        TyKind::Array(arr_type, _anon_const) => match &get_rust_type(&arr_type.kind, is_ref) {
             RustType::Prim(p_type) => RustType::PrimArray(String::from(p_type)),
             RustType::UserDef(basic_type) => RustType::UserDefArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
         },
-        TyKind::Slice(arr_type) => match &get_basic_type(&arr_type.kind, is_ref) {
+        TyKind::Slice(arr_type) => match &get_rust_type(&arr_type.kind, is_ref) {
             RustType::Prim(p_type) => RustType::PrimArray(String::from(p_type)),
             RustType::UserDef(basic_type) => RustType::UserDefArray(String::from(basic_type)),
             _ => panic!("higher-dim arrays not supported"),
@@ -235,7 +245,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
             // recurse to get to the underlying type
-            get_basic_type(&mut_ty.ty.kind, is_ref)
+            get_rust_type(&mut_ty.ty.kind, is_ref)
         }
         TyKind::Path(_, path) => {
             if path.segments.is_empty() {
@@ -251,6 +261,10 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> RustType {
             }
             // Return full type: RustType<args>, need generics in some cases.
             RustType::UserDef(ty_string.to_string())
+        }
+        TyKind::ImplTrait(_, _) => {
+            // A bunch of types we want to ignore for Daikon.
+            RustType::Skip
         }
         _ => RustType::Error,
     }
@@ -544,7 +558,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut ret_is_ref = false;
         let r_ty = match &ret_ty {
             FnRetTy::Default(_span) => RustType::NoRet,
-            FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref),
+            FnRetTy::Ty(ty) => get_rust_type(&ty.kind, &mut ret_is_ref),
         };
         let pr_ty = match &ret_ty {
             FnRetTy::Ty(ty) => ty,
@@ -737,6 +751,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 );
                 *i = self.insert_into_block(*i, &userdef_vec_record_ret, body);
             }
+            RustType::Skip => {}
             RustType::NoRet => {}
             RustType::Error => panic!("ret_ty is RustType::Error"),
         }
@@ -1103,7 +1118,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             };
 
             let mut is_ref = false;
-            let dtrace_print_xfield = match &get_basic_type(&field.ty.kind, &mut is_ref) {
+            let dtrace_print_xfield = match &get_rust_type(&field.ty.kind, &mut is_ref) {
                 RustType::Prim(p_type) => {
                     // We have a vec of ourselves, and the field is
                     if p_type == "String" || p_type == "str" {
@@ -1412,7 +1427,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             };
 
             let mut is_ref = false;
-            let dtrace_field_vec_rec = match &get_basic_type(&field.ty.kind, &mut is_ref) {
+            let dtrace_field_vec_rec = match &get_rust_type(&field.ty.kind, &mut is_ref) {
                 // don't need p_type because we just call dtrace_print_xfield which handles the type.
                 RustType::Prim(_) => {
                     let first_tmp: &str = &daikon_tmp_counter.to_string();
@@ -1424,8 +1439,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1497,8 +1512,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1522,8 +1537,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1548,8 +1563,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1574,8 +1589,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         substitute(
                             FxHashMap::from_iter([
                                 ("${type}", plain_struct.as_str()),
-                                ("${counter_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
-                                ("${vec_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${counter_name}", format!("__daikon_tmp{}", next_tmp).as_str()),
+                                ("${vec_name}", format!("__daikon_tmp{}", first_tmp).as_str()),
                             ]),
                             DTRACE_TMP_VEC_USERDEF
                         ),
@@ -1588,6 +1603,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             DTRACE_PRINT_XFIELD_VEC
                         )
                     )
+                }
+                RustType::Skip => {
+                    continue;
                 }
                 RustType::NoRet => String::from(""),
                 RustType::Error => panic!("Field type not handled"),
@@ -1617,7 +1635,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             };
 
             let mut is_ref = false;
-            let mut dtrace_field_rec = match &get_basic_type(&field.ty.kind, &mut is_ref) {
+            let mut dtrace_field_rec = match &get_rust_type(&field.ty.kind, &mut is_ref) {
                 RustType::Prim(p_type) => {
                     if p_type == "String" || p_type == "str" {
                         substitute(
@@ -1662,6 +1680,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     FxHashMap::from_iter([("${field_name}", field_name.as_str())]),
                     DTRACE_CALL_PRINT_FIELD,
                 ),
+                RustType::Skip => {
+                    continue;
+                }
                 RustType::NoRet => String::from(""),
                 RustType::Error => panic!("Field type not handled"),
             };
@@ -1699,7 +1720,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     DTRACE_USERDEF,
                 )
             } else {
-                match &get_basic_type(&input.ty.kind, &mut is_ref) {
+                match &get_rust_type(&input.ty.kind, &mut is_ref) {
                     RustType::Prim(p_type) => {
                         if p_type == "String" || p_type == "str" {
                             substitute(
@@ -1945,6 +1966,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         );
                         res
                     }
+                    RustType::Skip => {
+                        continue;
+                    }
                     RustType::NoRet => String::from(""),
                     RustType::Error => panic!("Formal arg type not handled."),
                 }
@@ -2090,6 +2114,10 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
         // instrumentation.
         match &mut fk {
             FnKind::Fn(_, _, f) => {
+                if !f.generics.params.is_empty() {
+                    // Skip generics for now.
+                    return;
+                }
                 let ppt_name = f.ident.as_str();
                 if ppt_name == "execute" {
                     return;
@@ -2210,7 +2238,9 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                     // This is the only time we ever see a struct definition. i.e., this
                     // is the only place where gen_impl is ever called. So we need
                     // not push generated impls anywhere else. We only push new/empty scopes
-                    // everywhere else.
+                    // everywhere else. Note, we don't need to pop these impls until we reach
+                    // the end of our current scope, e.g., end of function scope. Things are
+                    // popped correctly in, e.g., visit_fn.
                     if self.scope_type_requires_items_p() {
                         self.push_impl_item(impl_item);
                     } else {
