@@ -30,10 +30,7 @@ use rustc_feature::Features;
 use rustc_hir::Target;
 use rustc_hir::def::MacroKinds;
 use rustc_hir::limit::Limit;
-use rustc_parse::parser::daikon_strs::{
-    BOOL, CHAR, F32, F64, I8, I16, I32, I64, I128, ISIZE, STR, STRING, U8, U16, U32, U64, U128,
-    UNIT, USIZE, VEC,
-};
+use rustc_parse::parser::daikon_strs::VEC;
 use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_PREFIX};
 use rustc_parse::parser::{
     AllowConstBlockItems, AttemptLocalParseRecovery, CommaRecoveryMode, ForceCollect, Parser,
@@ -1048,7 +1045,6 @@ impl<'a> TopLevlDecl<'a> {
                         struct_name: None,
                         field_decls: Vec::new(),
                         contents: Some(Box::new(ArrayContents {
-                            should_write: true,
                             decl: Box::new(TopLevlDecl {
                                 map: self.map,
                                 var_name: format!("{}[..]", var_name),
@@ -1062,6 +1058,7 @@ impl<'a> TopLevlDecl<'a> {
                             enclosing_var: var_name.clone(),
                             sub_contents: None,
                         })), // Ready to write.
+                        should_write: true,
                     };
                     FieldDecl {
                         decl: Box::new(tmp_toplevl),
@@ -1078,7 +1075,6 @@ impl<'a> TopLevlDecl<'a> {
                         struct_name: Some(ty_string.clone()),
                         field_decls: Vec::new(),
                         contents: Some(Box::new(ArrayContents {
-                            should_write: true,
                             decl: Box::new(TopLevlDecl {
                                 map: self.map,
                                 var_name: format!("{}[..]", var_name),
@@ -1092,6 +1088,7 @@ impl<'a> TopLevlDecl<'a> {
                             enclosing_var: var_name.clone(),
                             sub_contents: Some(Vec::new()),
                         })),
+                        should_write: true,
                     };
                     let mut tmp = FieldDecl {
                         decl: Box::new(tmp_toplevl),
@@ -1491,7 +1488,6 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         struct_name: None,
                                         field_decls: Vec::new(),
                                         contents: Some(Box::new(ArrayContents {
-                                            should_write: true,
                                             decl: Box::new(TopLevlDecl {
                                                 map: self.map,
                                                 var_name: format!("{}[..]", var_name),
@@ -1505,6 +1501,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                             enclosing_var: var_name.clone(),
                                             sub_contents: None,
                                         })), // Ready to write this var_decl.
+                                        should_write: true,
                                     }
                                 }
                                 RepType::HashCodeArray(ty_string) => {
@@ -1516,7 +1513,6 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         struct_name: Some(ty_string.clone()),
                                         field_decls: Vec::new(),
                                         contents: Some(Box::new(ArrayContents {
-                                            should_write: true,
                                             decl: Box::new(TopLevlDecl {
                                                 map: self.map,
                                                 var_name: format!("{}[..]", var_name),
@@ -1530,6 +1526,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                             enclosing_var: var_name.clone(),
                                             sub_contents: Some(Vec::new()),
                                         })),
+                                        should_write: true,
                                     };
                                     match &mut tmp.contents {
                                         None => panic!("Missing contents in HashCodeArray"),
@@ -1749,7 +1746,6 @@ fn fn_sig_to_toplevl_decls<'a>(
                     struct_name: None,
                     field_decls: Vec::new(),
                     contents: Some(Box::new(ArrayContents {
-                        should_write: true,
                         decl: Box::new(TopLevlDecl {
                             map,
                             var_name: format!("{}[..]", var_name),
@@ -1763,6 +1759,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                         enclosing_var: var_name.clone(),
                         sub_contents: None,
                     })), // Ready to write this var_decl.
+                    should_write: true,
                 }
             }
             RepType::HashCodeArray(ty_string) => {
@@ -1774,7 +1771,6 @@ fn fn_sig_to_toplevl_decls<'a>(
                     struct_name: Some(ty_string.clone()),
                     field_decls: Vec::new(),
                     contents: Some(Box::new(ArrayContents {
-                        should_write: true,
                         decl: Box::new(TopLevlDecl {
                             map,
                             var_name: format!("{}[..]", var_name),
@@ -1788,6 +1784,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                         enclosing_var: var_name.clone(),
                         sub_contents: Some(Vec::new()),
                     })),
+                    should_write: true,
                 };
                 match &mut tmp.contents {
                     None => panic!("Missing contents in HashCodeArray"),
