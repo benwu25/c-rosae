@@ -2486,11 +2486,12 @@ impl<'a> Parser<'a> {
             let mut pp =
                 std::fs::File::options().write(true).append(true).open(&pp_as_path).unwrap();
 
-            for i in 0..items.len() - 1 {
-                writeln!(&mut pp, "{}\n", pprust::item_to_string(&items[i])).ok();
+            if let Some((last_item, rest_items)) = items.split_last() {
+                for item in rest_items {
+                    writeln!(&mut pp, "{}\n", pprust::item_to_string(item)).ok();
+                }
+                writeln!(&mut pp, "{}", pprust::item_to_string(last_item)).ok(); // no trailing newline
             }
-
-            writeln!(&mut pp, "{}", pprust::item_to_string(&items[items.len() - 1])).ok(); // no newline
 
             // add imports.
             // FIXME: you should check if these imports are already included.
