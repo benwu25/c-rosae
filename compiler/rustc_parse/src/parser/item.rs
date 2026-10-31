@@ -1111,7 +1111,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // Not important for this to be here, name clashes are not a concern since
         // this function is synthesized by the dtrace pass.
         let mut daikon_tmp_counter = 0;
-        for field in &fields {
+        for field in fields {
             let field_name = match &field.ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
@@ -1420,7 +1420,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         );
 
         let mut daikon_tmp_counter = 0;
-        for field in &fields {
+        for field in fields {
             let field_name = match &field.ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier"),
