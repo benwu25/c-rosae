@@ -670,6 +670,10 @@ struct TopLevlDecl<'a> {
     pub struct_name: Option<String>, // struct name for looking up structs if this is a struct.
     pub field_decls: Vec<FieldDecl<'a>>,
     pub contents: Option<Box<ArrayContents<'a>>>,
+    /// Whether this declaration should be written to the decls file.
+    /// Set to false when the struct type cannot be found (e.g., it is an enum or union
+    /// from outside the crate) or when it is an Option/Result type.
+    pub should_write: bool,
 }
 
 // Represents a field decl of a struct at some arb. depth.
@@ -701,7 +705,7 @@ impl<'a> ArrayContents<'a> {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
             Some(decls) => {
-                if self.decl.var_name == "false" {
+                if !self.decl.should_write {
                     return;
                 }
 
@@ -788,6 +792,7 @@ impl<'a> ArrayContents<'a> {
                         struct_name: None,
                         field_decls: Vec::new(),
                         contents: None,
+                        should_write: true,
                     }),
                     enclosing_var: self.decl.var_name.clone(),
                     sub_contents: None,
@@ -802,6 +807,7 @@ impl<'a> ArrayContents<'a> {
                             struct_name: Some(ty_string.clone()),
                             field_decls: Vec::new(),
                             contents: None,
+                            should_write: true,
                         }),
                         enclosing_var: self.decl.var_name.clone(),
                         sub_contents: Some(Vec::new()),
@@ -815,14 +821,14 @@ impl<'a> ArrayContents<'a> {
                             None => panic!("Expected some sub_contents"),
                             Some(sub_contents) => {
                                 for sc in sub_contents.iter_mut() {
-                                    sc.decl.var_name = String::from("false");
+                                    sc.decl.should_write = false;
                                 }
                             }
                         }
                     }
                     if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
                         // this record is also invalid.
-                        tmp.decl.var_name = String::from("false");
+                        tmp.decl.should_write = false;
                     }
                     tmp
                 }
@@ -837,6 +843,7 @@ impl<'a> ArrayContents<'a> {
                             struct_name: None, // we shouldn't be using this in write.
                             field_decls: Vec::new(),
                             contents: None,
+                            should_write: true,
                         }),
                         enclosing_var: self.decl.var_name.clone(),
                         sub_contents: None,
@@ -853,6 +860,7 @@ impl<'a> ArrayContents<'a> {
                             struct_name: None,
                             field_decls: Vec::new(),
                             contents: None,
+                            should_write: true,
                         }),
                         enclosing_var: self.decl.var_name.clone(),
                         sub_contents: None,
@@ -878,7 +886,7 @@ impl<'a> FieldDecl<'a> {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
             Some(decls) => {
-                if self.decl.var_name == "false" {
+                if !self.decl.should_write {
                     return;
                 }
 
@@ -922,7 +930,7 @@ impl<'a> TopLevlDecl<'a> {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
             Some(decls) => {
-                if self.var_name == "false" {
+                if !self.should_write {
                     return;
                 }
 
@@ -984,6 +992,7 @@ impl<'a> TopLevlDecl<'a> {
                         struct_name: None,
                         field_decls: Vec::new(),
                         contents: None,
+                        should_write: true,
                     };
                     FieldDecl {
                         decl: Box::new(tmp_toplevl),
@@ -1000,6 +1009,7 @@ impl<'a> TopLevlDecl<'a> {
                         struct_name: Some(ty_string.clone()),
                         field_decls: Vec::new(),
                         contents: None,
+                        should_write: true,
                     };
                     let mut tmp = FieldDecl {
                         decl: Box::new(tmp_toplevl),
@@ -1014,7 +1024,7 @@ impl<'a> TopLevlDecl<'a> {
                         match &mut tmp.decl.contents {
                             None => {
                                 for fd in &mut tmp.decl.field_decls {
-                                    fd.decl.var_name = String::from("false");
+                                    fd.decl.should_write = false;
                                 }
                             }
                             Some(_) => panic!("Expected no contents here, only field_decls"),
@@ -1022,7 +1032,7 @@ impl<'a> TopLevlDecl<'a> {
                     }
                     if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
                         // this record is also invalid.
-                        tmp.decl.var_name = String::from("false");
+                        tmp.decl.should_write = false;
                     }
                     tmp
                 }
@@ -1043,10 +1053,12 @@ impl<'a> TopLevlDecl<'a> {
                                 struct_name: None,
                                 field_decls: Vec::new(),
                                 contents: None,
+                                should_write: true,
                             }),
                             enclosing_var: var_name.clone(),
                             sub_contents: None,
                         })), // Ready to write.
+                        should_write: true,
                     };
                     FieldDecl {
                         decl: Box::new(tmp_toplevl),
@@ -1071,10 +1083,12 @@ impl<'a> TopLevlDecl<'a> {
                                 struct_name: Some(ty_string.clone()),
                                 field_decls: Vec::new(),
                                 contents: None,
+                                should_write: true,
                             }),
                             enclosing_var: var_name.clone(),
                             sub_contents: Some(Vec::new()),
                         })),
+                        should_write: true,
                     };
                     let mut tmp = FieldDecl {
                         decl: Box::new(tmp_toplevl),
@@ -1093,7 +1107,7 @@ impl<'a> TopLevlDecl<'a> {
                                     None => panic!("Expected some sub_contents"),
                                     Some(sub_contents) => {
                                         for sc in sub_contents.iter_mut() {
-                                            sc.decl.var_name = String::from("false");
+                                            sc.decl.should_write = false;
                                         }
                                     }
                                 }
@@ -1101,7 +1115,7 @@ impl<'a> TopLevlDecl<'a> {
 
                             if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
                                 // this record is also invalid.
-                                tmp.decl.var_name = String::from("false");
+                                tmp.decl.should_write = false;
                             }
                         }
                     }
@@ -1424,6 +1438,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         struct_name: None,
                                         field_decls: Vec::new(),
                                         contents: None,
+                                        should_write: true,
                                     } // Ready to write this var decl.
                                 }
                                 RepType::HashCodeStruct(ty_string) => {
@@ -1438,6 +1453,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         struct_name: Some(ty_string.clone()),
                                         field_decls: Vec::new(),
                                         contents: None,
+                                        should_write: true,
                                     };
                                     tmp.construct_field_decls(self.depth_limit, &mut write_p);
 
@@ -1447,7 +1463,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         match &mut tmp.contents {
                                             None => {
                                                 for fd in &mut tmp.field_decls {
-                                                    fd.decl.var_name = String::from("false");
+                                                    fd.decl.should_write = false;
                                                 }
                                             }
                                             Some(_) => panic!(
@@ -1459,7 +1475,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         || ty_string.starts_with("Result")
                                     {
                                         // this record is also invalid.
-                                        tmp.var_name = String::from("false");
+                                        tmp.should_write = false;
                                     }
                                     tmp
                                 }
@@ -1480,10 +1496,12 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 struct_name: None,
                                                 field_decls: Vec::new(),
                                                 contents: None,
+                                                should_write: true,
                                             }),
                                             enclosing_var: var_name.clone(),
                                             sub_contents: None,
                                         })), // Ready to write this var_decl.
+                                        should_write: true,
                                     }
                                 }
                                 RepType::HashCodeArray(ty_string) => {
@@ -1503,10 +1521,12 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 struct_name: Some(ty_string.clone()),
                                                 field_decls: Vec::new(),
                                                 contents: None,
+                                                should_write: true,
                                             }),
                                             enclosing_var: var_name.clone(),
                                             sub_contents: Some(Vec::new()),
                                         })),
+                                        should_write: true,
                                     };
                                     match &mut tmp.contents {
                                         None => panic!("Missing contents in HashCodeArray"),
@@ -1521,8 +1541,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                     None => panic!("Expected some sub_contents"),
                                                     Some(sub_contents) => {
                                                         for sc in sub_contents.iter_mut() {
-                                                            sc.decl.var_name =
-                                                                String::from("false");
+                                                            sc.decl.should_write = false;
                                                         }
                                                     }
                                                 }
@@ -1532,7 +1551,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 || ty_string.starts_with("Result")
                                             {
                                                 // this record is also invalid.
-                                                tmp.var_name = String::from("false");
+                                                tmp.should_write = false;
                                             }
                                         }
                                     }
@@ -1684,6 +1703,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                     struct_name: None,
                     field_decls: Vec::new(),
                     contents: None,
+                    should_write: true,
                 } // Ready to write this var decl.
             }
             RepType::HashCodeStruct(ty_string) => {
@@ -1695,6 +1715,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                     struct_name: Some(ty_string.clone()),
                     field_decls: Vec::new(),
                     contents: None,
+                    should_write: true,
                 };
                 decl.construct_field_decls(depth_limit, &mut write_p);
 
@@ -1704,7 +1725,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                     match &mut decl.contents {
                         None => {
                             for fd in &mut decl.field_decls {
-                                fd.decl.var_name = String::from("false");
+                                fd.decl.should_write = false;
                             }
                         }
                         Some(_) => panic!("Expected no contents here, only field_decls"),
@@ -1712,7 +1733,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                 }
                 if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
                     // this record is also invalid.
-                    decl.var_name = String::from("false");
+                    decl.should_write = false;
                 }
                 decl
             }
@@ -1733,10 +1754,12 @@ fn fn_sig_to_toplevl_decls<'a>(
                             struct_name: None,
                             field_decls: Vec::new(),
                             contents: None,
+                            should_write: true,
                         }),
                         enclosing_var: var_name.clone(),
                         sub_contents: None,
                     })), // Ready to write this var_decl.
+                    should_write: true,
                 }
             }
             RepType::HashCodeArray(ty_string) => {
@@ -1756,10 +1779,12 @@ fn fn_sig_to_toplevl_decls<'a>(
                             struct_name: Some(ty_string.clone()),
                             field_decls: Vec::new(),
                             contents: None,
+                            should_write: true,
                         }),
                         enclosing_var: var_name.clone(),
                         sub_contents: Some(Vec::new()),
                     })),
+                    should_write: true,
                 };
                 match &mut tmp.contents {
                     None => panic!("Missing contents in HashCodeArray"),
@@ -1773,7 +1798,7 @@ fn fn_sig_to_toplevl_decls<'a>(
                                 None => panic!("Expected some sub_contents"),
                                 Some(sub_contents) => {
                                     for sc in sub_contents.iter_mut() {
-                                        sc.decl.var_name = String::from("false");
+                                        sc.decl.should_write = false;
                                     }
                                 }
                             }
@@ -1781,7 +1806,7 @@ fn fn_sig_to_toplevl_decls<'a>(
 
                         if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
                             // this record is also invalid.
-                            tmp.var_name = String::from("false");
+                            tmp.should_write = false;
                         }
                     }
                 }
