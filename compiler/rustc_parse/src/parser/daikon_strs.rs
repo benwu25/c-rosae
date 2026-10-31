@@ -386,9 +386,9 @@ pub(crate) static DTRACE_TMP_VEC_USERDEF_FIELD: &str =
 
 */
 pub(crate) static DTRACE_TMP_VEC_USERDEF_FIELD_AMPERSAND: &str =
-    "let mut {__daikon_tmp1}: Vec<&{X}> = Vec::new();
-  for {__daikon_tmp2} in 0..v.len() {
-      {__daikon_tmp1}.push(&v[{__daikon_tmp2}].{field1});
+    "let mut ${vec_name}: Vec<&${type}> = Vec::new();
+  for ${counter_name} in 0..v.len() {
+      ${vec_name}.push(&v[${counter_name}].${field_name});
   }";
 
 // ${type}: Struct/enum/union type.
@@ -644,7 +644,7 @@ pub(crate) static DTRACE_PRINT_PRIM_VEC: &str =
 
 */
 pub(crate) static DTRACE_PRINT_STRING_VEC: &str =
-    "dtrace_print_string_vec(&${vec_name}, String::from(\"{parameter1}\"));
+    "dtrace_print_string_vec(&${vec_name}, String::from(\"${variable_name}\"));
   }";
 
 /* Ex.
