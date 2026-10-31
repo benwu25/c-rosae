@@ -694,7 +694,7 @@ pub(crate) static DAIKON_LIB: [&str; 15] = [
         arr.push_str(&format!(\"0x{:x} \", v[i] as *const _ as usize));
         i += 1;
     }
-    if v.len() > 0 {
+    if !v.is_empty() {
         arr.push_str(&format!(\"0x{:x}\", v[i] as *const _ as usize));
     }
     arr.push_str(\"]\");
@@ -715,7 +715,7 @@ pub fn dtrace_print_pointer_vec<T>(v: &Vec<&T>, var_name: String) {
         arr.push_str(&format!(\"0x{:x} \", v[i] as *const _ as usize));
         i += 1;
     }
-    if v.len() > 0 {
+    if !v.is_empty() {
         arr.push_str(&format!(\"0x{:x}\", v[i] as *const _ as usize));
     }
     arr.push_str(\"]\");
@@ -737,7 +737,7 @@ fn dtrace_print_prim_arr<T: std::fmt::Display>(v: &[T], prefix: String) {
         arr.push_str(&format!(\"{} \", v[i]));
         i += 1;
     }
-    if v.len() > 0 {
+    if !v.is_empty() {
         arr.push_str(&format!(\"{}\", v[i]));
     }
     arr.push_str(\"]\");
@@ -758,7 +758,7 @@ fn dtrace_print_prim_vec<T: std::fmt::Display>(v: &Vec<T>, prefix: String) {
         arr.push_str(&format!(\"{} \", v[i]));
         i += 1;
     }
-    if v.len() > 0 {
+    if !v.is_empty() {
         arr.push_str(&format!(\"{}\", v[i]));
     }
     arr.push_str(\"]\");
@@ -813,7 +813,7 @@ fn dtrace_print_string_vec(v: &Vec<String>, prefix: String) {
         arr.push_str(&format!(\"\\\"{}\\\" \", v[i]));
         i += 1;
     }
-    if v.len() > 0 {
+    if !v.is_empty() {
         arr.push_str(&format!(\"\\\"{}\\\"\", v[i]));
     }
     arr.push_str(\"]\");
